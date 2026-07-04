@@ -104,3 +104,34 @@ InitTestScene*.unity*
 
 # Auto-generated cache in Assets folder
 /[Aa]ssets/[Ss]ceneDependencyCache*
+
+# Monorepo: Unity project lives under unity-client/
+/unity-client/[Ll]ibrary/
+/unity-client/[Tt]emp/
+/unity-client/[Oo]bj/
+/unity-client/[Bb]uild/
+/unity-client/[Bb]uilds/
+/unity-client/[Ll]ogs/
+/unity-client/[Uu]ser[Ss]ettings/
+/unity-client/[Mm]emoryCaptures/
+/unity-client/[Rr]ecordings/
+
+# Python
+**/__pycache__/
+*.py[cod]
+**/.pytest_cache/
+**/*.egg-info/
+**/.coverage
+**/htmlcov/
+**/.venv/
+**/venv/
+**/dist/
+**/build/
+
+# Dynamic-object ML models are reproducible via the export script.
+/ml-dynamic-object/models/*
+!/ml-dynamic-object/models/.gitkeep
+
+# Runtime risk output is local data, not source.
+/ml-dynamic-object/outputs/*
+!/ml-dynamic-object/outputs/.gitkeep
