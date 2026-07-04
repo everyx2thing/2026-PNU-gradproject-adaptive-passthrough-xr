@@ -40,10 +40,3 @@ Context-aware Adaptive Passthrough Framework for Immersive XR combining static/d
 ## 비교 평가
 
 Baseline Guardian, Full Passthrough, Proposed Framework 세 가지를 대상으로 Collision Rate, Reaction Time, Presence Score, User Preference, Cognitive Load 지표를 기준으로 비교 평가합니다.
-
-## 브랜치 전략
-
-- `main`: 안정 버전
-- `feature/기능명`: 신규 기능 개발
-- `fix/버그명`: 버그 수정
-- `docs/문서명`: 문서 작업
