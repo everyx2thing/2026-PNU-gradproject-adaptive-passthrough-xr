@@ -18,13 +18,10 @@ import onnxruntime as rt
 from skl2onnx import convert_sklearn
 from skl2onnx.common.data_types import FloatTensorType
 
+from config import FEATURE_COLUMNS
+
 MODEL_DIR = os.path.join(os.path.dirname(__file__), "..", "models")
 DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
-
-FEATURE_COLUMNS = [
-    "f_pt", "r_cancel", "t_pt_bar", "v_h_bar", "v_h_max",
-    "A_space_norm", "T_session_norm",
-]
 
 TARGET_MAX_SIZE_MB = 50  # 3.4.4절 목표 모델 크기
 
@@ -68,16 +65,41 @@ def main():
     onnx_pred = sess.run([label_name], {input_name: X_sample})[0]
 
     match_count = sum(1 for a, b in zip(sklearn_pred, onnx_pred) if a == b)
-    print(f"샘플 {len(X_sample)}개 중 {match_count}개 일치")
+    print(f"클래스 예측: 샘플 {len(X_sample)}개 중 {match_count}개 일치")
 
     for i, (a, b) in enumerate(zip(sklearn_pred, onnx_pred)):
         status = "OK" if a == b else "MISMATCH"
         print(f"  [{i}] sklearn={a}, onnx={b}  {status}")
 
-    if match_count == len(X_sample):
-        print("\n✅ 변환 검증 통과 — sklearn과 ONNX 예측이 완전히 일치합니다")
+    # ===== 확률값(predict_proba) 검증 - personalize.py가 이 값을 쓰기 때문에 중요 =====
+    print("\n=== 확률값 검증 (personalize.py가 실제로 쓰는 값) ===")
+    sklearn_proba = model.predict_proba(X_sample)  # shape: (n, n_classes)
+    classes = list(model.classes_)
+
+    proba_output_name = sess.get_outputs()[1].name  # 보통 output_label 다음이 확률
+    onnx_proba_raw = sess.run([proba_output_name], {input_name: X_sample})[0]
+    # onnxruntime의 ZipMap 출력은 [{"Negative": 0.1, ...}, ...] 형태의 dict 리스트
+
+    TOLERANCE = 1e-3
+    proba_ok = True
+    for i, (sk_row, onnx_row) in enumerate(zip(sklearn_proba, onnx_proba_raw)):
+        for cls_idx, cls_name in enumerate(classes):
+            sk_val = sk_row[cls_idx]
+            onnx_val = onnx_row.get(cls_name, None)
+            if onnx_val is None or abs(sk_val - onnx_val) > TOLERANCE:
+                print(f"  [{i}] {cls_name}: sklearn={sk_val:.4f}, onnx={onnx_val} MISMATCH")
+                proba_ok = False
+
+    if proba_ok:
+        print(f"✅ 확률값도 일치 (오차 허용 범위 {TOLERANCE} 이내) — "
+              f"personalize.py 로직을 온디바이스(Sentis)에서도 그대로 쓸 수 있음")
     else:
-        print("\n⚠️ 예측 불일치 발견 — 변환 과정 재점검 필요")
+        print("⚠️ 확률값 불일치 발견 — 온디바이스 개인화 로직에 영향 있을 수 있음, 재점검 필요")
+
+    if match_count == len(X_sample) and proba_ok:
+        print("\n✅ 변환 검증 통과 — sklearn과 ONNX 예측(클래스+확률) 완전히 일치")
+    else:
+        print("\n⚠️ 불일치 발견 — 변환 과정 재점검 필요")
 
 
 if __name__ == "__main__":

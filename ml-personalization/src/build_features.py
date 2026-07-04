@@ -31,12 +31,14 @@ import csv
 import os
 from statistics import mean
 
-EPS = 1e-6
-WINDOW_SIZE = 10  # TODO: 하이퍼파라미터, 실험 필요
-STRIDE = 5        # TODO: 하이퍼파라미터, 실험 필요
+from config import (
+    CANCEL_NEGATIVE_THRESHOLD, POSITIVE_THRESHOLD,
+    DEFAULT_WINDOW_SIZE, DEFAULT_STRIDE,
+)
 
-CANCEL_NEGATIVE_THRESHOLD = 2.0   # 이 시간(초) 미만 + 수동해제 -> Negative
-POSITIVE_THRESHOLD = 3.0          # 이 시간(초) 이상 + 해제 없음 -> Positive
+EPS = 1e-6
+WINDOW_SIZE = DEFAULT_WINDOW_SIZE  # config.py에서 가져옴 (하이퍼파라미터 실험은 hyperparam_tuning.py에서)
+STRIDE = DEFAULT_STRIDE
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
 
@@ -65,8 +67,13 @@ def normalize(value, min_val, max_val):
     return (value - min_val) / (max_val - min_val)
 
 
-def build_feature_windows(events_by_session, sessions_by_id, space_range, tsession_range):
-    """세션별로 슬라이딩 윈도우를 돌며 7차원 feature 벡터 생성"""
+def build_feature_windows(events_by_session, sessions_by_id, space_range, tsession_range,
+                           window_size=WINDOW_SIZE, stride=STRIDE):
+    """세션별로 슬라이딩 윈도우를 돌며 7차원 feature 벡터 생성
+
+    window_size, stride를 인자로 받게 해서 hyperparam_tuning.py에서
+    여러 값을 실험할 수 있게 함 (기존 동작은 기본값 그대로라 변화 없음)
+    """
     rows = []
 
     for session_id, events in events_by_session.items():
@@ -77,8 +84,8 @@ def build_feature_windows(events_by_session, sessions_by_id, space_range, tsessi
         n = len(events)
         start = 0
         while start < n:
-            window = events[start:start + WINDOW_SIZE]
-            if len(window) < WINDOW_SIZE:
+            window = events[start:start + window_size]
+            if len(window) < window_size:
                 break  # 윈도우 크기 못 채우면 종료 (TODO: 마지막 자투리 윈도우 처리 방식 재검토)
 
             n_activate = len(window)
@@ -87,7 +94,7 @@ def build_feature_windows(events_by_session, sessions_by_id, space_range, tsessi
             speeds = [float(e["head_speed_mps"]) for e in window]
             labels = [label_event(e) for e in window]
 
-            f_pt = n_activate / WINDOW_SIZE
+            f_pt = n_activate / window_size
             r_cancel = n_cancel / (n_activate + EPS)
             t_pt_bar = mean(durations)
             v_h_bar = mean(speeds)
@@ -119,12 +126,15 @@ def build_feature_windows(events_by_session, sessions_by_id, space_range, tsessi
                 "window_label": window_label,
             })
 
-            start += STRIDE
+            start += stride
 
     return rows
 
 
-def main():
+def load_sessions_and_events():
+    """mock_sessions.csv, mock_events.csv를 읽어서 build_feature_windows에 필요한
+    형태로 가공. hyperparam_tuning.py에서도 재사용하기 위해 분리함.
+    """
     sessions = read_csv(os.path.join(DATA_DIR, "mock_sessions.csv"))
     events = read_csv(os.path.join(DATA_DIR, "mock_events.csv"))
 
@@ -141,6 +151,12 @@ def main():
     t_session_values = [float(s["T_session"]) for s in sessions]
     space_range = (min(a_space_values), max(a_space_values))
     tsession_range = (min(t_session_values), max(t_session_values))
+
+    return sessions_by_id, events_by_session, space_range, tsession_range
+
+
+def main():
+    sessions_by_id, events_by_session, space_range, tsession_range = load_sessions_and_events()
 
     rows = build_feature_windows(events_by_session, sessions_by_id, space_range, tsession_range)
 
