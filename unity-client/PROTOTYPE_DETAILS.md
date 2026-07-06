@@ -268,7 +268,7 @@ Inspector에서 조정 가능한 값들은 두 종류로 나뉩니다.
 ---
 
 ## 9. Setup
-
+```text
 1. Unity Hub에서 `unity-client/` 폴더를 엽니다.
 2. `Assets/Scenes/SampleScene.unity`를 엽니다.
 3. Build Settings에서 Android 플랫폼으로 전환합니다.
@@ -276,7 +276,7 @@ Inspector에서 조정 가능한 값들은 두 종류로 나뉩니다.
 5. 헤드셋에서 Space Setup이 되어 있지 않다면 먼저 진행합니다.
 6. 최초 실행 시 Scene 권한 요청을 승인합니다.
 7. 실행 후 UI에서 거리, 움직임 Feature, 위험도, Passthrough 판단 결과를 확인합니다.
-
+```
 ---
 
 ## 10. Known Limitations / TODO
