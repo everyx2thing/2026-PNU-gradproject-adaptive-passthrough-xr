@@ -11,6 +11,7 @@ public class QuestSceneDistanceLogger : MonoBehaviour
         public Vector3 position;
         public Vector3 normal;
         public string label;
+        public int index;
     }
 
     [SerializeField] private Text labelText;
@@ -123,7 +124,7 @@ public class QuestSceneDistanceLogger : MonoBehaviour
             Quaternion worldRot = pose.ComputeWorldRotation(trackingSpace) ?? Quaternion.identity;
             Vector3 normal = worldRot * Vector3.forward;
 
-            _surfaces.Add(new Surface { position = worldPos, normal = normal, label = label });
+            _surfaces.Add(new Surface { position = worldPos, normal = normal, label = label, index = _surfaces.Count });
             Debug.Log($"[SceneDistLogger] Added wall surface: {label} at {worldPos}");
         }
 
@@ -204,6 +205,7 @@ public class QuestSceneDistanceLogger : MonoBehaviour
         {
             float minDist = float.MaxValue;
             string closestLabel = "";
+            int closestIndex = -1;
             Surface closestWall = default;
 
             var sb = new StringBuilder();
@@ -214,18 +216,19 @@ public class QuestSceneDistanceLogger : MonoBehaviour
             foreach (var surface in _surfaces)
             {
                 float dist = Mathf.Abs(Vector3.Dot(hmdPos - surface.position, surface.normal));
-                sb.AppendLine($"Wall: {dist:F3}m");
+                sb.AppendLine($"Wall {surface.index}: {dist:F3}m");
 
                 if (dist < minDist)
                 {
                     minDist = dist;
                     closestLabel = surface.label;
+                    closestIndex = surface.index;
                     closestWall = surface;
                 }
             }
 
             sb.AppendLine();
-            sb.AppendLine($"Closest Wall: {closestLabel}");
+            sb.AppendLine($"Closest Wall: #{closestIndex} ({closestLabel})");
             sb.AppendLine($"Distance: {minDist:F3}m");
             sb.AppendLine();
             sb.AppendLine("[Motion Features]");
