@@ -1,7 +1,7 @@
 """Camera-based risk recognition MVP."""
 
 from .camera import MockCameraSource, OpenCVCameraSource
-from .detector import FakeDetector, OpenCVFaceDetector, OnnxPersonDetector
+from .detector import FakeDetector, OnnxPersonDetector
 from .location import RelativeLocationEstimator
 from .motion import HistoryMotionEstimator
 from .output import (
@@ -19,7 +19,6 @@ __all__ = [
     "LatestJsonFilePublisher",
     "MockCameraSource",
     "OpenCVCameraSource",
-    "OpenCVFaceDetector",
     "OnnxPersonDetector",
     "HistoryMotionEstimator",
     "NdjsonRiskOutputPublisher",
