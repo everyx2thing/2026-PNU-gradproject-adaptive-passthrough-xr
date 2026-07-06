@@ -21,17 +21,12 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import classification_report, accuracy_score
 import joblib
 
+from config import FEATURE_COLUMNS, N_MIN_SESSIONS
+
 DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
 MODEL_DIR = os.path.join(os.path.dirname(__file__), "..", "models")
 
-FEATURE_COLUMNS = [
-    "f_pt", "r_cancel", "t_pt_bar", "v_h_bar", "v_h_max",
-    "A_space_norm", "T_session_norm",
-]
 LABEL_COLUMN = "window_label"
-
-# Cold-start 처리 기준 (3.4.2절): 세션 수가 이보다 적으면 기본 가중치 w_Default 사용
-N_MIN_SESSIONS = 5  # TODO: 하이퍼파라미터, 실험 필요
 
 
 def main():

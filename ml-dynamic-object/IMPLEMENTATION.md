@@ -24,7 +24,6 @@ Mock 또는 USB 카메라
 | CameraSource | `OpenCVCameraSource` | OpenCV로 USB 카메라의 BGR 프레임 수집 |
 | Detector | `FakeDetector` | Mock 프레임의 Detection 반환 |
 | Detector | `OnnxPersonDetector` | YOLOv8n ONNX로 사람 전체 bbox 검출 |
-| Detector | `OpenCVFaceDetector` | 얼굴 검출용 보조·테스트 구현 |
 | Tracker | `SimpleTracker` | 같은 label의 bbox 중심점 거리를 이용해 track ID 유지 |
 | MotionEstimator | `HistoryMotionEstimator` | 최근 이력에서 접근·정지·후퇴 및 TTC 추정 |
 | LocationEstimator | `RelativeLocationEstimator` | 화면 구역, 사용자 방향, 상대 거리 구간 계산 |
@@ -270,4 +269,3 @@ run_camera.cmd --camera 1 --frames 300 --preview
 - Unity Passthrough 시각화
 - FastAPI/PostgreSQL/Dashboard
 - 사용자 로그 기반 개인화
-

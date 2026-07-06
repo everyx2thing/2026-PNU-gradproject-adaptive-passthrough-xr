@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from .detector import FakeDetector, OpenCVFaceDetector, OnnxPersonDetector
+from .detector import FakeDetector, OnnxPersonDetector
 from .location import RelativeLocationEstimator
 from .motion import HistoryMotionEstimator
 from .pipeline import RiskPipeline
@@ -20,11 +20,11 @@ def create_default_pipeline() -> RiskPipeline:
     )
 
 
-def create_opencv_pipeline(detector=None) -> RiskPipeline:
+def create_opencv_pipeline(detector) -> RiskPipeline:
     """Build a pipeline for actual OpenCV image frames."""
 
     return RiskPipeline(
-        detector=detector if detector is not None else OpenCVFaceDetector(),
+        detector=detector,
         tracker=SimpleTracker(),
         motion_estimator=HistoryMotionEstimator(),
         location_estimator=RelativeLocationEstimator(),
