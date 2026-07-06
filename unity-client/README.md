@@ -31,6 +31,7 @@ Meta Quest 기반 XR 안전 실험 프로토타입
 ## Status
 
 - 구현 완료: `Rcollision`, `Rstate`, `Rtotal` 계산 및 UI 표시
+- 진행 중: 실제 Quest 헤드셋 실험을 통해 `safeDistance`, `safeTime`, `maxApproachAccel`, 위험도 가중치, `passthroughOnThreshold` 등 실험용 계수 조정
 - 미구현: 실제 Passthrough 제어, `Rdynamic`, `Rintent`, ML 개인화, 다양한 시각화 방식
 
 ## Details
