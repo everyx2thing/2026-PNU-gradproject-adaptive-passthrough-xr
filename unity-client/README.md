@@ -33,4 +33,4 @@
 
 ## Details
 
-자세한 구현 내용은 [PROTOTYPE_DETAILS.md](unity-client/PROTOTYPE_DETAILS.md)를 참고하세요.
+자세한 구현 내용은 [PROTOTYPE_DETAILS.md](PROTOTYPE_DETAILS.md)를 참고하세요.
