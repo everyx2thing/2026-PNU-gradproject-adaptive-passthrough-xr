@@ -138,5 +138,7 @@ InitTestScene*.unity*
 ml-personalization/data/*.csv
 ml-personalization/models/*.joblib
 ml-personalization/models/*.onnx
- 
- 
+
+# Local test, analysis, and editor artifacts
+/tmp/
+/unity-client/.vscode/

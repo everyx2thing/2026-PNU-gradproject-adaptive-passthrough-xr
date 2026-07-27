@@ -20,4 +20,5 @@
   <uses-feature android:name="oculus.software.handtracking" android:required="false" />
   <uses-permission android:name="com.oculus.permission.HAND_TRACKING" />
   <uses-permission android:name="com.oculus.permission.USE_SCENE" />
+  <uses-permission android:name="horizonos.permission.HEADSET_CAMERA" />
 </manifest>

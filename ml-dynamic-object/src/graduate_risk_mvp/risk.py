@@ -55,15 +55,15 @@ class WeightedRiskEstimator(RiskEstimator):
         score = (
             0.30 * proximity_factor
             + 0.30 * approach_factor
-            + 0.20 * ttc_factor
-            + 0.15 * collision_path_factor
+            + 0.15 * ttc_factor
+            + 0.10 * collision_path_factor
             + 0.05 * label_factor
         )
-        score += 0.15 * proximity_factor * approach_factor
+        score += 0.10 * proximity_factor * approach_factor
         score *= 0.5 + 0.5 * detection.confidence
         if motion.state == "receding":
             score *= 0.55
-        score = round(max(0.0, min(score, 1.0)), 3)
+        score = max(0.0, min(score, 1.0))
 
         reasons: list[str] = []
         if location.distance_band == "near":

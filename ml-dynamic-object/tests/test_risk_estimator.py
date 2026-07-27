@@ -1,3 +1,5 @@
+import pytest
+
 from graduate_risk_mvp.location import RelativeLocationEstimator
 from graduate_risk_mvp.models import (
     BBoxNorm,
@@ -109,3 +111,27 @@ def test_slow_near_approach_reaches_warning_level() -> None:
     assert risk.score >= 0.5
     assert risk.level == "warning"
     assert "approach_confirmed" in risk.reasons
+
+
+def test_report_formula_weights_are_applied_exactly() -> None:
+    location_estimator = RelativeLocationEstimator()
+    risk_estimator = WeightedRiskEstimator()
+    tracked = TrackedObject(
+        track_id=1,
+        detection=Detection(
+            label="person",
+            confidence=1.0,
+            bbox=BBoxNorm(cx=0.5, cy=0.5, w=0.4, h=0.4),
+        ),
+        area_growth_rate=0.0,
+    )
+
+    risk = risk_estimator.estimate(
+        tracked,
+        location_estimator.estimate(tracked),
+        _motion("approaching", rate=0.15, ttc=2.0),
+    )
+
+    # 0.30 proximity + 0.30 approach + 0.15 TTC + 0.10 path
+    # + 0.05 * person-type(0.65) + 0.10 proximity*approach
+    assert risk.score == pytest.approx(0.9825)
