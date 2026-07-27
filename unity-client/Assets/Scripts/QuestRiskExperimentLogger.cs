@@ -1,23 +1,9 @@
 using System.Collections.Generic;
 using System.Text;
+using TeamVR.AdaptivePassthrough;
 using UnityEngine;
 using UnityEngine.Android;
 using UnityEngine.UI;
-
-public enum UserMotionState
-{
-    Static,
-    Dynamic,
-    Agitated
-}
-
-public enum RiskLevel
-{
-    Safe,
-    Caution,
-    Warning,
-    Danger
-}
 
 public class QuestRiskExperimentLogger : MonoBehaviour
 {
@@ -33,13 +19,9 @@ public class QuestRiskExperimentLogger : MonoBehaviour
     [SerializeField] private Text riskLabelText;
     [SerializeField] private Transform labelRoot;
 
-    [Header("User State Thresholds")]
-    [SerializeField] private float staticHeadSpeedThreshold = 0.05f;
-    [SerializeField] private float staticHeadAccelThreshold = 0.3f;
-    [SerializeField] private float staticHeadAngularThreshold = 0.3f;
-    [SerializeField] private float agitatedHeadSpeedThreshold = 1.0f;
-    [SerializeField] private float agitatedHeadAccelThreshold = 5.0f;
-    [SerializeField] private float agitatedHeadAngularThreshold = 2.5f;
+    [Header("User State Stabilization")]
+    [SerializeField] private UserMotionStateFilterSettings userMotionSettings =
+        new UserMotionStateFilterSettings();
 
     [Header("Risk Parameters")]
     [SerializeField] private float safeDistance = 0.8f;
@@ -56,25 +38,84 @@ public class QuestRiskExperimentLogger : MonoBehaviour
     [Range(0f, 1f)]
     [SerializeField] private float weightBlind = 0.15f;
 
-    [Header("Total Risk Weights")]
-    [Range(0f, 1f)]
-    [SerializeField] private float weightCollisionTotal = 0.6f;
-    [Range(0f, 1f)]
-    [SerializeField] private float weightStateTotal = 0.4f;
-    [Range(0f, 1f)]
-    [SerializeField] private float weightDynamicTotal = 0.0f;
-    [Range(0f, 1f)]
-    [SerializeField] private float weightIntentTotal = 0.0f;
-
-    [Header("Passthrough Decision")]
-    [Range(0f, 1f)]
-    [SerializeField] private float passthroughOnThreshold = 0.6f;
+    [Header("Dynamic Object Risk")]
+    [SerializeField] private DynamicRiskController dynamicRiskController;
 
     private const string ScenePermission = "com.oculus.permission.USE_SCENE";
     private readonly List<WallSurface> _wallSurfaces = new();
     private string _displayText = "Initializing (Risk Experiment)...";
     private string _riskDisplayText = "[User State]\nWaiting for scene data...\n\n[Risk Score]\nWaiting for scene data...";
     private bool _sceneLoaded = false;
+    private QuestRiskSnapshotController _snapshotController;
+
+    [System.Obsolete("Use QuestRiskSnapshotController.Latest.Static.Risk.")]
+    public float LastStaticRisk
+    {
+        get
+        {
+            return _snapshotController != null
+                && _snapshotController.Latest != null
+                ? _snapshotController.Latest.Static.Risk
+                : 0f;
+        }
+    }
+
+    [System.Obsolete("Use QuestRiskSnapshotController.Latest.UserState.Risk.")]
+    public float LastStateRisk
+    {
+        get
+        {
+            return _snapshotController != null
+                && _snapshotController.Latest != null
+                ? _snapshotController.Latest.UserState.Risk
+                : 0f;
+        }
+    }
+
+    [System.Obsolete("Use QuestRiskSnapshotController.Latest.Dynamic.MaximumRisk.")]
+    public float LastDynamicRisk
+    {
+        get
+        {
+            return _snapshotController != null
+                && _snapshotController.Latest != null
+                ? _snapshotController.Latest.Dynamic.MaximumRisk
+                : 0f;
+        }
+    }
+
+    [System.Obsolete("Use QuestRiskSnapshotController.Latest.Overall.TotalRisk.")]
+    public float LastTotalRisk
+    {
+        get
+        {
+            return _snapshotController != null
+                && _snapshotController.Latest != null
+                ? _snapshotController.Latest.Overall.TotalRisk
+                : 0f;
+        }
+    }
+
+    [System.Obsolete("Use QuestRiskSnapshotController.Latest.Passthrough.Enabled.")]
+    public bool LastPassthroughDecision
+    {
+        get
+        {
+            return _snapshotController != null
+                && _snapshotController.Latest != null
+                && _snapshotController.Latest.Passthrough.Enabled;
+        }
+    }
+
+    public UserMotionState CurrentUserState { get; private set; } =
+        UserMotionState.Static;
+    public UserMotionSnapshot CurrentMotionSnapshot { get; private set; }
+    public StaticRiskMeasurement CurrentStaticMeasurement { get; private set; } =
+        StaticRiskMeasurement.Unavailable;
+    public bool SceneDataAvailable
+    {
+        get { return _sceneLoaded && _wallSurfaces.Count > 0; }
+    }
 
     // OVRCameraRig and tracked transforms
     private OVRCameraRig _cameraRig;
@@ -83,15 +124,23 @@ public class QuestRiskExperimentLogger : MonoBehaviour
     private Transform _rightHandTransform;
 
     // Motion state
-    private Vector3 _prevHmdPos;
-    private Vector3 _prevHmdVelocity;
-    private Quaternion _prevHmdRot;
     private Vector3 _prevLeftPos;
     private Vector3 _prevRightPos;
-    private bool _firstFrame = true;
+    private bool _firstHandFrame = true;
+    private UserMotionStateFilter _motionStateFilter;
 
     void Start()
     {
+        _motionStateFilter = new UserMotionStateFilter(userMotionSettings);
+
+        if (dynamicRiskController == null)
+        {
+            dynamicRiskController = FindObjectOfType<DynamicRiskController>();
+        }
+
+        _snapshotController =
+            FindObjectOfType<QuestRiskSnapshotController>();
+
         _cameraRig = FindObjectOfType<OVRCameraRig>();
         if (_cameraRig != null)
         {
@@ -190,25 +239,6 @@ public class QuestRiskExperimentLogger : MonoBehaviour
     private static float Safe(float v) =>
         float.IsNaN(v) || float.IsInfinity(v) ? 0f : v;
 
-    private UserMotionState ClassifyUserState(float hmdSpeed, float hmdAccelMag, float hmdAngularSpeed)
-    {
-        if (hmdSpeed < staticHeadSpeedThreshold &&
-            hmdAccelMag < staticHeadAccelThreshold &&
-            hmdAngularSpeed < staticHeadAngularThreshold)
-        {
-            return UserMotionState.Static;
-        }
-
-        if (hmdSpeed > agitatedHeadSpeedThreshold ||
-            hmdAccelMag > agitatedHeadAccelThreshold ||
-            hmdAngularSpeed > agitatedHeadAngularThreshold)
-        {
-            return UserMotionState.Agitated;
-        }
-
-        return UserMotionState.Dynamic;
-    }
-
     private static float GetStateRisk(UserMotionState state)
     {
         switch (state)
@@ -220,14 +250,6 @@ public class QuestRiskExperimentLogger : MonoBehaviour
             default:
                 return 0.5f;
         }
-    }
-
-    private static RiskLevel ClassifyRiskLevel(float r)
-    {
-        if (r < 0.3f) return RiskLevel.Safe;
-        if (r < 0.6f) return RiskLevel.Caution;
-        if (r < 0.8f) return RiskLevel.Warning;
-        return RiskLevel.Danger;
     }
 
     void Update()
@@ -245,27 +267,41 @@ public class QuestRiskExperimentLogger : MonoBehaviour
         {
             hmdPos = _hmdTransform.position;
             Quaternion hmdRot = _hmdTransform.rotation;
-
-            if (_firstFrame)
+            if (_motionStateFilter == null)
             {
-                _prevHmdPos = hmdPos;
-                _prevHmdVelocity = Vector3.zero;
-                _prevHmdRot = hmdRot;
+                _motionStateFilter = new UserMotionStateFilter(userMotionSettings);
+            }
+
+            CurrentMotionSnapshot = _motionStateFilter.Update(
+                Time.realtimeSinceStartupAsDouble,
+                hmdPos,
+                hmdRot);
+            hmdVelocity = CurrentMotionSnapshot.FilteredVelocity;
+            hmdSpeed = Safe(CurrentMotionSnapshot.FilteredSpeed);
+            hmdAccelVector = CurrentMotionSnapshot.FilteredAcceleration;
+            hmdAccelMag = Safe(CurrentMotionSnapshot.FilteredAccelerationMagnitude);
+            hmdAngularSpeed = Safe(CurrentMotionSnapshot.FilteredAngularSpeed);
+            CurrentUserState = CurrentMotionSnapshot.StableState;
+
+            if (CurrentMotionSnapshot.StateChanged)
+            {
+                Debug.Log(
+                    string.Format(
+                        "[UserMotion] state={0} speed={1:F3} accel={2:F3} angular={3:F3}",
+                        CurrentUserState,
+                        hmdSpeed,
+                        hmdAccelMag,
+                        hmdAngularSpeed));
+            }
+
+            if (_firstHandFrame)
+            {
                 _prevLeftPos = _leftHandTransform != null ? _leftHandTransform.position : Vector3.zero;
                 _prevRightPos = _rightHandTransform != null ? _rightHandTransform.position : Vector3.zero;
-                _firstFrame = false;
+                _firstHandFrame = false;
             }
             else if (dt > 0f)
             {
-                hmdVelocity = (hmdPos - _prevHmdPos) / dt;
-                hmdSpeed = Safe(hmdVelocity.magnitude);
-
-                hmdAccelVector = (hmdVelocity - _prevHmdVelocity) / dt;
-                hmdAccelMag = Safe(hmdAccelVector.magnitude);
-
-                float angleDeg = Quaternion.Angle(hmdRot, _prevHmdRot);
-                hmdAngularSpeed = Safe(angleDeg * Mathf.Deg2Rad / dt);
-
                 if (_leftHandTransform != null)
                 {
                     leftSpeed = Safe((_leftHandTransform.position - _prevLeftPos).magnitude / dt);
@@ -277,15 +313,17 @@ public class QuestRiskExperimentLogger : MonoBehaviour
                     rightSpeed = Safe((_rightHandTransform.position - _prevRightPos).magnitude / dt);
                     _prevRightPos = _rightHandTransform.position;
                 }
-
-                _prevHmdPos = hmdPos;
-                _prevHmdVelocity = hmdVelocity;
-                _prevHmdRot = hmdRot;
             }
         }
 
         float avgHandSpeed = (leftSpeed + rightSpeed) * 0.5f;
         float handHeadRatio = Safe(avgHandSpeed / (hmdSpeed + 0.001f));
+        UserMotionState userState = CurrentUserState;
+        float rState = GetStateRisk(userState);
+        float rDynamic = dynamicRiskController != null
+            ? dynamicRiskController.LatestMaximumRisk
+            : 0f;
+        float rIntent = 0f;
 
         // UI panel fixed 2m ahead of camera
         Transform cam = _hmdTransform != null ? _hmdTransform
@@ -296,8 +334,41 @@ public class QuestRiskExperimentLogger : MonoBehaviour
             labelRoot.rotation = cam.rotation;
         }
 
+        if (!_sceneLoaded || _wallSurfaces.Count == 0)
+        {
+            CurrentStaticMeasurement = StaticRiskMeasurement.Unavailable;
+            int trackedPeople = dynamicRiskController != null
+                && dynamicRiskController.LatestFrame != null
+                ? dynamicRiskController.LatestFrame.ConfirmedPersonCount
+                : 0;
+
+            var sb = new StringBuilder();
+            sb.AppendLine("[Scene Distance]");
+            sb.AppendLine("Unavailable (Space Setup is optional for dynamic-risk testing)");
+            sb.AppendLine();
+            sb.AppendLine("[Dynamic Detection]");
+            sb.AppendLine($"Tracked People: {trackedPeople}");
+            sb.AppendLine($"Maximum Rdynamic: {rDynamic:F2}");
+            sb.AppendLine(
+                trackedPeople == 0
+                    ? "Status: Waiting for camera detections"
+                    : "Status: Dynamic-risk pipeline active");
+            _displayText = sb.ToString();
+
+            var sbRight = new StringBuilder();
+            sbRight.AppendLine("[User State]");
+            sbRight.AppendLine($"State: {userState}");
+            sbRight.AppendLine($"Rstate: {rState:F2}");
+            sbRight.AppendLine();
+            sbRight.AppendLine("[Risk Snapshot Input]");
+            sbRight.AppendLine("Rstatic: unavailable");
+            sbRight.AppendLine($"Rdynamic: {rDynamic:F2}");
+            sbRight.AppendLine($"Rintent: {rIntent:F2}");
+            sbRight.AppendLine("Final risk: see compact snapshot HUD");
+            _riskDisplayText = sbRight.ToString();
+        }
         // Distance + risk (WallFace / InvisibleWallFace only)
-        if (_sceneLoaded && _wallSurfaces.Count > 0)
+        else
         {
             float minDist = float.MaxValue;
             int closestIndex = -1;
@@ -322,10 +393,6 @@ public class QuestRiskExperimentLogger : MonoBehaviour
             bool approachingWall = towardWallSpeed > 0.01f;
             float ttc = approachingWall ? minDist / towardWallSpeed : float.PositiveInfinity;
 
-            // User state classification
-            UserMotionState userState = ClassifyUserState(hmdSpeed, hmdAccelMag, hmdAngularSpeed);
-            float rState = GetStateRisk(userState);
-
             // Static collision risk score
             float rd = Safe(1f - Mathf.Clamp01(minDist / safeDistance));
             float rttc = (!approachingWall || float.IsInfinity(ttc)) ? 0f : Safe(1f - Mathf.Clamp01(ttc / safeTime));
@@ -342,28 +409,23 @@ public class QuestRiskExperimentLogger : MonoBehaviour
             float collisionWeightSum = weightDistance + weightTTC + weightApproachAccel + weightBlind;
             if (collisionWeightSum == 0f) collisionWeightSum = 1f;
 
-            float rCollision = Safe(
+            float rStatic = Safe(
                 (weightDistance * rd
                 + weightTTC * rttc
                 + weightApproachAccel * ra
                 + weightBlind * rBlind) / collisionWeightSum);
-
-            // AI/ML 기반 동적 객체 위험도와 접근 의도 위험도는 추후 구현 예정이므로 현재는 0으로 고정한다.
-            float rDynamic = 0f;
-            float rIntent = 0f;
-
-            float totalWeightSum = weightCollisionTotal + weightStateTotal + weightDynamicTotal + weightIntentTotal;
-            if (totalWeightSum == 0f) totalWeightSum = 1f;
-
-            float rTotal = Safe(
-                (weightCollisionTotal * rCollision
-                + weightStateTotal * rState
-                + weightDynamicTotal * rDynamic
-                + weightIntentTotal * rIntent) / totalWeightSum);
-
-            bool shouldEnablePassthrough = rTotal >= passthroughOnThreshold;
-
-            RiskLevel riskLevel = ClassifyRiskLevel(rTotal);
+            CurrentStaticMeasurement = new StaticRiskMeasurement(
+                true,
+                minDist,
+                float.IsInfinity(ttc) ? 0f : ttc,
+                !float.IsInfinity(ttc),
+                towardWallSpeed,
+                towardWallAccel,
+                rd,
+                rttc,
+                ra,
+                rBlind,
+                rStatic);
 
             var sb = new StringBuilder();
             sb.AppendLine("[Scene Distance]");
@@ -391,21 +453,18 @@ public class QuestRiskExperimentLogger : MonoBehaviour
             sbRight.AppendLine($"State: {userState}");
             sbRight.AppendLine($"Rstate: {rState:F2}");
             sbRight.AppendLine();
-            sbRight.AppendLine("[Collision Risk]");
+            sbRight.AppendLine("[Static Environment Risk]");
             sbRight.AppendLine($"Rd: {rd:F2}");
             sbRight.AppendLine($"RTTC: {rttc:F2}");
             sbRight.AppendLine($"Ra: {ra:F2}");
             sbRight.AppendLine($"Theta To Wall: {thetaToWall:F1} deg");
             sbRight.AppendLine($"Rblind: {rBlind:F2}");
-            sbRight.AppendLine($"Rcollision: {rCollision:F2}");
+            sbRight.AppendLine($"Rstatic: {rStatic:F2}");
             sbRight.AppendLine();
-            sbRight.AppendLine("[Total Risk]");
+            sbRight.AppendLine("[Risk Snapshot Input]");
             sbRight.AppendLine($"Rdynamic = {rDynamic:F2}");
             sbRight.AppendLine($"Rintent = {rIntent:F2}");
-            sbRight.AppendLine($"Rtotal: {rTotal:F2}");
-            sbRight.AppendLine($"Risk Level: {riskLevel}");
-            sbRight.AppendLine($"Passthrough Threshold: {passthroughOnThreshold:F2}");
-            sbRight.AppendLine($"Passthrough Decision: {(shouldEnablePassthrough ? "ON" : "OFF")}");
+            sbRight.AppendLine("Final risk: see compact snapshot HUD");
 
             _displayText = sb.ToString();
             _riskDisplayText = sbRight.ToString();

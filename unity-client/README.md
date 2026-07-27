@@ -25,6 +25,23 @@
 4. (앱 실행 전) 헤드셋에서 Space Setup(Room Setup) 완료
 5. 실행 후 UI에서 거리, 움직임 Feature, 위험도, Passthrough 판단 결과 확인
 
+## 빌드된 APK 설치와 재실행
+
+현재 빌드 APK:
+
+```text
+Builds/Android/AdaptivePassthrough.apk
+```
+
+Quest 3를 USB 디버깅이 허용된 상태로 연결한 뒤
+`Tools/Install-Quest3.cmd`를 더블클릭하면 실행 정책을 별도로 변경하지 않고
+APK를 덮어쓰기 설치하고 앱을 자동 실행합니다. 다른 Android 기기가 함께
+연결되어 있어도 Quest가 한 대이면 자동으로 선택합니다.
+
+한 번 설치한 뒤에는 USB 연결이 필요하지 않습니다. Quest 앱 라이브러리에서
+필터를 `알 수 없는 출처(Unknown Sources)`로 변경하고
+`Adaptive Passthrough`를 선택하면 언제든 다시 실행할 수 있습니다.
+
 ## Status
 
 - 구현 완료: `Rcollision`, `Rstate`, `Rtotal` 계산 및 UI 표시

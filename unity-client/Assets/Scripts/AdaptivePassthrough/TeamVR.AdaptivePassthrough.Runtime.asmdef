@@ -1,0 +1,23 @@
+{
+  "name": "TeamVR.AdaptivePassthrough.Runtime",
+  "rootNamespace": "TeamVR.AdaptivePassthrough",
+  "references": [
+    "meta.xr.mrutilitykit",
+    "Unity.InferenceEngine"
+  ],
+  "includePlatforms": [],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": true,
+  "defineConstraints": [],
+  "versionDefines": [
+    {
+      "name": "com.meta.xr.mrutilitykit",
+      "expression": "203.0.0",
+      "define": "ADAPTIVE_PASSTHROUGH_QUEST_CAMERA"
+    }
+  ],
+  "noEngineReferences": false
+}
