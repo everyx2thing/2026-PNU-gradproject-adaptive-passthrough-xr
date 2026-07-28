@@ -11,6 +11,7 @@ Unity Sentis 로드 테스트는 Unity 프로젝트가 준비되면 별도로 �
 지금 이 스크립트는 "서버에서 변환 → 파일로 저장"까지만 검증합니다.
 """
 
+import argparse
 import os
 import joblib
 import numpy as np
@@ -27,8 +28,15 @@ TARGET_MAX_SIZE_MB = 50  # 3.4.4절 목표 모델 크기
 
 
 def main():
-    model_path = os.path.join(MODEL_DIR, "rf_personalization.joblib")
-    onnx_path = os.path.join(MODEL_DIR, "rf_personalization.onnx")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--source", choices=["mock", "real"], default="mock",
+                         help="train_model.py --source와 맞춰서 사용 (mock/real 모델 파일 구분)")
+    args = parser.parse_args()
+
+    model_filename = "rf_personalization.joblib" if args.source == "mock" else "rf_personalization_real.joblib"
+    onnx_filename = "rf_personalization.onnx" if args.source == "mock" else "rf_personalization_real.onnx"
+    model_path = os.path.join(MODEL_DIR, model_filename)
+    onnx_path = os.path.join(MODEL_DIR, onnx_filename)
 
     print(f"모델 로드: {model_path}")
     model = joblib.load(model_path)
@@ -52,7 +60,7 @@ def main():
     print("\n=== 변환 검증 (sklearn vs ONNX 예측 비교) ===")
 
     import pandas as pd
-    df = pd.read_csv(os.path.join(DATA_DIR, "mock_features.csv"))
+    df = pd.read_csv(os.path.join(DATA_DIR, f"{args.source}_features.csv"))
     X_sample = df[FEATURE_COLUMNS].values.astype(np.float32)[:10]  # 샘플 10개만 비교
 
     # sklearn 예측

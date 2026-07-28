@@ -27,6 +27,7 @@ x = [f_pt, r_cancel, t_pt_bar, v_h_bar, v_h_max, A_space_norm, T_session_norm]
 기준이라 나중에 시간 기반으로 바꿀 가능성 있음 (TODO)
 """
 
+import argparse
 import csv
 import os
 from statistics import mean
@@ -34,6 +35,8 @@ from statistics import mean
 from config import (
     CANCEL_NEGATIVE_THRESHOLD, POSITIVE_THRESHOLD,
     DEFAULT_WINDOW_SIZE, DEFAULT_STRIDE,
+    REAL_CANCEL_NEGATIVE_THRESHOLD, REAL_POSITIVE_THRESHOLD,
+    REAL_WINDOW_SIZE, REAL_STRIDE,
 )
 
 EPS = 1e-6
@@ -49,15 +52,26 @@ def read_csv(path):
 
 
 def label_event(event):
-    """이벤트 하나에 대해 Positive / Negative / Neutral 라벨 부여"""
-    duration = float(event["duration_sec"])
-    is_cancelled = event["is_manual_cancel"] == "1"
+    """이벤트 하나에 대해 Positive / Negative / Neutral 라벨 부여
 
-    if is_cancelled and duration < CANCEL_NEGATIVE_THRESHOLD:
+    ## 설계 변경 (2026-07-28, 실제 Quest 로그 검증 후)
+    원래 규칙은 "수동 해제(is_manual_cancel) + 짧은 지속시간 = Negative" 였으나,
+    지금 앱에는 Passthrough를 사용자가 직접 끄는 기능 자체가 없어서
+    is_manual_cancel이 항상 0으로 고정됨 -> 원래 규칙으로는 Negative가
+    데이터를 아무리 모아도 절대 나올 수 없음 (데이터 부족이 아니라 설계 문제).
+
+    그래서 수동 해제 여부와 무관하게, "지속시간이 아주 짧게 저절로 꺼짐"을
+    노이즈성 반짝임(불필요했을 가능성 높음)으로 근사해서 Negative로 판단하도록
+    바꿈. is_manual_cancel 필드/컬럼 자체는 앞으로 실제 수동 제어 기능이
+    생기면 재도입할 수 있도록 이벤트 데이터에는 그대로 남겨둠 (TODO).
+    """
+    duration = float(event["duration_sec"])
+
+    if duration < CANCEL_NEGATIVE_THRESHOLD:
         return "Negative"
-    if (not is_cancelled) and duration >= POSITIVE_THRESHOLD:
+    if duration >= POSITIVE_THRESHOLD:
         return "Positive"
-    # 2~3초 구간 등 애매한 경계 케이스는 Neutral로 완충 처리 (TODO: 재검토)
+    # 두 임계값 사이 구간은 애매한 경계 케이스라 Neutral로 완충 처리 (TODO: 재검토)
     return "Neutral"
 
 
@@ -131,12 +145,15 @@ def build_feature_windows(events_by_session, sessions_by_id, space_range, tsessi
     return rows
 
 
-def load_sessions_and_events():
-    """mock_sessions.csv, mock_events.csv를 읽어서 build_feature_windows에 필요한
+def load_sessions_and_events(prefix="mock"):
+    """{prefix}_sessions.csv, {prefix}_events.csv를 읽어서 build_feature_windows에 필요한
     형태로 가공. hyperparam_tuning.py에서도 재사용하기 위해 분리함.
+
+    prefix="mock"  -> generate_mock_logs.py 결과물 (기본값, 기존 동작 그대로)
+    prefix="real"  -> fetch_real_logs.py 결과물 (실제 로그 연동 후 사용)
     """
-    sessions = read_csv(os.path.join(DATA_DIR, "mock_sessions.csv"))
-    events = read_csv(os.path.join(DATA_DIR, "mock_events.csv"))
+    sessions = read_csv(os.path.join(DATA_DIR, f"{prefix}_sessions.csv"))
+    events = read_csv(os.path.join(DATA_DIR, f"{prefix}_events.csv"))
 
     sessions_by_id = {s["session_id"]: s for s in sessions}
 
@@ -156,11 +173,28 @@ def load_sessions_and_events():
 
 
 def main():
-    sessions_by_id, events_by_session, space_range, tsession_range = load_sessions_and_events()
+    global CANCEL_NEGATIVE_THRESHOLD, POSITIVE_THRESHOLD, WINDOW_SIZE, STRIDE
 
-    rows = build_feature_windows(events_by_session, sessions_by_id, space_range, tsession_range)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--source", choices=["mock", "real"], default="mock",
+                         help="mock: generate_mock_logs.py 결과물 사용 (기본값) / "
+                              "real: fetch_real_logs.py / parse_risk_snapshot_log.py 결과물 사용")
+    args = parser.parse_args()
 
-    output_path = os.path.join(DATA_DIR, "mock_features.csv")
+    if args.source == "real":
+        CANCEL_NEGATIVE_THRESHOLD = REAL_CANCEL_NEGATIVE_THRESHOLD
+        POSITIVE_THRESHOLD = REAL_POSITIVE_THRESHOLD
+        WINDOW_SIZE = REAL_WINDOW_SIZE
+        STRIDE = REAL_STRIDE
+
+    sessions_by_id, events_by_session, space_range, tsession_range = load_sessions_and_events(args.source)
+
+    rows = build_feature_windows(
+        events_by_session, sessions_by_id, space_range, tsession_range,
+        window_size=WINDOW_SIZE, stride=STRIDE,
+    )
+
+    output_path = os.path.join(DATA_DIR, f"{args.source}_features.csv")
     fieldnames = [
         "session_id", "window_start_event", "f_pt", "r_cancel", "t_pt_bar",
         "v_h_bar", "v_h_max", "A_space_norm", "T_session_norm",
@@ -171,7 +205,8 @@ def main():
         writer.writeheader()
         writer.writerows(rows)
 
-    print(f"윈도우 {len(rows)}개 생성 완료 (WINDOW_SIZE={WINDOW_SIZE}, STRIDE={STRIDE})")
+    print(f"[{args.source}] 윈도우 {len(rows)}개 생성 완료 (WINDOW_SIZE={WINDOW_SIZE}, STRIDE={STRIDE}, "
+          f"CANCEL_NEGATIVE_THRESHOLD={CANCEL_NEGATIVE_THRESHOLD}, POSITIVE_THRESHOLD={POSITIVE_THRESHOLD})")
     print(f"라벨 분포: Positive={sum(1 for r in rows if r['window_label']=='Positive')}, "
           f"Negative={sum(1 for r in rows if r['window_label']=='Negative')}, "
           f"Neutral={sum(1 for r in rows if r['window_label']=='Neutral')}")

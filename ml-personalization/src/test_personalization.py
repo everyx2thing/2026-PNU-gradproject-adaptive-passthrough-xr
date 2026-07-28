@@ -7,6 +7,7 @@
 - Negative 비율이 높은 세션 vs 낮은 세션이 서로 다른 값을 받는지
 """
 
+import argparse
 import os
 import joblib
 import pandas as pd
@@ -33,10 +34,16 @@ def get_params_for_session(session_id, session_windows, model):
 
 
 def main():
-    model_path = os.path.join(MODEL_DIR, "rf_personalization.joblib")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--source", choices=["mock", "real"], default="mock",
+                         help="train_model.py --source와 맞춰서 사용")
+    args = parser.parse_args()
+
+    model_filename = "rf_personalization.joblib" if args.source == "mock" else "rf_personalization_real.joblib"
+    model_path = os.path.join(MODEL_DIR, model_filename)
     model = joblib.load(model_path)
 
-    df = pd.read_csv(os.path.join(DATA_DIR, "mock_features.csv"))
+    df = pd.read_csv(os.path.join(DATA_DIR, f"{args.source}_features.csv"))
 
     print(f"=== 세션별 개인화 파라미터 확인 (N_MIN_SESSIONS={N_MIN_SESSIONS}) ===\n")
 
