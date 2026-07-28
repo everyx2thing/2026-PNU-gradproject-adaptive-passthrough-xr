@@ -32,6 +32,7 @@ public sealed class RiskSnapshotSessionLogger : MonoBehaviour
         public float rintent;
         public bool rtotalAvailable;
         public float rtotal;
+	public float headSpeedMps;
         public string overallLevel;
         public bool passthroughEnabled;
         public string passthroughReason;
@@ -133,6 +134,7 @@ public sealed class RiskSnapshotSessionLogger : MonoBehaviour
             rintent = snapshot.Intent.Risk,
             rtotalAvailable = snapshot.Overall.Available,
             rtotal = snapshot.Overall.TotalRisk,
+	    headSpeedMps = snapshot.UserState.FilteredSpeed,
             overallLevel = snapshot.OverallLevel.ToString(),
             passthroughEnabled = snapshot.Passthrough.Enabled,
             passthroughReason = snapshot.Passthrough.Reason.ToString()
