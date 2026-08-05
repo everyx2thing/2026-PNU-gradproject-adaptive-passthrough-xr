@@ -40,16 +40,38 @@ EVENT_FIELDS = [
 
 
 def read_jsonl(path):
-    """UTF-16(파워쉘 Out-File 기본 인코딩)과 UTF-8 둘 다 시도해서 읽는다."""
+    """UTF-16(파워쉘 Out-File 기본 인코딩)과 UTF-8 둘 다 시도해서 읽는다.
+
+    실제 Quest 로그는 앱이 정상 종료(OnDisable)될 때만 파일이 깔끔하게 닫힌다.
+    USB 분리/배터리 부족/ADB 강제종료/Editor에서 Stop 등으로 비정상 종료되면
+    StreamWriter가 flush를 못 해서 마지막 줄이 중간에 끊긴 채로 남는 일이 실제로
+    흔하다. 이런 깨진 마지막 줄 때문에 파일 전체를 못 읽고 "인코딩을 인식 못 함"이라는
+    엉뚱한 에러가 나던 걸 수정 — 줄 단위로 파싱하다 실패하면 그 줄만 건너뛴다
+    (맨 끝이 아닌 중간 줄이 깨졌다면 로그 자체가 손상된 것이니 그건 그대로 실패시킴).
+    """
     for encoding in ("utf-8-sig", "utf-16"):
         try:
             with open(path, "r", encoding=encoding) as f:
                 lines = f.readlines()
-            # 정상적으로 JSON 파싱되는지 첫 줄로 확인
-            json.loads(lines[0])
-            return [json.loads(line) for line in lines if line.strip()]
+            non_empty = [line for line in lines if line.strip()]
+            json.loads(non_empty[0])  # 정상적으로 JSON 파싱되는지 첫 줄로 확인 (인코딩 판별용)
         except (UnicodeError, json.JSONDecodeError, IndexError):
             continue
+
+        records = []
+        for i, line in enumerate(non_empty):
+            try:
+                records.append(json.loads(line))
+            except json.JSONDecodeError:
+                if i == len(non_empty) - 1:
+                    print(f"경고: 마지막 줄이 중간에 끊겨 있어 건너뜁니다 "
+                          f"(앱이 비정상 종료됐을 가능성 높음) - {line[:80]!r}")
+                else:
+                    raise ValueError(
+                        f"'{path}'의 {i+1}번째 줄(마지막 줄 아님)이 손상되어 있습니다 — "
+                        "로그 파일 자체가 잘렸거나 병합 과정에서 깨졌을 수 있습니다."
+                    )
+        return records
     raise ValueError(f"'{path}' 인코딩을 인식하지 못했습니다 (utf-8-sig, utf-16 둘 다 실패)")
 
 
