@@ -508,142 +508,6 @@ Transform:
   m_Children: []
   m_Father: {fileID: 645315636}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!1 &103309994
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 103309996}
-  - component: {fileID: 103309995}
-  m_Layer: 0
-  m_Name: BoundaryLogger
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 0
---- !u!114 &103309995
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 103309994}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: df13963b9bc9eb64dac9bcbe58a1f8b3, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::QuestBoundaryLogger
---- !u!4 &103309996
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 103309994}
-  serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!1 &109171255
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 109171256}
-  - component: {fileID: 109171259}
-  - component: {fileID: 109171258}
-  - component: {fileID: 109171257}
-  m_Layer: 0
-  m_Name: QuestRiskHudPanel
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!224 &109171256
-RectTransform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 109171255}
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children:
-  - {fileID: 579188812}
-  m_Father: {fileID: 954923358}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 0.5, y: 0.5}
-  m_AnchorMax: {x: 0.5, y: 0.5}
-  m_AnchoredPosition: {x: 0, y: 0}
-  m_SizeDelta: {x: 820, y: 260}
-  m_Pivot: {x: 0.5, y: 0.5}
---- !u!114 &109171257
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 109171255}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 46a13eae6cfdf6d42aadbf0f52512e49, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::QuestRiskHud
-  snapshotController: {fileID: 458888771}
-  summaryText: {fileID: 579188813}
-  refreshRateHz: 5
---- !u!114 &109171258
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 109171255}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: fe87c0e1cc204ed48ad3b37840f39efc, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: UnityEngine.UI::UnityEngine.UI.Image
-  m_Material: {fileID: 0}
-  m_Color: {r: 0.02, g: 0.03, b: 0.05, a: 0.82}
-  m_RaycastTarget: 0
-  m_RaycastPadding: {x: 0, y: 0, z: 0, w: 0}
-  m_Maskable: 1
-  m_OnCullStateChanged:
-    m_PersistentCalls:
-      m_Calls: []
-  m_Sprite: {fileID: 0}
-  m_Type: 0
-  m_PreserveAspect: 0
-  m_FillCenter: 1
-  m_FillMethod: 4
-  m_FillAmount: 1
-  m_FillClockwise: 1
-  m_FillOrigin: 0
-  m_UseSpriteMesh: 0
-  m_PixelsPerUnitMultiplier: 1
---- !u!222 &109171259
-CanvasRenderer:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 109171255}
-  m_CullTransparentMesh: 1
 --- !u!1 &111066753
 GameObject:
   m_ObjectHideFlags: 0
@@ -2240,216 +2104,6 @@ Transform:
   m_Children: []
   m_Father: {fileID: 1501745238}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!1 &458888762
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 458888767}
-  - component: {fileID: 458888766}
-  - component: {fileID: 458888765}
-  - component: {fileID: 458888764}
-  - component: {fileID: 458888763}
-  - component: {fileID: 458888769}
-  - component: {fileID: 458888768}
-  - component: {fileID: 458888771}
-  - component: {fileID: 458888770}
-  m_Layer: 0
-  m_Name: Adaptive Dynamic Risk System
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!114 &458888763
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 458888762}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 13c8596ef1ef64144bc8be4c95623685, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: TeamVR.AdaptivePassthrough.Runtime::TeamVR.AdaptivePassthrough.QuestCameraPermissionCoordinator
-  requestOnStart: 1
---- !u!114 &458888764
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 458888762}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 6300bcc59e5ce024dafd381fd0007602, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: TeamVR.AdaptivePassthrough.Runtime::TeamVR.AdaptivePassthrough.DynamicRiskSessionLogger
-  controller: {fileID: 0}
-  snapshotSequenceProviderBehaviour: {fileID: 458888771}
-  enableLogging: 1
-  flushEveryRecords: 10
-  filePrefix: dynamic-risk
---- !u!114 &458888765
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 458888762}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: b1397a4869f55684cac0e0283843eaf3, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: TeamVR.AdaptivePassthrough.Runtime::TeamVR.AdaptivePassthrough.DynamicRiskDebugOverlay
-  controller: {fileID: 0}
-  visible: 1
-  developmentBuildOnly: 1
-  drawPanelBackground: 0
-  showHeader: 0
-  normalizedViewport:
-    serializedVersion: 2
-    x: 0.05
-    y: 0.18
-    width: 0.9
-    height: 0.72
-  fontSize: 22
---- !u!114 &458888766
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 458888762}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: b7bd1575561a8604ab2bdb8a2eee837c, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: TeamVR.AdaptivePassthrough.Runtime::TeamVR.AdaptivePassthrough.DynamicRiskController
-  riskSettings:
-    proximityWeight: 0.3
-    approachWeight: 0.3
-    ttcWeight: 0.15
-    collisionPathWeight: 0.1
-    objectTypeWeight: 0.05
-    proximityApproachWeight: 0.1
-    recedingMultiplier: 0.55
-    approachRateAtMaximumRisk: 0.15
-    criticalTtcSeconds: 2
-    zeroRiskTtcSeconds: 15
-    centerApproachRateAtMaximumRisk: 0.3
-  targetLabel: person
---- !u!4 &458888767
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 458888762}
-  serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!114 &458888768
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 458888762}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 1e7918deea2b7c94b8a4a46b1172dc79, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: TeamVR.AdaptivePassthrough.Runtime::TeamVR.AdaptivePassthrough.QuestPersonDetectionRunner
-  controller: {fileID: 458888766}
-  permissionCoordinator: {fileID: 458888763}
-  cameraAccess: {fileID: 458888769}
-  modelAsset: {fileID: 5022602860645237092, guid: 1d795a1c44f3121489a7c2cacdff3368, type: 3}
-  backend: 512
-  confidenceThreshold: 0.55
-  iouThreshold: 0.45
-  inferenceRateHz: 10
-  personClassId: 0
-  flipVertical: 0
-  boxesAreCenterFormat: 1
-  boxesAreNormalized: 0
-  maximumCandidates: 50
-  maximumDetections: 10
-  minimumVisibleFraction: 0.15
-  maximumNormalizedDimension: 2
-  diagnosticInferenceCount: 10
---- !u!114 &458888769
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 458888762}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: ef9a7893e57c04c0db4114c70954b915, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: meta.xr.mrutilitykit::Meta.XR.PassthroughCameraAccess
-  CameraPosition: 0
-  RequestedResolution: {x: 1280, y: 960}
-  _maxFramerate: 60
-  TargetMaterial: {fileID: 0}
-  _texturePropertyName: 
---- !u!114 &458888770
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 458888762}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 174022869de48cd49925d74b377f0476, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::RiskSnapshotSessionLogger
-  snapshotController: {fileID: 458888771}
-  enableLogging: 1
-  maximumLogRateHz: 10
-  flushEveryRecords: 10
-  filePrefix: risk-snapshot
---- !u!114 &458888771
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 458888762}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: e2eec905c6ab1cf40876e3b77288d3bf, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::QuestRiskSnapshotController
-  measurementProvider: {fileID: 1676843309}
-  dynamicRiskController: {fileID: 458888766}
-  detectionRunner: {fileID: 458888768}
-  snapshotRateHz: 20
-  settings:
-    weights:
-      staticRisk: 0.4
-      stateRisk: 0.2
-      dynamicRisk: 0.4
-      intentRisk: 0
-    passthrough:
-      mode: 0
-      onThreshold: 0.6
-      offThreshold: 0.5
-      minimumHoldSeconds: 0.5
-    dynamicStaleAfterSeconds: 0.5
-  logAvailabilityTransitions: 1
 --- !u!1 &464549247
 GameObject:
   m_ObjectHideFlags: 0
@@ -3048,146 +2702,6 @@ Transform:
   - {fileID: 1399085870}
   m_Father: {fileID: 726580204}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!1 &579188811
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 579188812}
-  - component: {fileID: 579188814}
-  - component: {fileID: 579188813}
-  m_Layer: 0
-  m_Name: SummaryText
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!224 &579188812
-RectTransform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 579188811}
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 109171256}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 0, y: 0}
-  m_AnchorMax: {x: 1, y: 1}
-  m_AnchoredPosition: {x: 0, y: 0}
-  m_SizeDelta: {x: -56, y: -40}
-  m_Pivot: {x: 0.5, y: 0.5}
---- !u!114 &579188813
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 579188811}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: f4688fdb7df04437aeb418b961361dc5, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Unity.TextMeshPro::TMPro.TextMeshProUGUI
-  m_Material: {fileID: 0}
-  m_Color: {r: 1, g: 1, b: 1, a: 1}
-  m_RaycastTarget: 0
-  m_RaycastPadding: {x: 0, y: 0, z: 0, w: 0}
-  m_Maskable: 1
-  m_OnCullStateChanged:
-    m_PersistentCalls:
-      m_Calls: []
-  m_text: 'Risk snapshot: initializing...
-
-    Camera and motion inputs are being
-    prepared.'
-  m_isRightToLeft: 0
-  m_fontAsset: {fileID: 11400000, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
-  m_sharedMaterial: {fileID: 2180264, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
-  m_fontSharedMaterials: []
-  m_fontMaterial: {fileID: 0}
-  m_fontMaterials: []
-  m_fontColor32:
-    serializedVersion: 2
-    rgba: 4294967295
-  m_fontColor: {r: 1, g: 1, b: 1, a: 1}
-  m_enableVertexGradient: 0
-  m_colorMode: 3
-  m_fontColorGradient:
-    topLeft: {r: 1, g: 1, b: 1, a: 1}
-    topRight: {r: 1, g: 1, b: 1, a: 1}
-    bottomLeft: {r: 1, g: 1, b: 1, a: 1}
-    bottomRight: {r: 1, g: 1, b: 1, a: 1}
-  m_fontColorGradientPreset: {fileID: 0}
-  m_spriteAsset: {fileID: 0}
-  m_tintAllSprites: 0
-  m_StyleSheet: {fileID: 0}
-  m_TextStyleHashCode: 0
-  m_overrideHtmlColors: 0
-  m_faceColor:
-    serializedVersion: 2
-    rgba: 4294967295
-  m_fontSize: 30
-  m_fontSizeBase: 30
-  m_fontWeight: 400
-  m_enableAutoSizing: 0
-  m_fontSizeMin: 18
-  m_fontSizeMax: 72
-  m_fontStyle: 0
-  m_HorizontalAlignment: 1
-  m_VerticalAlignment: 256
-  m_textAlignment: 65535
-  m_characterSpacing: 0
-  m_characterHorizontalScale: 1
-  m_wordSpacing: 0
-  m_lineSpacing: 0
-  m_lineSpacingMax: 0
-  m_paragraphSpacing: 0
-  m_charWidthMaxAdj: 0
-  m_TextWrappingMode: 0
-  m_wordWrappingRatios: 0.4
-  m_overflowMode: 1
-  m_linkedTextComponent: {fileID: 0}
-  parentLinkedComponent: {fileID: 0}
-  m_enableKerning: 0
-  m_ActiveFontFeatures: 6e72656b
-  m_enableExtraPadding: 0
-  checkPaddingRequired: 0
-  m_isRichText: 1
-  m_EmojiFallbackSupport: 1
-  m_parseCtrlCharacters: 1
-  m_isOrthographic: 1
-  m_isCullingEnabled: 0
-  m_horizontalMapping: 0
-  m_verticalMapping: 0
-  m_uvLineOffset: 0
-  m_geometrySortingOrder: 0
-  m_IsTextObjectScaleStatic: 0
-  m_VertexBufferAutoSizeReduction: 0
-  m_useMaxVisibleDescender: 1
-  m_pageToDisplay: 1
-  m_margin: {x: 0, y: 0, z: 0, w: 0}
-  m_isUsingLegacyAnimationComponent: 0
-  m_isVolumetricText: 0
-  m_hasFontAssetChanged: 0
-  m_baseMaterial: {fileID: 0}
-  m_maskOffset: {x: 0, y: 0, z: 0, w: 0}
---- !u!222 &579188814
-CanvasRenderer:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 579188811}
-  m_CullTransparentMesh: 1
 --- !u!1 &582259448
 GameObject:
   m_ObjectHideFlags: 0
@@ -3997,7 +3511,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 0
+  m_IsActive: 1
 --- !u!224 &731653012
 RectTransform:
   m_ObjectHideFlags: 0
@@ -4049,9 +3563,9 @@ MonoBehaviour:
     m_Font: {fileID: 10102, guid: 0000000000000000e000000000000000, type: 0}
     m_FontSize: 22
     m_FontStyle: 1
-    m_BestFit: 0
+    m_BestFit: 1
     m_MinSize: 10
-    m_MaxSize: 40
+    m_MaxSize: 22
     m_Alignment: 2
     m_AlignByGeometry: 0
     m_RichText: 1
@@ -5127,52 +4641,6 @@ Transform:
   m_Children: []
   m_Father: {fileID: 1845807168}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!1 &908076459
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 908076461}
-  - component: {fileID: 908076460}
-  m_Layer: 0
-  m_Name: SceneDistanceLogger
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!114 &908076460
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 908076459}
-  m_Enabled: 0
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: f6897843d6c829741b6801774900ed03, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::QuestSceneDistanceLogger
-  labelText: {fileID: 1045401346}
-  labelRoot: {fileID: 954923358}
---- !u!4 &908076461
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 908076459}
-  serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &910285262
 GameObject:
   m_ObjectHideFlags: 0
@@ -5372,6 +4840,7 @@ GameObject:
   - component: {fileID: 947436441}
   - component: {fileID: 947436440}
   - component: {fileID: 947436439}
+  - component: {fileID: 947436444}
   m_Layer: 0
   m_Name: '[BuildingBlock] Camera Rig'
   m_TagString: Untagged
@@ -5543,6 +5012,72 @@ Transform:
   - {fileID: 34392219}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &947436444
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 947436438}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 555725d48e9051a4bb6b8d45178c2fdd, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Oculus.VR::OVRPassthroughLayer
+  projectionSurfaceType: 0
+  overlayType: 1
+  compositionDepth: 0
+  hidden: 1
+  overridePerLayerColorScaleAndOffset: 0
+  colorScale: {x: 1, y: 1, z: 1, w: 1}
+  colorOffset: {x: 0, y: 0, z: 0, w: 0}
+  passthroughLayerResumed:
+    m_PersistentCalls:
+      m_Calls: []
+  colorMapEditorType_: 0
+  colorMapEditorGradient:
+    serializedVersion: 2
+    key0: {r: 0, g: 0, b: 0, a: 1}
+    key1: {r: 1, g: 1, b: 1, a: 1}
+    key2: {r: 0, g: 0, b: 0, a: 0}
+    key3: {r: 0, g: 0, b: 0, a: 0}
+    key4: {r: 0, g: 0, b: 0, a: 0}
+    key5: {r: 0, g: 0, b: 0, a: 0}
+    key6: {r: 0, g: 0, b: 0, a: 0}
+    key7: {r: 0, g: 0, b: 0, a: 0}
+    ctime0: 0
+    ctime1: 65535
+    ctime2: 0
+    ctime3: 0
+    ctime4: 0
+    ctime5: 0
+    ctime6: 0
+    ctime7: 0
+    atime0: 0
+    atime1: 65535
+    atime2: 0
+    atime3: 0
+    atime4: 0
+    atime5: 0
+    atime6: 0
+    atime7: 0
+    m_Mode: 0
+    m_ColorSpace: -1
+    m_NumColorKeys: 2
+    m_NumAlphaKeys: 2
+  colorMapEditorContrast: 0
+  colorMapEditorBrightness: 0
+  colorMapEditorPosterize: 0
+  colorMapEditorSaturation: 0
+  _colorLutSourceTexture: {fileID: 0}
+  _colorLutTargetTexture: {fileID: 0}
+  _lutWeight: 1
+  _flipLutY: 1
+  serializedSurfaceGeometry: []
+  textureOpacity_: 1
+  edgeRenderingEnabled_: 0
+  edgeColor_: {r: 1, g: 1, b: 1, a: 1}
+  colorMapType: 0
 --- !u!1 &949126449
 GameObject:
   m_ObjectHideFlags: 0
@@ -5640,7 +5175,7 @@ Canvas:
   m_Enabled: 1
   serializedVersion: 3
   m_RenderMode: 2
-  m_Camera: {fileID: 0}
+  m_Camera: {fileID: 999914985}
   m_PlaneDistance: 100
   m_PixelPerfect: 0
   m_ReceivesEvents: 1
@@ -5668,7 +5203,6 @@ RectTransform:
   m_Children:
   - {fileID: 1045401343}
   - {fileID: 731653012}
-  - {fileID: 109171256}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0.5, y: 0.5}
@@ -5893,8 +5427,8 @@ Camera:
   m_GameObject: {fileID: 999914983}
   m_Enabled: 1
   serializedVersion: 2
-  m_ClearFlags: 1
-  m_BackGroundColor: {r: 0.19215687, g: 0.3019608, b: 0.4745098, a: 0.019607844}
+  m_ClearFlags: 2
+  m_BackGroundColor: {r: 0, g: 0, b: 0, a: 0}
   m_projectionMatrixMode: 1
   m_GateFitMode: 2
   m_FOVAxisMode: 0
@@ -6258,7 +5792,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 0
+  m_IsActive: 1
 --- !u!224 &1045401343
 RectTransform:
   m_ObjectHideFlags: 0
@@ -6310,9 +5844,9 @@ MonoBehaviour:
     m_Font: {fileID: 10102, guid: 0000000000000000e000000000000000, type: 0}
     m_FontSize: 22
     m_FontStyle: 1
-    m_BestFit: 0
+    m_BestFit: 1
     m_MinSize: 10
-    m_MaxSize: 40
+    m_MaxSize: 22
     m_Alignment: 0
     m_AlignByGeometry: 0
     m_RichText: 0
@@ -9904,41 +9438,30 @@ MonoBehaviour:
   labelText: {fileID: 1045401346}
   riskLabelText: {fileID: 731653014}
   labelRoot: {fileID: 954923358}
-  userMotionSettings:
-    velocityTimeConstant: 0.35
-    accelerationTimeConstant: 0.45
-    angularTimeConstant: 0.35
-    staticEnterSpeed: 0.04
-    staticEnterAcceleration: 0.25
-    staticEnterAngularSpeed: 0.25
-    staticEnterSeconds: 0.75
-    staticExitSpeed: 0.08
-    staticExitAcceleration: 0.5
-    staticExitAngularSpeed: 0.6
-    staticExitSeconds: 0.25
-    agitatedEnterSpeed: 1
-    agitatedEnterAcceleration: 5
-    agitatedEnterAngularSpeed: 2.5
-    agitatedEnterSeconds: 0.25
-    agitatedExitSpeed: 0.75
-    agitatedExitAcceleration: 3.5
-    agitatedExitAngularSpeed: 1.8
-    agitatedExitSeconds: 0.75
-    minimumDeltaTime: 0.001
-    maximumDeltaTime: 0.1
-  safeDistance: 0.8
-  safeTime: 2
+  passthroughLayer: {fileID: 947436444}
+  stateWindowDuration: 0.5
+  handVelocitySmoothingTime: 0.15
+  neckPivotForwardOffset: 0.1
+  neckPivotUpOffset: 0.1
+  dynamicHeadSpeedEnter: 0.3
+  dynamicHeadSpeedExit: 0.2
+  semiDynamicHandSpeedEnter: 0.15
+  semiDynamicHandSpeedExit: 0.1
+  stateMinimumHoldTime: 0.5
+  safeDistanceMeters: 2.48
+  safeTimeSeconds: 4.5
   maxApproachAccel: 5
   weightDistance: 0.35
   weightTTC: 0.3
-  weightApproachAccel: 0.2
+  weightApproachAcceleration: 0
   weightBlind: 0.15
-  weightCollisionTotal: 0.4
-  weightStateTotal: 0.2
-  weightDynamicTotal: 0.4
-  weightIntentTotal: 0
-  passthroughOnThreshold: 0.6
-  dynamicRiskController: {fileID: 0}
+  stableOnThreshold: 0.65
+  rapidOnThreshold: 0.45
+  hysteresisWidth: 0.08
+  emergencyDistance: 0.25
+  emergencyReleaseMargin: 0.05
+  emergencyApproachSpeed: 0.1
+  uiRefreshInterval: 0.15
 --- !u!4 &1676843310
 Transform:
   m_ObjectHideFlags: 0
@@ -12122,8 +11645,5 @@ SceneRoots:
   - {fileID: 410087041}
   - {fileID: 832575519}
   - {fileID: 947436443}
-  - {fileID: 103309996}
-  - {fileID: 908076461}
   - {fileID: 954923358}
   - {fileID: 1676843310}
-  - {fileID: 458888767}
