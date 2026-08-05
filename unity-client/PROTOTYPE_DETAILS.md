@@ -86,13 +86,13 @@ R_static_head = (weightDistance             * Rd
 
 ### 3.2 UserState — Passthrough를 얼마나 민감하게 켤지
 
-기존의 R_state값입니다. 실험을 통해 **"`R_static_head`의 판단 민감도를 조절하는 Context 값"으로 바뀌었습니다.**
+기존의 R_state값입니다. 실험을 통해 **패스스루의 판단 민감도를 조절하는 Context 값"으로 바뀌었습니다.**
 
 ```text
 UserState = clamp01(머리 순변위 속도 / thresholdHeadSpeedScale)
 ```
 
-- **위험도 점수가 아닙니다.** 위에서 계산한 `R_static_head`를 켜는 기준선을 얼마나 낮출지만 정합니다.
+- **위험도 점수가 아닙니다.** 위에서 계산한 `R_static_head`가 얼마나 높아야 Passthrough가 켜지는지 그 기준선(effectiveOnThreshold)만 조절합니다
 - **손 속도는 반영하지 않습니다.** 반영하면 벽 등지고 앉아 손만 흔들어도 `UserState`가 올라가 오작동합니다.
 - 0에 가까울수록 정적(거의 정지), 1에 가까울수록 동적(빠르게 이동 중)입니다.
 
