@@ -1,0 +1,1735 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using TeamVR.AdaptivePassthrough;
+using TMPro;
+using UnityEngine;
+using UnityEngine.UI;
+
+[DefaultExecutionOrder(710)]
+[DisallowMultipleComponent]
+public sealed class PersonalizationRuntimePanel : MonoBehaviour
+{
+    private const string PanelOpacityPreferenceKey =
+        "TeamVR.AdaptivePassthrough.PanelOpacity";
+
+    private sealed class SliderBinding
+    {
+        public Slider Slider;
+        public TMP_Text ValueText;
+        public Func<float> Getter;
+        public string Format;
+    }
+
+    private sealed class ToggleBinding
+    {
+        public Button Button;
+        public TMP_Text Label;
+        public Func<bool> Getter;
+        public string Name;
+    }
+
+    private sealed class StatusChip
+    {
+        public Image Background;
+        public TMP_Text Text;
+    }
+
+    private sealed class MetricTile
+    {
+        public Image Background;
+        public TMP_Text Label;
+        public TMP_Text Value;
+    }
+
+    private sealed class RiskBar
+    {
+        public Image Fill;
+        public TMP_Text Value;
+    }
+
+    [SerializeField] private PersonalizationRuntimeController personalization;
+    [SerializeField] private StaticPassthroughPolicyController staticPolicy;
+    [SerializeField] private DynamicPassthroughPolicyController dynamicPolicy;
+    [SerializeField] private SelectivePassthroughController presentation;
+    [SerializeField, Min(1f)] private float refreshRateHz = 5f;
+    [SerializeField, Range(0.35f, 1f)] private float panelOpacity = 1f;
+
+    private readonly List<SliderBinding> sliderBindings =
+        new List<SliderBinding>();
+    private readonly List<ToggleBinding> toggleBindings =
+        new List<ToggleBinding>();
+    private readonly List<GameObject> pages = new List<GameObject>();
+    private TMP_Text headerStatusText;
+    private StatusChip modeChip;
+    private StatusChip sessionChip;
+    private StatusChip modelChip;
+    private StatusChip probabilityChip;
+    private StatusChip appliedChip;
+    private StatusChip staticStateChip;
+    private StatusChip staticEmergencyChip;
+    private StatusChip dynamicStateChip;
+    private StatusChip inferenceChip;
+    private RiskBar headRiskBar;
+    private RiskBar handRiskBar;
+    private RiskBar combinedRiskBar;
+    private RiskBar dynamicRiskBar;
+    private MetricTile staticDistanceTile;
+    private MetricTile staticTtcTile;
+    private MetricTile staticUserTile;
+    private MetricTile staticCauseTile;
+    private MetricTile dynamicPeopleTile;
+    private MetricTile dynamicDistanceTile;
+    private MetricTile dynamicClosingTile;
+    private MetricTile dynamicTtcTile;
+    private MetricTile dynamicTrackTile;
+    private readonly MetricTile[] featureTiles = new MetricTile[7];
+    private MetricTile stableThresholdTile;
+    private MetricTile rapidThresholdTile;
+    private MetricTile handThresholdTile;
+    private MetricTile headSpeedTile;
+    private MetricTile eventTile;
+    private MetricTile logTile;
+    private CanvasGroup panelCanvasGroup;
+    private TMP_Text featureHelpText;
+    private TMP_Text thresholdHelpText;
+    private double nextRefreshAt;
+    private bool refreshing;
+    private int currentPage;
+
+    private static readonly Color PanelColor =
+        new Color(0.025f, 0.035f, 0.055f, 0.96f);
+    private static readonly Color PageColor =
+        new Color(0.045f, 0.060f, 0.085f, 0.95f);
+    private static readonly Color CardColor =
+        new Color(0.065f, 0.085f, 0.115f, 0.98f);
+    private static readonly Color TileColor =
+        new Color(0.085f, 0.115f, 0.15f, 0.98f);
+    private static readonly Color ButtonColor =
+        new Color(0.12f, 0.26f, 0.42f, 0.98f);
+    private static readonly Color EnabledColor =
+        new Color(0.08f, 0.47f, 0.27f, 0.98f);
+    private static readonly Color DisabledColor =
+        new Color(0.48f, 0.15f, 0.16f, 0.98f);
+    private static readonly Color WarningColor =
+        new Color(0.72f, 0.43f, 0.08f, 0.98f);
+    private static readonly Color AccentColor =
+        new Color(0.08f, 0.58f, 0.86f, 0.98f);
+    private static readonly Color MutedColor =
+        new Color(0.22f, 0.27f, 0.34f, 0.98f);
+
+    private void Awake()
+    {
+        panelOpacity = Mathf.Clamp(
+            PlayerPrefs.GetFloat(
+                PanelOpacityPreferenceKey,
+                panelOpacity),
+            0.35f,
+            1f);
+        ResolveReferences();
+        ResolvePanelCanvasGroup();
+        BuildUi();
+        ApplyPanelOpacity(panelOpacity, false);
+        Refresh();
+    }
+
+    private void OnEnable()
+    {
+        ResolveReferences();
+        if (personalization != null)
+        {
+            personalization.SnapshotUpdated += Refresh;
+        }
+    }
+
+    private void OnDisable()
+    {
+        if (personalization != null)
+        {
+            personalization.SnapshotUpdated -= Refresh;
+        }
+
+        PlayerPrefs.Save();
+    }
+
+    private void LateUpdate()
+    {
+        double now = Time.realtimeSinceStartupAsDouble;
+        if (now < nextRefreshAt)
+        {
+            return;
+        }
+
+        nextRefreshAt = now + 1.0 / Mathf.Max(1f, refreshRateHz);
+        Refresh();
+    }
+
+    public void Configure(
+        PersonalizationRuntimeController runtime,
+        StaticPassthroughPolicyController staticController,
+        DynamicPassthroughPolicyController dynamicController,
+        SelectivePassthroughController presentationController)
+    {
+        if (personalization != null)
+        {
+            personalization.SnapshotUpdated -= Refresh;
+        }
+
+        personalization = runtime;
+        staticPolicy = staticController;
+        dynamicPolicy = dynamicController;
+        presentation = presentationController;
+        if (isActiveAndEnabled && personalization != null)
+        {
+            personalization.SnapshotUpdated += Refresh;
+        }
+    }
+
+    public void Refresh()
+    {
+        if (refreshing)
+        {
+            return;
+        }
+
+        refreshing = true;
+        ResolveReferences();
+        RefreshHeader();
+        RefreshLivePage();
+        RefreshHelpText();
+
+        for (int i = 0; i < sliderBindings.Count; i++)
+        {
+            SliderBinding binding = sliderBindings[i];
+            float value = binding.Getter == null ? 0f : binding.Getter();
+            binding.Slider.SetValueWithoutNotify(value);
+            binding.ValueText.text = value.ToString(binding.Format);
+        }
+
+        for (int i = 0; i < toggleBindings.Count; i++)
+        {
+            ToggleBinding binding = toggleBindings[i];
+            bool enabled = binding.Getter != null && binding.Getter();
+            binding.Label.text = binding.Name + ": "
+                + (enabled ? "ON" : "OFF");
+            Image image = binding.Button.targetGraphic as Image;
+            if (image != null)
+            {
+                image.color = enabled ? EnabledColor : DisabledColor;
+            }
+        }
+
+        refreshing = false;
+    }
+
+    private void BuildUi()
+    {
+        sliderBindings.Clear();
+        toggleBindings.Clear();
+        pages.Clear();
+
+        Transform existing = transform.Find("GeneratedDashboard");
+        if (existing != null)
+        {
+            if (Application.isPlaying)
+            {
+                Destroy(existing.gameObject);
+            }
+            else
+            {
+                DestroyImmediate(existing.gameObject);
+            }
+        }
+
+        GameObject dashboard = CreateRect(
+            "GeneratedDashboard",
+            transform,
+            Vector2.zero,
+            Vector2.one,
+            Vector2.zero,
+            Vector2.zero);
+        Image dashboardImage = dashboard.AddComponent<Image>();
+        dashboardImage.color = PanelColor;
+        dashboardImage.raycastTarget = false;
+
+        TMP_Text title = CreateText(
+            dashboard.transform,
+            "DashboardTitle",
+            new Vector2(0.02f, 0.925f),
+            new Vector2(0.245f, 0.99f),
+            20f,
+            TextAlignmentOptions.MidlineLeft);
+        title.text = "ADAPTIVE LAB";
+        title.fontStyle = FontStyles.Bold;
+        title.color = new Color(0.72f, 0.90f, 1f);
+
+        modeChip = CreateStatusChip(
+            dashboard.transform, "Mode", 0.255f, 0.395f);
+        sessionChip = CreateStatusChip(
+            dashboard.transform, "Session", 0.405f, 0.535f);
+        modelChip = CreateStatusChip(
+            dashboard.transform, "Model", 0.545f, 0.685f);
+        probabilityChip = CreateStatusChip(
+            dashboard.transform, "Probability", 0.695f, 0.835f);
+        appliedChip = CreateStatusChip(
+            dashboard.transform, "Applied", 0.845f, 0.98f);
+
+        headerStatusText = CreateText(
+            dashboard.transform,
+            "RuntimeStatus",
+            new Vector2(0.02f, 0.855f),
+            new Vector2(0.61f, 0.918f),
+            17f,
+            TextAlignmentOptions.MidlineLeft);
+        headerStatusText.color = new Color(0.72f, 0.78f, 0.86f);
+
+        TMP_Text opacityLabel = CreateText(
+            dashboard.transform,
+            "PanelOpacityLabel",
+            new Vector2(0.625f, 0.855f),
+            new Vector2(0.745f, 0.918f),
+            14f,
+            TextAlignmentOptions.MidlineRight);
+        opacityLabel.text = "PANEL OPACITY";
+        opacityLabel.fontStyle = FontStyles.Bold;
+        opacityLabel.color = new Color(0.62f, 0.76f, 0.88f);
+        Slider opacitySlider = CreateSlider(
+            dashboard.transform,
+            new Vector2(0.75f, 0.86f),
+            new Vector2(0.925f, 0.915f),
+            0.35f,
+            1f);
+        TMP_Text opacityValue = CreateText(
+            dashboard.transform,
+            "PanelOpacityValue",
+            new Vector2(0.93f, 0.855f),
+            new Vector2(0.98f, 0.918f),
+            15f,
+            TextAlignmentOptions.MidlineRight);
+        opacityValue.fontStyle = FontStyles.Bold;
+        opacitySlider.SetValueWithoutNotify(panelOpacity);
+        opacityValue.text = panelOpacity.ToString("F2");
+        opacitySlider.onValueChanged.AddListener(value =>
+        {
+            if (refreshing)
+            {
+                return;
+            }
+
+            opacityValue.text = value.ToString("F2");
+            ApplyPanelOpacity(value, true);
+        });
+        sliderBindings.Add(new SliderBinding
+        {
+            Slider = opacitySlider,
+            ValueText = opacityValue,
+            Getter = () => panelOpacity,
+            Format = "F2"
+        });
+
+        CreateTabButton(dashboard.transform, "LIVE", 0, -360f);
+        CreateTabButton(dashboard.transform, "FEATURES", 1, 0f);
+        CreateTabButton(dashboard.transform, "THRESHOLDS", 2, 360f);
+
+        GameObject livePage = CreatePage(dashboard.transform, "LivePage");
+        GameObject featurePage = CreatePage(
+            dashboard.transform,
+            "FeaturePage");
+        GameObject thresholdPage = CreatePage(
+            dashboard.transform,
+            "ThresholdPage");
+        pages.Add(livePage);
+        pages.Add(featurePage);
+        pages.Add(thresholdPage);
+
+        BuildLivePage(livePage.transform);
+        BuildFeaturePage(featurePage.transform);
+        BuildThresholdPage(thresholdPage.transform);
+        SetPage(0);
+    }
+
+    private void BuildLivePage(Transform parent)
+    {
+        GameObject staticCard = CreateCard(
+            parent,
+            "StaticSafetyCard",
+            new Vector2(0.015f, 0.49f),
+            new Vector2(0.493f, 0.985f),
+            "STATIC SAFETY");
+        staticStateChip = CreateStatusChip(
+            staticCard.transform,
+            "StaticState",
+            new Vector2(0.57f, 0.81f),
+            new Vector2(0.76f, 0.965f));
+        staticEmergencyChip = CreateStatusChip(
+            staticCard.transform,
+            "Emergency",
+            new Vector2(0.77f, 0.81f),
+            new Vector2(0.97f, 0.965f));
+        headRiskBar = CreateRiskBar(
+            staticCard.transform,
+            "HEAD",
+            new Vector2(0.035f, 0.63f),
+            new Vector2(0.965f, 0.78f));
+        handRiskBar = CreateRiskBar(
+            staticCard.transform,
+            "HAND",
+            new Vector2(0.035f, 0.47f),
+            new Vector2(0.965f, 0.62f));
+        combinedRiskBar = CreateRiskBar(
+            staticCard.transform,
+            "COMBINED",
+            new Vector2(0.035f, 0.31f),
+            new Vector2(0.965f, 0.46f));
+        staticDistanceTile = CreateMetricTile(
+            staticCard.transform, "StaticDistance", "DISTANCE",
+            0.035f, 0.265f, 0.04f, 0.27f);
+        staticTtcTile = CreateMetricTile(
+            staticCard.transform, "StaticTtc", "TTC",
+            0.275f, 0.495f, 0.04f, 0.27f);
+        staticUserTile = CreateMetricTile(
+            staticCard.transform, "StaticUser", "USER STATE",
+            0.505f, 0.725f, 0.04f, 0.27f);
+        staticCauseTile = CreateMetricTile(
+            staticCard.transform, "StaticCause", "CAUSE",
+            0.735f, 0.965f, 0.04f, 0.27f);
+
+        GameObject dynamicCard = CreateCard(
+            parent,
+            "DynamicPersonCard",
+            new Vector2(0.507f, 0.49f),
+            new Vector2(0.985f, 0.985f),
+            "DYNAMIC PERSON");
+        dynamicStateChip = CreateStatusChip(
+            dynamicCard.transform,
+            "DynamicState",
+            new Vector2(0.72f, 0.81f),
+            new Vector2(0.97f, 0.965f));
+        dynamicRiskBar = CreateRiskBar(
+            dynamicCard.transform,
+            "RISK",
+            new Vector2(0.035f, 0.60f),
+            new Vector2(0.965f, 0.76f));
+        dynamicPeopleTile = CreateMetricTile(
+            dynamicCard.transform, "DynamicPeople", "PEOPLE",
+            0.035f, 0.215f, 0.31f, 0.55f);
+        dynamicDistanceTile = CreateMetricTile(
+            dynamicCard.transform, "DynamicDistance", "DISTANCE",
+            0.225f, 0.405f, 0.31f, 0.55f);
+        dynamicClosingTile = CreateMetricTile(
+            dynamicCard.transform, "DynamicClosing", "CLOSING",
+            0.415f, 0.595f, 0.31f, 0.55f);
+        dynamicTtcTile = CreateMetricTile(
+            dynamicCard.transform, "DynamicTtc", "TTC",
+            0.605f, 0.785f, 0.31f, 0.55f);
+        dynamicTrackTile = CreateMetricTile(
+            dynamicCard.transform, "DynamicTrack", "TRACK",
+            0.795f, 0.965f, 0.31f, 0.55f);
+        CreateInfoStrip(
+            dynamicCard.transform,
+            "DynamicGuardrail",
+            "CRITICAL PERSON OVERRIDE REMAINS SAFETY-LOCKED",
+            new Vector2(0.035f, 0.06f),
+            new Vector2(0.965f, 0.26f));
+
+        GameObject mlCard = CreateCard(
+            parent,
+            "MachineLearningCard",
+            new Vector2(0.015f, 0.19f),
+            new Vector2(0.985f, 0.47f),
+            "ML FEATURE VECTOR");
+        inferenceChip = CreateStatusChip(
+            mlCard.transform,
+            "InferenceState",
+            new Vector2(0.77f, 0.72f),
+            new Vector2(0.98f, 0.96f));
+        string[] featureLabels =
+        {
+            "f_pt", "r_cancel", "t_pt_bar", "v_h_bar",
+            "v_h_max", "A_space", "T_session"
+        };
+        for (int i = 0; i < featureTiles.Length; i++)
+        {
+            float left = 0.02f + i * 0.138f;
+            featureTiles[i] = CreateMetricTile(
+                mlCard.transform,
+                "Feature" + i,
+                i + "  " + featureLabels[i],
+                left,
+                left + 0.128f,
+                0.36f,
+                0.69f);
+            MakeCompact(featureTiles[i]);
+        }
+
+        stableThresholdTile = CreateMetricTile(
+            mlCard.transform, "StableThreshold", "STABLE ON",
+            0.02f, 0.145f, 0.04f, 0.31f);
+        rapidThresholdTile = CreateMetricTile(
+            mlCard.transform, "RapidThreshold", "RAPID ON",
+            0.155f, 0.28f, 0.04f, 0.31f);
+        handThresholdTile = CreateMetricTile(
+            mlCard.transform, "HandThreshold", "HAND FULL",
+            0.29f, 0.415f, 0.04f, 0.31f);
+        headSpeedTile = CreateMetricTile(
+            mlCard.transform, "HeadSpeed", "HEAD SPEED",
+            0.425f, 0.55f, 0.04f, 0.31f);
+        eventTile = CreateMetricTile(
+            mlCard.transform, "Events", "EVENTS",
+            0.56f, 0.685f, 0.04f, 0.31f);
+        logTile = CreateMetricTile(
+            mlCard.transform, "Log", "LOG FILE",
+            0.695f, 0.98f, 0.04f, 0.31f);
+        MakeCompact(stableThresholdTile);
+        MakeCompact(rapidThresholdTile);
+        MakeCompact(handThresholdTile);
+        MakeCompact(headSpeedTile);
+        MakeCompact(eventTile);
+        MakeCompact(logTile);
+
+        CreateToggleButton(
+            parent,
+            "STATIC",
+            new Vector2(0.02f, 0.03f),
+            new Vector2(0.24f, 0.17f),
+            () => presentation != null && presentation.StaticFeatureEnabled,
+            () => presentation?.ToggleStaticFeature());
+        CreateToggleButton(
+            parent,
+            "DYNAMIC",
+            new Vector2(0.26f, 0.03f),
+            new Vector2(0.48f, 0.17f),
+            () => presentation != null && presentation.DynamicFeatureEnabled,
+            () => presentation?.ToggleDynamicFeature());
+        CreateActionButton(
+            parent,
+            "RUN ML NOW",
+            new Vector2(0.51f, 0.03f),
+            new Vector2(0.73f, 0.17f),
+            () => personalization?.RunNow(),
+            ButtonColor);
+        CreateActionButton(
+            parent,
+            "MARK UNNECESSARY",
+            new Vector2(0.75f, 0.03f),
+            new Vector2(0.98f, 0.17f),
+            () => personalization?.MarkActivationUnnecessary(),
+            WarningColor);
+    }
+
+    private void BuildFeaturePage(Transform parent)
+    {
+        CreateToggleButton(
+            parent,
+            "MANUAL FEATURES",
+            new Vector2(0.02f, 0.84f),
+            new Vector2(0.25f, 0.98f),
+            () => personalization != null
+                && personalization.ManualFeatureOverride,
+            () =>
+            {
+                if (personalization != null)
+                {
+                    personalization.SetManualFeatureOverride(
+                        !personalization.ManualFeatureOverride);
+                }
+            });
+        CreateToggleButton(
+            parent,
+            "COLD START BYPASS",
+            new Vector2(0.27f, 0.84f),
+            new Vector2(0.50f, 0.98f),
+            () => personalization != null
+                && personalization.BypassColdStartForTesting,
+            () =>
+            {
+                if (personalization != null)
+                {
+                    personalization.SetBypassColdStartForTesting(
+                        !personalization.BypassColdStartForTesting);
+                }
+            });
+        CreateToggleButton(
+            parent,
+            "AUTO INFERENCE",
+            new Vector2(0.52f, 0.84f),
+            new Vector2(0.74f, 0.98f),
+            () => personalization != null
+                && personalization.AutomaticInference,
+            () =>
+            {
+                if (personalization != null)
+                {
+                    personalization.SetAutomaticInference(
+                        !personalization.AutomaticInference);
+                }
+            });
+        CreateActionButton(
+            parent,
+            "RUN WITH INPUTS",
+            new Vector2(0.76f, 0.84f),
+            new Vector2(0.98f, 0.98f),
+            () => personalization?.RunNow(),
+            ButtonColor);
+
+        CreateFeatureSlider(
+            parent, "f_pt", 0, 0, 0f, 1f, "F2", 0);
+        CreateFeatureSlider(
+            parent, "r_cancel", 0, 1, 0f, 1f, "F2", 1);
+        CreateFeatureSlider(
+            parent, "t_pt_bar (s)", 0, 2, 0f, 10f, "F2", 2);
+        CreateFeatureSlider(
+            parent, "v_h_bar (m/s)", 0, 3, 0f, 3f, "F2", 3);
+        CreateFeatureSlider(
+            parent, "v_h_max (m/s)", 1, 0, 0f, 5f, "F2", 4);
+        CreateFeatureSlider(
+            parent, "A_space_norm", 1, 1, 0f, 1f, "F2", 5);
+        CreateFeatureSlider(
+            parent, "T_session_norm", 1, 2, 0f, 1f, "F2", 6);
+        CreateSliderRow(
+            parent,
+            "Room area (m2)",
+            1,
+            3,
+            1f,
+            20f,
+            "F1",
+            () => personalization == null
+                ? 4f
+                : personalization.SpaceAreaSquareMeters,
+            value => personalization?.SetSpaceAreaSquareMeters(value));
+
+        CreateActionButton(
+            parent,
+            "SESSION -",
+            new Vector2(0.02f, 0.01f),
+            new Vector2(0.18f, 0.13f),
+            () =>
+            {
+                if (personalization != null)
+                {
+                    personalization.SetAccumulatedSessionCount(
+                        personalization.AccumulatedSessionCount - 1);
+                }
+            },
+            ButtonColor);
+        CreateActionButton(
+            parent,
+            "SESSION +",
+            new Vector2(0.20f, 0.01f),
+            new Vector2(0.36f, 0.13f),
+            () =>
+            {
+                if (personalization != null)
+                {
+                    personalization.SetAccumulatedSessionCount(
+                        personalization.AccumulatedSessionCount + 1);
+                }
+            },
+            ButtonColor);
+        featureHelpText = CreateText(
+            parent,
+            "FeatureHelp",
+            new Vector2(0.39f, 0.00f),
+            new Vector2(0.98f, 0.14f),
+            16f,
+            TextAlignmentOptions.MidlineLeft);
+    }
+
+    private void BuildThresholdPage(Transform parent)
+    {
+        CreateToggleButton(
+            parent,
+            "SHADOW MODE",
+            new Vector2(0.02f, 0.84f),
+            new Vector2(0.24f, 0.98f),
+            () => personalization != null && personalization.ShadowMode,
+            () =>
+            {
+                if (personalization != null)
+                {
+                    personalization.SetShadowMode(
+                        !personalization.ShadowMode);
+                }
+            });
+        CreateToggleButton(
+            parent,
+            "ML AUTO APPLY",
+            new Vector2(0.26f, 0.84f),
+            new Vector2(0.48f, 0.98f),
+            () => personalization != null
+                && personalization.ApplyPersonalization,
+            () =>
+            {
+                if (personalization != null)
+                {
+                    personalization.SetApplyPersonalization(
+                        !personalization.ApplyPersonalization);
+                }
+            });
+        CreateToggleButton(
+            parent,
+            "pNegative OVERRIDE",
+            new Vector2(0.50f, 0.84f),
+            new Vector2(0.73f, 0.98f),
+            () => personalization != null
+                && personalization.NegativeProbabilityOverride,
+            () =>
+            {
+                if (personalization != null)
+                {
+                    personalization.SetNegativeProbabilityOverride(
+                        !personalization.NegativeProbabilityOverride);
+                }
+            });
+        CreateActionButton(
+            parent,
+            "SAFE DEFAULTS",
+            new Vector2(0.75f, 0.84f),
+            new Vector2(0.98f, 0.98f),
+            () => personalization?.RestoreSafeDefaults(),
+            WarningColor);
+
+        CreateSliderRow(
+            parent,
+            "Stable ON",
+            0,
+            0,
+            0.05f,
+            0.95f,
+            "F2",
+            () => Preview().StableOnThreshold,
+            value => SetPreview(value, null, null));
+        CreateSliderRow(
+            parent,
+            "Rapid ON",
+            0,
+            1,
+            0.05f,
+            0.95f,
+            "F2",
+            () => Preview().RapidOnThreshold,
+            value => SetPreview(null, value, null));
+        CreateSliderRow(
+            parent,
+            "Hand full",
+            0,
+            2,
+            0.05f,
+            0.95f,
+            "F2",
+            () => Preview().HandFullThreshold,
+            value => SetPreview(null, null, value));
+        CreateSliderRow(
+            parent,
+            "pNegative test",
+            0,
+            3,
+            0f,
+            1f,
+            "F2",
+            () => personalization == null
+                ? 0.5f
+                : personalization.OverriddenNegativeProbability,
+            value => personalization?
+                .SetOverriddenNegativeProbability(value));
+        CreateSliderRow(
+            parent,
+            "Adjustment scale",
+            1,
+            0,
+            0f,
+            1f,
+            "F2",
+            () => personalization == null
+                ? 0.2f
+                : personalization.AdjustmentScale,
+            value => personalization?.SetAdjustmentScale(value));
+        CreateSliderRow(
+            parent,
+            "Maximum threshold",
+            1,
+            1,
+            0.65f,
+            1f,
+            "F2",
+            () => personalization == null
+                ? 0.95f
+                : personalization.MaximumThreshold,
+            value => personalization?.SetMaximumThreshold(value));
+
+        CreateActionButton(
+            parent,
+            "APPLY SLIDERS",
+            new Vector2(0.52f, 0.27f),
+            new Vector2(0.74f, 0.42f),
+            () => personalization?.ApplyThresholdPreview(),
+            WarningColor);
+        CreateActionButton(
+            parent,
+            "EVALUATE ML",
+            new Vector2(0.76f, 0.27f),
+            new Vector2(0.98f, 0.42f),
+            () => personalization?.RunNow(),
+            ButtonColor);
+        thresholdHelpText = CreateText(
+            parent,
+            "ThresholdHelp",
+            new Vector2(0.52f, 0.00f),
+            new Vector2(0.98f, 0.24f),
+            16f,
+            TextAlignmentOptions.TopLeft);
+    }
+
+    private void CreateFeatureSlider(
+        Transform parent,
+        string label,
+        int column,
+        int row,
+        float minimum,
+        float maximum,
+        string format,
+        int featureIndex)
+    {
+        CreateSliderRow(
+            parent,
+            label,
+            column,
+            row,
+            minimum,
+            maximum,
+            format,
+            () => ManualFeatureValue(featureIndex),
+            value => personalization?.SetManualFeature(featureIndex, value));
+    }
+
+    private void CreateSliderRow(
+        Transform parent,
+        string label,
+        int column,
+        int row,
+        float minimum,
+        float maximum,
+        string format,
+        Func<float> getter,
+        Action<float> setter)
+    {
+        float left = column == 0 ? 0.02f : 0.52f;
+        float right = column == 0 ? 0.48f : 0.98f;
+        float top = 0.80f - row * 0.16f;
+        float bottom = top - 0.13f;
+        GameObject rowObject = CreateRect(
+            label + " Row",
+            parent,
+            new Vector2(left, bottom),
+            new Vector2(right, top),
+            Vector2.zero,
+            Vector2.zero);
+
+        TMP_Text nameText = CreateText(
+            rowObject.transform,
+            "Name",
+            new Vector2(0f, 0f),
+            new Vector2(0.38f, 1f),
+            17f,
+            TextAlignmentOptions.MidlineLeft);
+        nameText.text = label;
+        Slider slider = CreateSlider(
+            rowObject.transform,
+            new Vector2(0.39f, 0.16f),
+            new Vector2(0.83f, 0.84f),
+            minimum,
+            maximum);
+        TMP_Text valueText = CreateText(
+            rowObject.transform,
+            "Value",
+            new Vector2(0.85f, 0f),
+            new Vector2(1f, 1f),
+            17f,
+            TextAlignmentOptions.MidlineRight);
+        float initial = getter == null ? minimum : getter();
+        slider.SetValueWithoutNotify(initial);
+        valueText.text = initial.ToString(format);
+        slider.onValueChanged.AddListener(value =>
+        {
+            if (refreshing)
+            {
+                return;
+            }
+
+            valueText.text = value.ToString(format);
+            setter?.Invoke(value);
+        });
+        sliderBindings.Add(new SliderBinding
+        {
+            Slider = slider,
+            ValueText = valueText,
+            Getter = getter,
+            Format = format
+        });
+    }
+
+    private void RefreshHeader()
+    {
+        if (headerStatusText == null)
+        {
+            return;
+        }
+
+        if (personalization == null)
+        {
+            SetChip(modeChip, "MODE  UNAVAILABLE", DisabledColor);
+            SetChip(sessionChip, "SESSION  --", MutedColor);
+            SetChip(modelChip, "MODEL  MISSING", DisabledColor);
+            SetChip(probabilityChip, "pNEG  --", MutedColor);
+            SetChip(appliedChip, "APPLIED  NO", MutedColor);
+            headerStatusText.text = "Personalization runtime component is missing.";
+            headerStatusText.color = new Color(1f, 0.55f, 0.55f);
+            return;
+        }
+
+        string mode = personalization.ShadowMode
+            ? "SHADOW"
+            : personalization.ApplyPersonalization
+                ? "AUTO APPLY"
+                : "MANUAL TEST";
+        string probability = personalization.HasNegativeProbability
+            ? personalization.LastNegativeProbability.ToString("F3")
+            : "N/A";
+        SetChip(
+            modeChip,
+            "MODE  " + mode,
+            personalization.ShadowMode ? WarningColor : AccentColor);
+        SetChip(
+            sessionChip,
+            string.Format(
+                "SESSION  {0}/{1}",
+                personalization.AccumulatedSessionCount,
+                personalization.MinimumSessionCount),
+            personalization.LastRunWasColdStart
+                ? WarningColor : EnabledColor);
+        SetChip(
+            modelChip,
+            "MODEL  " + (personalization.ModelReady ? "READY" : "SOURCE"),
+            personalization.ModelReady ? EnabledColor : WarningColor);
+        SetChip(
+            probabilityChip,
+            "pNEG  " + probability,
+            personalization.HasNegativeProbability
+                ? AccentColor : MutedColor);
+        SetChip(
+            appliedChip,
+            "APPLIED  "
+                + (personalization.LastThresholdsApplied ? "YES" : "NO"),
+            personalization.LastThresholdsApplied
+                ? EnabledColor : MutedColor);
+        headerStatusText.text = string.Format(
+            "STATUS  {0}   ·   SOURCE  {1}   ·   INPUT  {2}",
+            personalization.ModelReady ? "MODEL READY" : "SAFE DEFAULTS",
+            personalization.LastInferenceSource,
+            personalization.ManualFeatureOverride ? "MANUAL" : "LIVE");
+        headerStatusText.color = personalization.ModelReady
+            ? new Color(0.68f, 0.90f, 0.74f)
+            : new Color(1f, 0.78f, 0.38f);
+    }
+
+    private void RefreshLivePage()
+    {
+        if (headRiskBar == null || dynamicRiskBar == null)
+        {
+            return;
+        }
+
+        StaticPassthroughDecision staticDetail =
+            staticPolicy == null ? null : staticPolicy.LatestStatic;
+        StaticBoundaryRiskFrame staticFrame =
+            staticPolicy == null || staticPolicy.MeasurementProvider == null
+                ? null
+                : staticPolicy.MeasurementProvider.CurrentStaticBoundaryFrame;
+        float distance = staticFrame == null || !staticFrame.Available
+            ? -1f
+            : staticFrame.Head.ClosestDistanceMeters;
+        string ttc = staticFrame != null
+            && staticFrame.Available
+            && staticFrame.Head.HasTimeToCollision
+                ? staticFrame.Head.TimeToCollisionSeconds.ToString("F2") + " s"
+                : "--";
+        bool staticAvailable = staticFrame != null && staticFrame.Available;
+        bool staticEnabled = staticDetail != null && staticDetail.Enabled;
+        bool staticVisible = presentation != null
+            && presentation.StaticWindowVisible;
+        bool emergency = staticDetail != null
+            && (staticDetail.EmergencyTrigger || staticDetail.EmergencyHold);
+        SetChip(
+            staticStateChip,
+            !staticAvailable
+                ? "NO DATA"
+                : staticEnabled
+                    ? staticVisible ? "ON · VISIBLE" : "ON · HIDDEN"
+                    : "OFF",
+            !staticAvailable
+                ? MutedColor : staticEnabled ? EnabledColor : DisabledColor);
+        SetChip(
+            staticEmergencyChip,
+            emergency ? "EMERGENCY" : "CLEAR",
+            emergency ? DisabledColor : EnabledColor);
+        SetRiskBar(
+            headRiskBar,
+            staticDetail == null ? 0f : staticDetail.HeadRisk,
+            staticAvailable);
+        SetRiskBar(
+            handRiskBar,
+            staticDetail == null ? 0f : staticDetail.HandRisk,
+            staticAvailable);
+        SetRiskBar(
+            combinedRiskBar,
+            staticDetail == null ? 0f : staticDetail.CombinedRisk,
+            staticAvailable);
+        SetMetric(
+            staticDistanceTile,
+            distance < 0f ? "--" : distance.ToString("F2") + " m");
+        SetMetric(staticTtcTile, ttc);
+        SetMetric(
+            staticUserTile,
+            staticDetail == null
+                ? "--" : staticDetail.UserState01.ToString("F2"));
+        SetMetric(
+            staticCauseTile,
+            staticDetail == null ? "--" : staticDetail.Cause.ToString(),
+            emergency ? new Color(1f, 0.58f, 0.52f) : Color.white);
+
+        RefreshDynamicCard();
+
+        if (personalization == null)
+        {
+            SetChip(inferenceChip, "RUNTIME MISSING", DisabledColor);
+            for (int i = 0; i < featureTiles.Length; i++)
+            {
+                SetMetric(featureTiles[i], "--");
+            }
+            return;
+        }
+
+        PersonalizationFeatureVector f = personalization.LastFeatures;
+        PersonalizedThresholds t = personalization.LastThresholds;
+        string logName = string.IsNullOrEmpty(personalization.CurrentLogPath)
+            ? "--"
+            : Path.GetFileName(personalization.CurrentLogPath);
+        SetChip(
+            inferenceChip,
+            personalization.ModelReady ? "MODEL READY" : "SOURCE ONLY",
+            personalization.ModelReady ? EnabledColor : WarningColor);
+        float[] featureValues =
+        {
+            f.ActivationFrequency,
+            f.ManualCancelRatio,
+            f.MeanPassthroughDurationSeconds,
+            f.MeanHeadSpeedMetersPerSecond,
+            f.MaximumHeadSpeedMetersPerSecond,
+            f.NormalizedSpaceArea,
+            f.NormalizedSessionElapsed
+        };
+        for (int i = 0; i < featureTiles.Length; i++)
+        {
+            SetMetric(featureTiles[i], featureValues[i].ToString("F3"));
+        }
+
+        SetMetric(stableThresholdTile, t.StableOnThreshold.ToString("F2"));
+        SetMetric(rapidThresholdTile, t.RapidOnThreshold.ToString("F2"));
+        SetMetric(handThresholdTile, t.HandFullThreshold.ToString("F2"));
+        SetMetric(
+            headSpeedTile,
+            personalization.CurrentHeadSpeedMetersPerSecond.ToString("F2")
+                + " m/s");
+        SetMetric(
+            eventTile,
+            personalization.RecentActivationCount + "/"
+                + personalization.EventWindowSize);
+        SetMetric(logTile, logName, new Color(0.66f, 0.88f, 1f));
+    }
+
+    private void RefreshDynamicCard()
+    {
+        DynamicRiskFrame frame = dynamicPolicy == null
+            || dynamicPolicy.DynamicRiskController == null
+                ? null
+                : dynamicPolicy.DynamicRiskController.LatestFrame;
+        PassthroughSourceDecision decision =
+            dynamicPolicy == null ? null : dynamicPolicy.Latest;
+        if (frame == null)
+        {
+            SetChip(dynamicStateChip, "NO CAMERA DATA", MutedColor);
+            SetRiskBar(dynamicRiskBar, 0f, false);
+            SetMetric(dynamicPeopleTile, "--");
+            SetMetric(dynamicDistanceTile, "--");
+            SetMetric(dynamicClosingTile, "--");
+            SetMetric(dynamicTtcTile, "--");
+            SetMetric(dynamicTrackTile, "--");
+            return;
+        }
+
+        DynamicRiskAssessment primary = null;
+        for (int i = 0; i < frame.Assessments.Count; i++)
+        {
+            if (primary == null
+                || frame.Assessments[i].Score > primary.Score)
+            {
+                primary = frame.Assessments[i];
+            }
+        }
+
+        bool enabled = decision != null && decision.Enabled;
+        SetChip(
+            dynamicStateChip,
+            enabled ? "ON · VISIBLE" : "OFF",
+            enabled ? EnabledColor : DisabledColor);
+        SetRiskBar(dynamicRiskBar, frame.MaximumRisk, true);
+        SetMetric(dynamicPeopleTile, frame.ConfirmedPersonCount.ToString());
+        SetMetric(
+            dynamicDistanceTile,
+            primary != null && primary.Location.HasMetricDistance
+                ? primary.Location.FilteredDistanceMeters.ToString("F2") + " m"
+                : "--");
+        SetMetric(
+            dynamicClosingTile,
+            primary != null && primary.Motion.HasMetricMotion
+                ? primary.Motion.ClosingSpeedMetersPerSecond.ToString("F2")
+                    + " m/s"
+                : "--");
+        SetMetric(
+            dynamicTtcTile,
+            primary != null && primary.Motion.MetricTtcSeconds.HasValue
+                ? primary.Motion.MetricTtcSeconds.Value.ToString("F2") + " s"
+                : "--");
+        SetMetric(
+            dynamicTrackTile,
+            primary == null ? "--" : primary.TrackId.ToString());
+    }
+
+    private void RefreshHelpText()
+    {
+        if (featureHelpText != null)
+        {
+            featureHelpText.text = personalization == null
+                ? "SESSION RUNTIME UNAVAILABLE"
+                : string.Format(
+                    "SESSION {0}   ·   COLD START {1}   ·   "
+                    + "MANUAL INPUTS APPLY ONLY WHEN ENABLED",
+                    personalization.AccumulatedSessionCount,
+                    personalization.LastRunWasColdStart ? "ACTIVE" : "CLEAR");
+        }
+
+        if (thresholdHelpText != null)
+        {
+            thresholdHelpText.text =
+                "<b>SAFETY GUARDRAILS</b>\n"
+                + "Emergency distance, hold/release timing, and the critical-person "
+                + "override stay locked. Sliders change only Static ON thresholds.";
+        }
+    }
+
+    private static GameObject CreateCard(
+        Transform parent,
+        string name,
+        Vector2 anchorMin,
+        Vector2 anchorMax,
+        string title)
+    {
+        GameObject card = CreateRect(
+            name,
+            parent,
+            anchorMin,
+            anchorMax,
+            new Vector2(3f, 3f),
+            new Vector2(-3f, -3f));
+        Image image = card.AddComponent<Image>();
+        image.color = CardColor;
+        image.raycastTarget = false;
+
+        TMP_Text titleText = CreateText(
+            card.transform,
+            "Title",
+            new Vector2(0.025f, 0.81f),
+            new Vector2(0.56f, 0.975f),
+            20f,
+            TextAlignmentOptions.MidlineLeft);
+        titleText.text = title;
+        titleText.fontStyle = FontStyles.Bold;
+        titleText.color = new Color(0.72f, 0.90f, 1f);
+        return card;
+    }
+
+    private static StatusChip CreateStatusChip(
+        Transform parent,
+        string name,
+        float left,
+        float right)
+    {
+        return CreateStatusChip(
+            parent,
+            name,
+            new Vector2(left, 0.928f),
+            new Vector2(right, 0.99f));
+    }
+
+    private static StatusChip CreateStatusChip(
+        Transform parent,
+        string name,
+        Vector2 anchorMin,
+        Vector2 anchorMax)
+    {
+        GameObject chipObject = CreateRect(
+            name + " Chip",
+            parent,
+            anchorMin,
+            anchorMax,
+            new Vector2(2f, 2f),
+            new Vector2(-2f, -2f));
+        Image background = chipObject.AddComponent<Image>();
+        background.color = MutedColor;
+        background.raycastTarget = false;
+        TMP_Text text = CreateText(
+            chipObject.transform,
+            "Value",
+            Vector2.zero,
+            Vector2.one,
+            16f,
+            TextAlignmentOptions.Center);
+        text.fontStyle = FontStyles.Bold;
+        return new StatusChip
+        {
+            Background = background,
+            Text = text
+        };
+    }
+
+    private static MetricTile CreateMetricTile(
+        Transform parent,
+        string name,
+        string label,
+        float left,
+        float right,
+        float bottom,
+        float top)
+    {
+        GameObject tileObject = CreateRect(
+            name + " Tile",
+            parent,
+            new Vector2(left, bottom),
+            new Vector2(right, top),
+            new Vector2(2f, 2f),
+            new Vector2(-2f, -2f));
+        Image background = tileObject.AddComponent<Image>();
+        background.color = TileColor;
+        background.raycastTarget = false;
+
+        TMP_Text labelText = CreateText(
+            tileObject.transform,
+            "Label",
+            new Vector2(0.04f, 0.53f),
+            new Vector2(0.96f, 0.94f),
+            13f,
+            TextAlignmentOptions.Center);
+        labelText.text = label;
+        labelText.fontStyle = FontStyles.Bold;
+        labelText.color = new Color(0.56f, 0.66f, 0.76f);
+
+        TMP_Text valueText = CreateText(
+            tileObject.transform,
+            "Value",
+            new Vector2(0.04f, 0.04f),
+            new Vector2(0.96f, 0.59f),
+            18f,
+            TextAlignmentOptions.Center);
+        valueText.text = "--";
+        valueText.fontStyle = FontStyles.Bold;
+        return new MetricTile
+        {
+            Background = background,
+            Label = labelText,
+            Value = valueText
+        };
+    }
+
+    private static void MakeCompact(MetricTile tile)
+    {
+        if (tile == null)
+        {
+            return;
+        }
+
+        tile.Label.fontSize = 11f;
+        tile.Value.fontSize = 15f;
+    }
+
+    private static RiskBar CreateRiskBar(
+        Transform parent,
+        string label,
+        Vector2 anchorMin,
+        Vector2 anchorMax)
+    {
+        GameObject row = CreateRect(
+            label + " Risk",
+            parent,
+            anchorMin,
+            anchorMax,
+            Vector2.zero,
+            Vector2.zero);
+        TMP_Text labelText = CreateText(
+            row.transform,
+            "Label",
+            new Vector2(0f, 0f),
+            new Vector2(0.18f, 1f),
+            14f,
+            TextAlignmentOptions.MidlineLeft);
+        labelText.text = label;
+        labelText.fontStyle = FontStyles.Bold;
+        labelText.color = new Color(0.68f, 0.76f, 0.84f);
+
+        GameObject track = CreateRect(
+            "Track",
+            row.transform,
+            new Vector2(0.19f, 0.31f),
+            new Vector2(0.83f, 0.69f),
+            Vector2.zero,
+            Vector2.zero);
+        Image trackImage = track.AddComponent<Image>();
+        trackImage.color = new Color(0.12f, 0.15f, 0.19f, 1f);
+        trackImage.raycastTarget = false;
+        GameObject fill = CreateRect(
+            "Fill",
+            track.transform,
+            Vector2.zero,
+            new Vector2(0f, 1f),
+            Vector2.zero,
+            Vector2.zero);
+        Image fillImage = fill.AddComponent<Image>();
+        fillImage.color = EnabledColor;
+        fillImage.raycastTarget = false;
+
+        TMP_Text valueText = CreateText(
+            row.transform,
+            "Value",
+            new Vector2(0.84f, 0f),
+            new Vector2(1f, 1f),
+            17f,
+            TextAlignmentOptions.MidlineRight);
+        valueText.text = "--";
+        valueText.fontStyle = FontStyles.Bold;
+        return new RiskBar
+        {
+            Fill = fillImage,
+            Value = valueText
+        };
+    }
+
+    private static void CreateInfoStrip(
+        Transform parent,
+        string name,
+        string message,
+        Vector2 anchorMin,
+        Vector2 anchorMax)
+    {
+        GameObject strip = CreateRect(
+            name,
+            parent,
+            anchorMin,
+            anchorMax,
+            new Vector2(2f, 2f),
+            new Vector2(-2f, -2f));
+        Image image = strip.AddComponent<Image>();
+        image.color = new Color(0.09f, 0.15f, 0.20f, 0.98f);
+        image.raycastTarget = false;
+        TMP_Text text = CreateText(
+            strip.transform,
+            "Text",
+            Vector2.zero,
+            Vector2.one,
+            14f,
+            TextAlignmentOptions.Center);
+        text.text = message;
+        text.color = new Color(0.56f, 0.78f, 0.92f);
+        text.fontStyle = FontStyles.Bold;
+    }
+
+    private static void SetChip(
+        StatusChip chip,
+        string value,
+        Color color)
+    {
+        if (chip == null)
+        {
+            return;
+        }
+
+        chip.Text.text = value;
+        chip.Background.color = color;
+    }
+
+    private static void SetMetric(
+        MetricTile tile,
+        string value,
+        Color? color = null)
+    {
+        if (tile == null)
+        {
+            return;
+        }
+
+        tile.Value.text = value;
+        tile.Value.color = color ?? Color.white;
+    }
+
+    private static void SetRiskBar(
+        RiskBar bar,
+        float value,
+        bool available)
+    {
+        if (bar == null)
+        {
+            return;
+        }
+
+        float normalized = Mathf.Clamp01(value);
+        RectTransform fillRect = bar.Fill.rectTransform;
+        fillRect.anchorMax = new Vector2(
+            available ? Mathf.Max(0.015f, normalized) : 0.015f,
+            1f);
+        Color color = !available
+            ? MutedColor
+            : normalized >= 0.70f
+                ? DisabledColor
+                : normalized >= 0.40f ? WarningColor : EnabledColor;
+        bar.Fill.color = color;
+        bar.Value.text = available ? normalized.ToString("F2") : "--";
+        bar.Value.color = available ? Color.white : new Color(0.6f, 0.65f, 0.7f);
+    }
+
+    private void CreateTabButton(
+        Transform parent,
+        string label,
+        int pageIndex,
+        float x)
+    {
+        Button button = CreateActionButton(
+            parent,
+            label,
+            new Vector2(0.5f, 0.5f),
+            new Vector2(0.5f, 0.5f),
+            () => SetPage(pageIndex),
+            ButtonColor);
+        RectTransform rect = button.GetComponent<RectTransform>();
+        rect.anchorMin = new Vector2(0.5f, 0.815f);
+        rect.anchorMax = new Vector2(0.5f, 0.815f);
+        rect.sizeDelta = new Vector2(310f, 52f);
+        rect.anchoredPosition = new Vector2(x, 0f);
+    }
+
+    private GameObject CreatePage(Transform parent, string name)
+    {
+        GameObject page = CreateRect(
+            name,
+            parent,
+            new Vector2(0.01f, 0.01f),
+            new Vector2(0.99f, 0.775f),
+            Vector2.zero,
+            Vector2.zero);
+        Image image = page.AddComponent<Image>();
+        image.color = PageColor;
+        image.raycastTarget = false;
+        return page;
+    }
+
+    private void SetPage(int pageIndex)
+    {
+        currentPage = Mathf.Clamp(pageIndex, 0, pages.Count - 1);
+        for (int i = 0; i < pages.Count; i++)
+        {
+            pages[i].SetActive(i == currentPage);
+        }
+
+        Refresh();
+    }
+
+    private void CreateToggleButton(
+        Transform parent,
+        string label,
+        Vector2 anchorMin,
+        Vector2 anchorMax,
+        Func<bool> getter,
+        Action action)
+    {
+        Button button = CreateActionButton(
+            parent,
+            label,
+            anchorMin,
+            anchorMax,
+            action,
+            DisabledColor);
+        TMP_Text text = button.GetComponentInChildren<TMP_Text>();
+        toggleBindings.Add(new ToggleBinding
+        {
+            Button = button,
+            Label = text,
+            Getter = getter,
+            Name = label
+        });
+    }
+
+    private static Button CreateActionButton(
+        Transform parent,
+        string label,
+        Vector2 anchorMin,
+        Vector2 anchorMax,
+        Action action,
+        Color color)
+    {
+        GameObject buttonObject = CreateRect(
+            label + " Button",
+            parent,
+            anchorMin,
+            anchorMax,
+            new Vector2(3f, 3f),
+            new Vector2(-3f, -3f));
+        Image image = buttonObject.AddComponent<Image>();
+        image.color = color;
+        image.raycastTarget = true;
+        Button button = buttonObject.AddComponent<Button>();
+        button.targetGraphic = image;
+        button.onClick.AddListener(() => action?.Invoke());
+
+        TMP_Text text = CreateText(
+            buttonObject.transform,
+            "Label",
+            Vector2.zero,
+            Vector2.one,
+            17f,
+            TextAlignmentOptions.Center);
+        text.text = label;
+        text.fontStyle = FontStyles.Bold;
+        text.raycastTarget = false;
+        return button;
+    }
+
+    private static Slider CreateSlider(
+        Transform parent,
+        Vector2 anchorMin,
+        Vector2 anchorMax,
+        float minimum,
+        float maximum)
+    {
+        GameObject sliderObject = CreateRect(
+            "Slider",
+            parent,
+            anchorMin,
+            anchorMax,
+            Vector2.zero,
+            Vector2.zero);
+        Slider slider = sliderObject.AddComponent<Slider>();
+        slider.minValue = minimum;
+        slider.maxValue = maximum;
+        slider.direction = Slider.Direction.LeftToRight;
+
+        GameObject background = CreateRect(
+            "Background",
+            sliderObject.transform,
+            new Vector2(0f, 0.40f),
+            new Vector2(1f, 0.60f),
+            Vector2.zero,
+            Vector2.zero);
+        Image backgroundImage = background.AddComponent<Image>();
+        backgroundImage.color = new Color(0.15f, 0.18f, 0.23f, 1f);
+
+        GameObject fillArea = CreateRect(
+            "Fill Area",
+            sliderObject.transform,
+            new Vector2(0f, 0.40f),
+            new Vector2(1f, 0.60f),
+            new Vector2(8f, 0f),
+            new Vector2(-8f, 0f));
+        GameObject fill = CreateRect(
+            "Fill",
+            fillArea.transform,
+            Vector2.zero,
+            Vector2.one,
+            Vector2.zero,
+            Vector2.zero);
+        Image fillImage = fill.AddComponent<Image>();
+        fillImage.color = new Color(0.12f, 0.62f, 0.92f, 1f);
+
+        GameObject handleArea = CreateRect(
+            "Handle Slide Area",
+            sliderObject.transform,
+            Vector2.zero,
+            Vector2.one,
+            new Vector2(12f, 0f),
+            new Vector2(-12f, 0f));
+        GameObject handle = CreateRect(
+            "Handle",
+            handleArea.transform,
+            new Vector2(0f, 0.20f),
+            new Vector2(0f, 0.80f),
+            new Vector2(-10f, 0f),
+            new Vector2(10f, 0f));
+        Image handleImage = handle.AddComponent<Image>();
+        handleImage.color = Color.white;
+        handleImage.raycastTarget = true;
+
+        slider.fillRect = fill.GetComponent<RectTransform>();
+        slider.handleRect = handle.GetComponent<RectTransform>();
+        slider.targetGraphic = handleImage;
+        return slider;
+    }
+
+    private static TMP_Text CreateText(
+        Transform parent,
+        string name,
+        Vector2 anchorMin,
+        Vector2 anchorMax,
+        float fontSize,
+        TextAlignmentOptions alignment)
+    {
+        GameObject textObject = CreateRect(
+            name,
+            parent,
+            anchorMin,
+            anchorMax,
+            new Vector2(5f, 3f),
+            new Vector2(-5f, -3f));
+        TextMeshProUGUI text = textObject.AddComponent<TextMeshProUGUI>();
+        text.fontSize = fontSize;
+        text.alignment = alignment;
+        text.color = Color.white;
+        text.textWrappingMode = TextWrappingModes.NoWrap;
+        text.overflowMode = TextOverflowModes.Ellipsis;
+        text.raycastTarget = false;
+        return text;
+    }
+
+    private static GameObject CreateRect(
+        string name,
+        Transform parent,
+        Vector2 anchorMin,
+        Vector2 anchorMax,
+        Vector2 offsetMin,
+        Vector2 offsetMax)
+    {
+        var target = new GameObject(name, typeof(RectTransform));
+        target.transform.SetParent(parent, false);
+        RectTransform rect = target.GetComponent<RectTransform>();
+        rect.anchorMin = anchorMin;
+        rect.anchorMax = anchorMax;
+        rect.offsetMin = offsetMin;
+        rect.offsetMax = offsetMax;
+        return target;
+    }
+
+    private float ManualFeatureValue(int index)
+    {
+        if (personalization == null)
+        {
+            return 0f;
+        }
+
+        PersonalizationFeatureVector features =
+            personalization.ManualFeatures;
+        switch (index)
+        {
+            case 0: return features.ActivationFrequency;
+            case 1: return features.ManualCancelRatio;
+            case 2: return features.MeanPassthroughDurationSeconds;
+            case 3: return features.MeanHeadSpeedMetersPerSecond;
+            case 4: return features.MaximumHeadSpeedMetersPerSecond;
+            case 5: return features.NormalizedSpaceArea;
+            case 6: return features.NormalizedSessionElapsed;
+            default: return 0f;
+        }
+    }
+
+    private PersonalizedThresholds Preview()
+    {
+        return personalization == null
+            ? PersonalizationMath.Defaults
+            : personalization.ThresholdPreview;
+    }
+
+    private void SetPreview(
+        float? stableOn,
+        float? rapidOn,
+        float? handFull)
+    {
+        if (personalization == null)
+        {
+            return;
+        }
+
+        PersonalizedThresholds current = personalization.ThresholdPreview;
+        personalization.SetThresholdPreview(
+            stableOn ?? current.StableOnThreshold,
+            rapidOn ?? current.RapidOnThreshold,
+            handFull ?? current.HandFullThreshold);
+    }
+
+    private void ApplyPanelOpacity(float value, bool savePreference)
+    {
+        panelOpacity = Mathf.Clamp(value, 0.35f, 1f);
+        ResolvePanelCanvasGroup();
+        if (panelCanvasGroup != null)
+        {
+            panelCanvasGroup.alpha = panelOpacity;
+            panelCanvasGroup.interactable = true;
+            panelCanvasGroup.blocksRaycasts = true;
+        }
+
+        if (savePreference)
+        {
+            PlayerPrefs.SetFloat(
+                PanelOpacityPreferenceKey,
+                panelOpacity);
+        }
+    }
+
+    private void ResolvePanelCanvasGroup()
+    {
+        if (panelCanvasGroup != null)
+        {
+            return;
+        }
+
+        Transform panelRoot = transform.parent == null
+            ? transform
+            : transform.parent;
+        panelCanvasGroup = panelRoot.GetComponent<CanvasGroup>();
+        if (panelCanvasGroup == null)
+        {
+            panelCanvasGroup = panelRoot.gameObject.AddComponent<CanvasGroup>();
+        }
+    }
+
+    private void ResolveReferences()
+    {
+        if (personalization == null)
+        {
+            personalization =
+                FindAnyObjectByType<PersonalizationRuntimeController>();
+        }
+
+        if (staticPolicy == null)
+        {
+            staticPolicy =
+                FindAnyObjectByType<StaticPassthroughPolicyController>();
+        }
+
+        if (dynamicPolicy == null)
+        {
+            dynamicPolicy =
+                FindAnyObjectByType<DynamicPassthroughPolicyController>();
+        }
+
+        if (presentation == null)
+        {
+            presentation =
+                FindAnyObjectByType<SelectivePassthroughController>();
+        }
+    }
+}

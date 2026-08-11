@@ -22,7 +22,8 @@ namespace TeamVR.AdaptivePassthrough
         BelowThreshold,
         AtOrAboveThreshold,
         HysteresisHeld,
-        MinimumHoldActive
+        MinimumHoldActive,
+        ReleaseDelayActive
     }
 
     public interface IRiskSnapshotSequenceProvider

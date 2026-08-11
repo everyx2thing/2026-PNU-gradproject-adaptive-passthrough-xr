@@ -41,12 +41,27 @@ namespace TeamVR.AdaptivePassthrough
             double timestampSeconds,
             IReadOnlyList<DynamicObjectDetection> detections)
         {
+            return SubmitDetections(
+                timestampSeconds,
+                detections,
+                null);
+        }
+
+        public DynamicRiskFrame SubmitDetections(
+            double timestampSeconds,
+            IReadOnlyList<DynamicObjectDetection> detections,
+            Func<TrackedDynamicObject, PersonDistanceMeasurement>
+                distanceResolver)
+        {
             if (pipeline == null)
             {
                 RebuildPipeline();
             }
 
-            LatestFrame = pipeline.Process(timestampSeconds, detections);
+            LatestFrame = pipeline.Process(
+                timestampSeconds,
+                detections,
+                distanceResolver);
             FrameProcessed?.Invoke(LatestFrame);
             return LatestFrame;
         }

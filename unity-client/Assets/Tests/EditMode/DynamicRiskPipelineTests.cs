@@ -72,8 +72,33 @@ namespace TeamVR.AdaptivePassthrough.Tests
             tracker.Update(0.4, Array.Empty<DynamicObjectDetection>());
             Assert.That(tracker.ConfirmedTrackCount, Is.EqualTo(1));
 
-            tracker.Update(0.7, Array.Empty<DynamicObjectDetection>());
+            tracker.Update(0.9, Array.Empty<DynamicObjectDetection>());
             Assert.That(tracker.ConfirmedTrackCount, Is.EqualTo(0));
+        }
+
+        [Test]
+        public void LowConfidenceCannotCreateButCanContinueConfirmedTrack()
+        {
+            var tracker = new SimpleObjectTracker();
+            IReadOnlyList<TrackedDynamicObject> lowOnly = tracker.Update(
+                0.0,
+                new[] { Person(0.5f, 0.5f, 0.2f, 0.4f, 0.40f) });
+            Assert.That(lowOnly, Is.Empty);
+
+            tracker.Update(
+                0.1,
+                new[] { Person(0.5f, 0.5f, 0.2f, 0.4f, 0.90f) });
+            IReadOnlyList<TrackedDynamicObject> confirmed = tracker.Update(
+                0.2,
+                new[] { Person(0.51f, 0.5f, 0.2f, 0.4f, 0.90f) });
+            int trackId = confirmed[0].TrackId;
+            IReadOnlyList<TrackedDynamicObject> continued = tracker.Update(
+                0.3,
+                new[] { Person(0.53f, 0.5f, 0.2f, 0.4f, 0.40f) });
+
+            Assert.That(continued.Count, Is.EqualTo(1));
+            Assert.That(continued[0].TrackId, Is.EqualTo(trackId));
+            Assert.That(continued[0].IsConfirmed, Is.True);
         }
 
         [Test]
@@ -214,6 +239,41 @@ namespace TeamVR.AdaptivePassthrough.Tests
         }
 
         [Test]
+        public void MetricDistanceMakesCloserPersonMoreRisky()
+        {
+            DynamicObjectDetection detection =
+                Person(0.5f, 0.5f, 0.2f, 0.4f, 1f);
+            var tracked = new TrackedDynamicObject(1, detection, 0f);
+            var estimator = new RelativeLocationEstimator();
+            var riskEstimator = new DynamicRiskEstimator();
+            var steady = new MotionEstimate(
+                DynamicMotionState.Steady,
+                0f,
+                null,
+                0f,
+                6,
+                0.6,
+                1f,
+                PersonDistanceSource.EnvironmentDepth,
+                true,
+                0f,
+                null);
+            RelativeLocationEstimate close = estimator.Estimate(
+                tracked,
+                MetricDistance(1, 0.5f));
+            RelativeLocationEstimate far = estimator.Estimate(
+                tracked,
+                MetricDistance(1, 3f));
+
+            float closeRisk =
+                riskEstimator.Estimate(tracked, close, steady).Score;
+            float farRisk =
+                riskEstimator.Estimate(tracked, far, steady).Score;
+
+            Assert.That(closeRisk, Is.GreaterThan(farRisk));
+        }
+
+        [Test]
         public void OverallFusionNormalizesConfiguredWeights()
         {
             OverallRiskResult result = OverallRiskFusion.Calculate(
@@ -236,6 +296,24 @@ namespace TeamVR.AdaptivePassthrough.Tests
                 "person",
                 confidence,
                 new NormalizedBoundingBox(centerX, centerY, width, height));
+        }
+
+        private static PersonDistanceMeasurement MetricDistance(
+            int trackId,
+            float meters)
+        {
+            return new PersonDistanceMeasurement(
+                trackId,
+                0.0,
+                PersonDistanceSource.EnvironmentDepth,
+                true,
+                meters,
+                meters,
+                1f,
+                7,
+                7,
+                0f,
+                0.08f);
         }
     }
 }

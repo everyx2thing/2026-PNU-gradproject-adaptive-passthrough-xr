@@ -182,6 +182,57 @@ namespace TeamVR.AdaptivePassthrough.Tests
             Assert.That(filter.Evaluate(0.6, true, 0.2f).Enabled, Is.False);
         }
 
+        [Test]
+        public void HysteresisRequiresStableReleaseAndCancelsTransientDrop()
+        {
+            var filter = new PassthroughDecisionFilter(
+                new PassthroughDecisionFilterSettings
+                {
+                    mode = PassthroughDecisionMode.Hysteresis,
+                    onThreshold = 0.6f,
+                    offThreshold = 0.5f,
+                    minimumHoldSeconds = 0.5f,
+                    releaseDelaySeconds = 0.35f
+                });
+
+            Assert.That(filter.Evaluate(0.0, true, 0.7f).Enabled, Is.True);
+            PassthroughDecisionSnapshot firstDrop =
+                filter.Evaluate(1.0, true, 0.2f);
+            Assert.That(firstDrop.Enabled, Is.True);
+            Assert.That(
+                firstDrop.Reason,
+                Is.EqualTo(PassthroughDecisionReason.ReleaseDelayActive));
+
+            Assert.That(filter.Evaluate(1.1, true, 0.7f).Enabled, Is.True);
+            Assert.That(filter.Evaluate(1.2, true, 0.2f).Enabled, Is.True);
+            Assert.That(filter.Evaluate(1.54, true, 0.2f).Enabled, Is.True);
+            Assert.That(filter.Evaluate(1.56, true, 0.2f).Enabled, Is.False);
+        }
+
+        [Test]
+        public void HysteresisHoldsThroughBriefInputLoss()
+        {
+            var filter = new PassthroughDecisionFilter(
+                new PassthroughDecisionFilterSettings
+                {
+                    mode = PassthroughDecisionMode.Hysteresis,
+                    onThreshold = 0.6f,
+                    offThreshold = 0.5f,
+                    minimumHoldSeconds = 1.5f,
+                    releaseDelaySeconds = 0.35f
+                });
+
+            Assert.That(filter.Evaluate(0.0, true, 0.7f).Enabled, Is.True);
+            PassthroughDecisionSnapshot held =
+                filter.Evaluate(0.2, false, 0f);
+
+            Assert.That(held.Enabled, Is.True);
+            Assert.That(
+                held.Reason,
+                Is.EqualTo(PassthroughDecisionReason.MinimumHoldActive));
+            Assert.That(filter.Evaluate(0.3, true, 0.7f).Enabled, Is.True);
+        }
+
         private static StaticRiskMeasurement StaticMeasurement(float risk)
         {
             return new StaticRiskMeasurement(

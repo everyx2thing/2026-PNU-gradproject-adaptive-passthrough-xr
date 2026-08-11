@@ -1,5 +1,8 @@
 using Meta.XR;
+using Meta.XR.EnvironmentDepth;
 using NUnit.Framework;
+using System.IO;
+using System.Reflection;
 using Unity.InferenceEngine;
 using UnityEditor;
 using UnityEditor.SceneManagement;
@@ -11,6 +14,8 @@ namespace TeamVR.AdaptivePassthrough.Tests
     public sealed class QuestIntegrationAssetTests
     {
         private const string ModelPath = "Assets/Models/yolov9sentis.sentis";
+        private const string PersonalizationSourceModelPath =
+            "Assets/Models/rf_personalization_real.onnx.source";
         private const string QuestScenePath = "Assets/Scenes/SampleScene.unity";
 
         [Test]
@@ -35,12 +40,21 @@ namespace TeamVR.AdaptivePassthrough.Tests
                 DynamicRiskController controller = FindInScene<DynamicRiskController>(scene);
                 QuestPersonDetectionRunner runner = FindInScene<QuestPersonDetectionRunner>(scene);
                 PassthroughCameraAccess cameraAccess = FindInScene<PassthroughCameraAccess>(scene);
+                QuestPersonDepthProvider depthProvider =
+                    FindInScene<QuestPersonDepthProvider>(scene);
+                EnvironmentDepthManager environmentDepth =
+                    FindInScene<EnvironmentDepthManager>(scene);
+                EnvironmentRaycastManager environmentRaycast =
+                    FindInScene<EnvironmentRaycastManager>(scene);
                 QuestCameraPermissionCoordinator permission =
                     FindInScene<QuestCameraPermissionCoordinator>(scene);
 
                 Assert.That(controller, Is.Not.Null);
                 Assert.That(runner, Is.Not.Null);
                 Assert.That(cameraAccess, Is.Not.Null);
+                Assert.That(depthProvider, Is.Not.Null);
+                Assert.That(environmentDepth, Is.Not.Null);
+                Assert.That(environmentRaycast, Is.Not.Null);
                 Assert.That(permission, Is.Not.Null);
 
                 var serializedRunner = new SerializedObject(runner);
@@ -51,14 +65,23 @@ namespace TeamVR.AdaptivePassthrough.Tests
                     serializedRunner.FindProperty("cameraAccess").objectReferenceValue,
                     Is.SameAs(cameraAccess));
                 Assert.That(
+                    serializedRunner.FindProperty("depthProvider").objectReferenceValue,
+                    Is.SameAs(depthProvider));
+                Assert.That(
                     serializedRunner.FindProperty("controller").objectReferenceValue,
                     Is.SameAs(controller));
                 Assert.That(
                     serializedRunner.FindProperty("confidenceThreshold").floatValue,
                     Is.EqualTo(0.55f).Within(0.0001f));
                 Assert.That(
+                    serializedRunner
+                        .FindProperty("trackingConfidenceThreshold")
+                        .floatValue,
+                    Is.EqualTo(0.35f).Within(0.0001f));
+                Assert.That(
                     serializedRunner.FindProperty("boxesAreNormalized").boolValue,
                     Is.False);
+                Assert.That(environmentDepth.RemoveHands, Is.True);
             }
             finally
             {
@@ -67,7 +90,7 @@ namespace TeamVR.AdaptivePassthrough.Tests
         }
 
         [Test]
-        public void QuestSceneUsesSingleCompactHudAndNonOverlappingDebugMode()
+        public void QuestSceneUsesIndependentHudAndNonOverlappingDebugMode()
         {
             Scene scene = EditorSceneManager.OpenScene(QuestScenePath, OpenSceneMode.Additive);
             try
@@ -87,7 +110,8 @@ namespace TeamVR.AdaptivePassthrough.Tests
                     serializedOverlay.FindProperty("developmentBuildOnly").boolValue,
                     Is.True);
 
-                int hudCount = 0;
+                int independentHudCount = 0;
+                int legacyHudCount = 0;
                 GameObject legacyDistance = null;
                 GameObject legacyRisk = null;
                 foreach (GameObject root in scene.GetRootGameObjects())
@@ -97,9 +121,16 @@ namespace TeamVR.AdaptivePassthrough.Tests
                     for (int i = 0; i < behaviours.Length; i++)
                     {
                         if (behaviours[i] != null
-                            && behaviours[i].GetType().Name == "QuestRiskHud")
+                            && behaviours[i].GetType().Name
+                                == "IndependentPassthroughHud")
                         {
-                            hudCount++;
+                            independentHudCount++;
+                        }
+                        else if (behaviours[i] != null
+                            && behaviours[i].GetType().Name
+                                == "QuestRiskHud")
+                        {
+                            legacyHudCount++;
                         }
                     }
 
@@ -109,7 +140,8 @@ namespace TeamVR.AdaptivePassthrough.Tests
                     if (risk != null) legacyRisk = risk.gameObject;
                 }
 
-                Assert.That(hudCount, Is.EqualTo(1));
+                Assert.That(independentHudCount, Is.EqualTo(1));
+                Assert.That(legacyHudCount, Is.Zero);
                 Assert.That(legacyDistance, Is.Not.Null);
                 Assert.That(legacyRisk, Is.Not.Null);
                 Assert.That(legacyDistance.activeSelf, Is.False);
@@ -122,17 +154,29 @@ namespace TeamVR.AdaptivePassthrough.Tests
         }
 
         [Test]
-        public void QuestSceneUsesOneRiskSnapshotProducerForHudAndLogs()
+        public void QuestSceneUsesIndependentStaticAndDynamicPassthrough()
         {
             Scene scene = EditorSceneManager.OpenScene(
                 QuestScenePath,
                 OpenSceneMode.Additive);
             try
             {
-                MonoBehaviour snapshotController = null;
-                MonoBehaviour snapshotLogger = null;
+                MonoBehaviour staticPolicy = null;
+                MonoBehaviour dynamicPolicy = null;
+                MonoBehaviour presentation = null;
                 MonoBehaviour hud = null;
-                int snapshotControllerCount = 0;
+                MonoBehaviour togglePanel = null;
+                MonoBehaviour boundaryVisibility = null;
+                MonoBehaviour passthroughLayer = null;
+                MonoBehaviour inputModule = null;
+                MonoBehaviour ovrRaycaster = null;
+                MonoBehaviour controllerLaser = null;
+                MonoBehaviour rightControllerHelper = null;
+                MonoBehaviour personalization = null;
+                MonoBehaviour personalizationPanel = null;
+                int legacySnapshotCount = 0;
+                int passthroughLayerCount = 0;
+                int controllerLaserCount = 0;
                 foreach (GameObject root in scene.GetRootGameObjects())
                 {
                     MonoBehaviour[] behaviours =
@@ -147,33 +191,412 @@ namespace TeamVR.AdaptivePassthrough.Tests
 
                         switch (behaviour.GetType().Name)
                         {
-                            case "QuestRiskSnapshotController":
-                                snapshotController = behaviour;
-                                snapshotControllerCount++;
+                            case "StaticPassthroughPolicyController":
+                                staticPolicy = behaviour;
                                 break;
-                            case "RiskSnapshotSessionLogger":
-                                snapshotLogger = behaviour;
+                            case "DynamicPassthroughPolicyController":
+                                dynamicPolicy = behaviour;
                                 break;
-                            case "QuestRiskHud":
+                            case "SelectivePassthroughController":
+                                presentation = behaviour;
+                                break;
+                            case "IndependentPassthroughHud":
                                 hud = behaviour;
+                                break;
+                            case "PassthroughFeatureTogglePanel":
+                                togglePanel = behaviour;
+                                break;
+                            case "BoundaryVisibilityController":
+                                boundaryVisibility = behaviour;
+                                break;
+                            case "PersonalizationRuntimeController":
+                                personalization = behaviour;
+                                break;
+                            case "PersonalizationRuntimePanel":
+                                personalizationPanel = behaviour;
+                                break;
+                            case "OVRPassthroughLayer":
+                                passthroughLayer = behaviour;
+                                passthroughLayerCount++;
+                                break;
+                            case "OVRInputModule":
+                                inputModule = behaviour;
+                                break;
+                            case "OVRRaycaster":
+                                ovrRaycaster = behaviour;
+                                break;
+                            case "OVRRayHelper":
+                                controllerLaser = behaviour;
+                                controllerLaserCount++;
+                                break;
+                            case "QuestRiskSnapshotController":
+                            case "RiskSnapshotSessionLogger":
+                            case "QuestRiskHud":
+                                legacySnapshotCount++;
                                 break;
                         }
                     }
                 }
 
-                Assert.That(snapshotControllerCount, Is.EqualTo(1));
-                Assert.That(snapshotLogger, Is.Not.Null);
+                Assert.That(staticPolicy, Is.Not.Null);
+                Assert.That(dynamicPolicy, Is.Not.Null);
+                Assert.That(presentation, Is.Not.Null);
                 Assert.That(hud, Is.Not.Null);
+                Assert.That(togglePanel, Is.Not.Null);
+                Assert.That(boundaryVisibility, Is.Not.Null);
+                Assert.That(personalization, Is.Not.Null);
+                Assert.That(personalizationPanel, Is.Not.Null);
+                Assert.That(passthroughLayer, Is.Not.Null);
+                Assert.That(passthroughLayerCount, Is.EqualTo(1));
+                Assert.That(inputModule, Is.Not.Null);
+                Assert.That(ovrRaycaster, Is.Not.Null);
+                Assert.That(controllerLaser, Is.Not.Null);
+                Assert.That(controllerLaserCount, Is.EqualTo(1));
+                if (controllerLaser != null
+                    && controllerLaser.transform.parent != null)
+                {
+                    MonoBehaviour[] parentBehaviours =
+                        controllerLaser.transform.parent
+                            .GetComponents<MonoBehaviour>();
+                    for (int i = 0; i < parentBehaviours.Length; i++)
+                    {
+                        if (parentBehaviours[i] != null
+                            && parentBehaviours[i].GetType().Name
+                                == "OVRControllerHelper")
+                        {
+                            rightControllerHelper = parentBehaviours[i];
+                            break;
+                        }
+                    }
+                }
+                Assert.That(rightControllerHelper, Is.Not.Null);
+                Assert.That(legacySnapshotCount, Is.Zero);
+                MonoBehaviour experimentLogger =
+                    FindBehaviourInScene(scene, "QuestRiskExperimentLogger");
+                Assert.That(experimentLogger, Is.Not.Null);
+                Transform labelRoot = new SerializedObject(experimentLogger)
+                    .FindProperty("labelRoot")
+                    .objectReferenceValue as Transform;
+                Assert.That(labelRoot, Is.Not.Null);
+                Assert.That(
+                    labelRoot.localScale.x,
+                    Is.EqualTo(0.00075f).Within(0.000001f));
+                Assert.That(
+                    labelRoot.localScale.y,
+                    Is.EqualTo(0.00075f).Within(0.000001f));
+                CanvasGroup panelCanvasGroup = personalizationPanel
+                    .transform.parent.GetComponent<CanvasGroup>();
+                Assert.That(panelCanvasGroup, Is.Not.Null);
+                Assert.That(panelCanvasGroup.interactable, Is.True);
+                Assert.That(panelCanvasGroup.blocksRaycasts, Is.True);
+                Assert.That(
+                    new SerializedObject(personalizationPanel)
+                        .FindProperty("panelOpacity")
+                        .floatValue,
+                    Is.EqualTo(1f).Within(0.0001f));
+                Assert.That(
+                    experimentLogger.GetType().GetField(
+                        "passthroughLayer",
+                        BindingFlags.Instance | BindingFlags.NonPublic),
+                    Is.Null,
+                    "The measurement provider must not control the layer directly.");
+                var serializedStaticPolicy = new SerializedObject(staticPolicy);
+                Assert.That(
+                    serializedStaticPolicy
+                        .FindProperty("measurementProvider")
+                        .objectReferenceValue,
+                    Is.SameAs(experimentLogger));
+                SerializedProperty staticSettings =
+                    serializedStaticPolicy.FindProperty("policySettings");
+                Assert.That(staticSettings, Is.Not.Null);
+                Assert.That(
+                    staticSettings
+                        .FindPropertyRelative("stableOnThreshold")
+                        .floatValue,
+                    Is.EqualTo(0.65f).Within(0.0001f));
+                Assert.That(
+                    staticSettings
+                        .FindPropertyRelative("rapidOnThreshold")
+                        .floatValue,
+                    Is.EqualTo(0.45f).Within(0.0001f));
+                Assert.That(
+                    staticSettings
+                        .FindPropertyRelative("handFullThreshold")
+                        .floatValue,
+                    Is.EqualTo(0.85f).Within(0.0001f));
+                Assert.That(
+                    staticSettings
+                        .FindPropertyRelative("minimumHoldSeconds")
+                        .floatValue,
+                    Is.EqualTo(1.5f).Within(0.0001f));
+                Assert.That(
+                    staticSettings
+                        .FindPropertyRelative("releaseDelaySeconds")
+                        .floatValue,
+                    Is.EqualTo(0.35f).Within(0.0001f));
+                SerializedProperty dynamicSettings =
+                    new SerializedObject(dynamicPolicy)
+                        .FindProperty("decisionSettings");
+                Assert.That(
+                    dynamicSettings
+                        .FindPropertyRelative("minimumHoldSeconds")
+                        .floatValue,
+                    Is.EqualTo(1.5f).Within(0.0001f));
+                Assert.That(
+                    dynamicSettings
+                        .FindPropertyRelative("releaseDelaySeconds")
+                        .floatValue,
+                    Is.EqualTo(0.35f).Within(0.0001f));
                 Assert.That(
                     new SerializedObject(hud)
-                        .FindProperty("snapshotController")
+                        .FindProperty("staticPolicy")
                         .objectReferenceValue,
-                    Is.SameAs(snapshotController));
+                    Is.SameAs(staticPolicy));
                 Assert.That(
-                    new SerializedObject(snapshotLogger)
-                        .FindProperty("snapshotController")
+                    new SerializedObject(hud)
+                        .FindProperty("dynamicPolicy")
                         .objectReferenceValue,
-                    Is.SameAs(snapshotController));
+                    Is.SameAs(dynamicPolicy));
+                Assert.That(
+                    new SerializedObject(hud)
+                        .FindProperty("presentation")
+                        .objectReferenceValue,
+                    Is.SameAs(presentation));
+                Assert.That(
+                    new SerializedObject(presentation)
+                        .FindProperty("passthroughLayer")
+                        .objectReferenceValue,
+                    Is.SameAs(passthroughLayer));
+                Assert.That(
+                    new SerializedObject(presentation)
+                        .FindProperty("staticFeatureEnabled")
+                        .boolValue,
+                    Is.True);
+                Assert.That(
+                    new SerializedObject(presentation)
+                        .FindProperty("dynamicFeatureEnabled")
+                        .boolValue,
+                    Is.True);
+                Assert.That(
+                    new SerializedObject(presentation)
+                        .FindProperty("personMaximumWidth")
+                        .floatValue,
+                    Is.EqualTo(0.32f).Within(0.0001f));
+                Assert.That(
+                    new SerializedObject(presentation)
+                        .FindProperty("personMaximumHeight")
+                        .floatValue,
+                    Is.EqualTo(0.48f).Within(0.0001f));
+                Assert.That(
+                    new SerializedObject(presentation)
+                        .FindProperty("personLostHoldSeconds")
+                        .floatValue,
+                    Is.EqualTo(1.5f).Within(0.0001f));
+                var serializedBoundary =
+                    new SerializedObject(boundaryVisibility);
+                Assert.That(
+                    serializedBoundary
+                        .FindProperty("preferFullBoundaryless")
+                        .boolValue,
+                    Is.True);
+                Assert.That(
+                    serializedBoundary
+                        .FindProperty("contextualFallbackEnabled")
+                        .boolValue,
+                    Is.True);
+                Assert.That(
+                    serializedBoundary.FindProperty("presentation")
+                        .objectReferenceValue,
+                    Is.SameAs(presentation));
+                Assert.That(
+                    serializedBoundary.FindProperty("passthroughLayer")
+                        .objectReferenceValue,
+                    Is.SameAs(passthroughLayer));
+                MonoBehaviour manager =
+                    FindBehaviourInScene(scene, "OVRManager");
+                Assert.That(manager, Is.Not.Null);
+                Assert.That(
+                    serializedBoundary.FindProperty("ovrManager")
+                        .objectReferenceValue,
+                    Is.SameAs(manager));
+                var serializedManager = new SerializedObject(manager);
+                Assert.That(
+                    serializedManager
+                        .FindProperty("isInsightPassthroughEnabled")
+                        .boolValue,
+                    Is.True);
+                Assert.That(
+                    serializedManager.FindProperty("_trackingOriginType")
+                        .enumValueIndex,
+                    Is.EqualTo(1));
+                Assert.That(
+                    new SerializedObject(togglePanel)
+                        .FindProperty("presentation")
+                        .objectReferenceValue,
+                    Is.SameAs(presentation));
+                Assert.That(
+                    new SerializedObject(togglePanel)
+                        .FindProperty("staticToggleButton")
+                        .objectReferenceValue,
+                    Is.Not.Null);
+                Assert.That(
+                    new SerializedObject(togglePanel)
+                        .FindProperty("dynamicToggleButton")
+                        .objectReferenceValue,
+                    Is.Not.Null);
+                var serializedPersonalization =
+                    new SerializedObject(personalization);
+                Assert.That(
+                    serializedPersonalization
+                        .FindProperty("staticPolicy")
+                        .objectReferenceValue,
+                    Is.SameAs(staticPolicy));
+                Assert.That(
+                    serializedPersonalization
+                        .FindProperty("sourceModelArtifact")
+                        .objectReferenceValue,
+                    Is.Not.Null);
+                Assert.That(
+                    serializedPersonalization
+                        .FindProperty("modelAsset")
+                        .objectReferenceValue,
+                    Is.Null,
+                    "The incompatible RF ONNX must not be used as a runtime model.");
+                Assert.That(
+                    serializedPersonalization
+                        .FindProperty("negativeClassPresent")
+                        .boolValue,
+                    Is.False);
+                Assert.That(
+                    serializedPersonalization
+                        .FindProperty("shadowMode")
+                        .boolValue,
+                    Is.True);
+                Assert.That(
+                    serializedPersonalization
+                        .FindProperty("applyPersonalization")
+                        .boolValue,
+                    Is.False);
+                var serializedPersonalizationPanel =
+                    new SerializedObject(personalizationPanel);
+                Assert.That(
+                    serializedPersonalizationPanel
+                        .FindProperty("personalization")
+                        .objectReferenceValue,
+                    Is.SameAs(personalization));
+                Assert.That(
+                    serializedPersonalizationPanel
+                        .FindProperty("staticPolicy")
+                        .objectReferenceValue,
+                    Is.SameAs(staticPolicy));
+
+                personalization.GetType()
+                    .GetMethod("SetBypassColdStartForTesting")
+                    .Invoke(personalization, new object[] { true });
+                personalization.GetType()
+                    .GetMethod("SetNegativeProbabilityOverride")
+                    .Invoke(personalization, new object[] { true });
+                personalization.GetType()
+                    .GetMethod("SetOverriddenNegativeProbability")
+                    .Invoke(personalization, new object[] { 1f });
+                personalization.GetType()
+                    .GetMethod("RunNow")
+                    .Invoke(personalization, null);
+                Assert.That(
+                    (bool)personalization.GetType()
+                        .GetProperty("HasNegativeProbability")
+                        .GetValue(personalization),
+                    Is.True);
+                object inferredThresholds = personalization.GetType()
+                    .GetProperty("LastThresholds")
+                    .GetValue(personalization);
+                Assert.That(
+                    (float)inferredThresholds.GetType()
+                        .GetField("StableOnThreshold")
+                        .GetValue(inferredThresholds),
+                    Is.EqualTo(0.75f).Within(0.0001f));
+
+                float emergencyBefore = staticSettings
+                    .FindPropertyRelative("emergencyDistance")
+                    .floatValue;
+                personalization.GetType()
+                    .GetMethod("SetThresholdPreview")
+                    .Invoke(
+                        personalization,
+                        new object[] { 0.70f, 0.50f, 0.90f });
+                personalization.GetType()
+                    .GetMethod("ApplyThresholdPreview")
+                    .Invoke(personalization, null);
+                serializedStaticPolicy.Update();
+                Assert.That(
+                    staticSettings
+                        .FindPropertyRelative("stableOnThreshold")
+                        .floatValue,
+                    Is.EqualTo(0.70f).Within(0.0001f));
+                Assert.That(
+                    staticSettings
+                        .FindPropertyRelative("rapidOnThreshold")
+                        .floatValue,
+                    Is.EqualTo(0.50f).Within(0.0001f));
+                Assert.That(
+                    staticSettings
+                        .FindPropertyRelative("handFullThreshold")
+                        .floatValue,
+                    Is.EqualTo(0.90f).Within(0.0001f));
+                Assert.That(
+                    staticSettings
+                        .FindPropertyRelative("emergencyDistance")
+                        .floatValue,
+                    Is.EqualTo(emergencyBefore).Within(0.0001f));
+                personalization.GetType()
+                    .GetMethod("RestoreSafeDefaults")
+                    .Invoke(personalization, null);
+                Assert.That(
+                    new SerializedObject(rightControllerHelper)
+                        .FindProperty("RayHelper")
+                        .objectReferenceValue,
+                    Is.SameAs(controllerLaser));
+                Assert.That(
+                    new SerializedObject(inputModule)
+                        .FindProperty("rayTransform")
+                        .objectReferenceValue,
+                    Is.SameAs(rightControllerHelper.transform));
+                var serializedLaser = new SerializedObject(controllerLaser);
+                Assert.That(
+                    serializedLaser.FindProperty("DefaultLength").floatValue,
+                    Is.EqualTo(5f).Within(0.0001f));
+                Assert.That(
+                    serializedLaser.FindProperty("Renderer")
+                        .objectReferenceValue,
+                    Is.Not.Null);
+                Assert.That(
+                    serializedLaser.FindProperty("Cursor")
+                        .objectReferenceValue,
+                    Is.Not.Null);
+
+                togglePanel.GetType()
+                    .GetMethod("ToggleStatic")
+                    .Invoke(togglePanel, null);
+                Assert.That(
+                    (bool)presentation.GetType()
+                        .GetProperty("StaticFeatureEnabled")
+                        .GetValue(presentation),
+                    Is.False);
+                togglePanel.GetType()
+                    .GetMethod("ToggleStatic")
+                    .Invoke(togglePanel, null);
+
+                togglePanel.GetType()
+                    .GetMethod("ToggleDynamic")
+                    .Invoke(togglePanel, null);
+                Assert.That(
+                    (bool)presentation.GetType()
+                        .GetProperty("DynamicFeatureEnabled")
+                        .GetValue(presentation),
+                    Is.False);
+                togglePanel.GetType()
+                    .GetMethod("ToggleDynamic")
+                    .Invoke(togglePanel, null);
 
                 DynamicRiskSessionLogger dynamicLogger =
                     FindInScene<DynamicRiskSessionLogger>(scene);
@@ -182,12 +605,76 @@ namespace TeamVR.AdaptivePassthrough.Tests
                     new SerializedObject(dynamicLogger)
                         .FindProperty("snapshotSequenceProviderBehaviour")
                         .objectReferenceValue,
-                    Is.SameAs(snapshotController));
+                    Is.Null);
             }
             finally
             {
                 EditorSceneManager.CloseScene(scene, true);
             }
+        }
+
+        [Test]
+        public void PassthroughWindowShaderImports()
+        {
+            Shader shader = AssetDatabase.LoadAssetAtPath<Shader>(
+                "Assets/Shaders/AdaptivePassthrough/PassthroughWindow.shader");
+            Assert.That(shader, Is.Not.Null);
+            Assert.That(shader.isSupported, Is.True);
+        }
+
+        [Test]
+        public void IncompatibleRandomForestModelIsPreservedAsSourceOnly()
+        {
+            Object source = AssetDatabase.LoadMainAssetAtPath(
+                PersonalizationSourceModelPath);
+            Assert.That(source, Is.Not.Null);
+            Assert.That(source, Is.Not.InstanceOf<ModelAsset>());
+            Assert.That(
+                File.Exists(Path.Combine(
+                    Application.dataPath,
+                    "Models",
+                    "rf_personalization_real.onnx")),
+                Is.False,
+                "The unsupported .onnx extension would trigger a broken import.");
+        }
+
+        [Test]
+        public void BoundarylessManifestPrioritizesFullModeWithContextualFallback()
+        {
+            ScriptableObject config =
+                AssetDatabase.LoadAssetAtPath<ScriptableObject>(
+                    "Assets/Oculus/OculusProjectConfig.asset");
+            Assert.That(config, Is.Not.Null);
+            var serializedConfig = new SerializedObject(config);
+            Assert.That(
+                serializedConfig
+                    .FindProperty("allowOptional3DofHeadTracking")
+                    .boolValue,
+                Is.False);
+            Assert.That(
+                serializedConfig
+                    .FindProperty("boundaryVisibilitySupport")
+                    .enumValueIndex,
+                Is.GreaterThan(0));
+            Assert.That(
+                serializedConfig
+                    .FindProperty("_insightPassthroughSupport")
+                    .enumValueIndex,
+                Is.GreaterThan(0));
+
+            string manifestPath = Path.Combine(
+                Application.dataPath,
+                "Plugins",
+                "Android",
+                "AndroidManifest.xml");
+            Assert.That(File.Exists(manifestPath), Is.True);
+            string manifest = File.ReadAllText(manifestPath);
+            StringAssert.Contains(
+                "com.oculus.feature.BOUNDARYLESS_APP",
+                manifest);
+            StringAssert.Contains(
+                "com.oculus.permission.BOUNDARY_VISIBILITY",
+                manifest);
         }
 
         private static T FindInScene<T>(Scene scene) where T : Component
@@ -199,6 +686,27 @@ namespace TeamVR.AdaptivePassthrough.Tests
                 if (component != null)
                 {
                     return component;
+                }
+            }
+
+            return null;
+        }
+
+        private static MonoBehaviour FindBehaviourInScene(
+            Scene scene,
+            string typeName)
+        {
+            foreach (GameObject root in scene.GetRootGameObjects())
+            {
+                MonoBehaviour[] behaviours =
+                    root.GetComponentsInChildren<MonoBehaviour>(true);
+                for (int i = 0; i < behaviours.Length; i++)
+                {
+                    if (behaviours[i] != null
+                        && behaviours[i].GetType().Name == typeName)
+                    {
+                        return behaviours[i];
+                    }
                 }
             }
 

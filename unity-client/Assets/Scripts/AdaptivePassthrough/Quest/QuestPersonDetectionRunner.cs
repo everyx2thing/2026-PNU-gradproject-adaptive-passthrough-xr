@@ -19,9 +19,11 @@ namespace TeamVR.AdaptivePassthrough
         [SerializeField] private DynamicRiskController controller;
         [SerializeField] private QuestCameraPermissionCoordinator permissionCoordinator;
         [SerializeField] private PassthroughCameraAccess cameraAccess;
+        [SerializeField] private QuestPersonDepthProvider depthProvider;
         [SerializeField] private ModelAsset modelAsset;
         [SerializeField] private BackendType backend = BackendType.CPU;
         [SerializeField, Range(0f, 1f)] private float confidenceThreshold = 0.55f;
+        [SerializeField, Range(0f, 1f)] private float trackingConfidenceThreshold = 0.35f;
         [SerializeField, Range(0f, 1f)] private float iouThreshold = 0.45f;
         [SerializeField, Min(1f)] private float inferenceRateHz = 10f;
         [SerializeField] private int personClassId;
@@ -46,6 +48,7 @@ namespace TeamVR.AdaptivePassthrough
         private bool outputContractLogged;
         private int completedInferenceCount;
         private double nextInferenceAt;
+        private readonly List<int> liveDepthTrackIds = new List<int>();
 
         public event Action<PersonDetectionPostProcessResult> PostProcessCompleted;
 
@@ -66,6 +69,11 @@ namespace TeamVR.AdaptivePassthrough
             if (permissionCoordinator == null)
             {
                 permissionCoordinator = GetComponent<QuestCameraPermissionCoordinator>();
+            }
+
+            if (depthProvider == null)
+            {
+                depthProvider = GetComponent<QuestPersonDepthProvider>();
             }
         }
 
@@ -152,12 +160,14 @@ namespace TeamVR.AdaptivePassthrough
             Debug.Log(
                 string.Format(
                     "[PersonDetection] model-input=[{0}] outputs={1} "
-                    + "boxFormat={2} coordinates={3} confidence={4:F2} nmsIoU={5:F2}",
+                    + "boxFormat={2} coordinates={3} newTrack={4:F2} "
+                    + "tracking={5:F2} nmsIoU={6:F2}",
                     string.Join(",", dimensions),
                     model.outputs == null ? 0 : model.outputs.Count,
                     boxesAreCenterFormat ? "CenterXYWH" : "CornersXYXY",
                     boxesAreNormalized ? "Normalized" : "ModelPixels",
                     confidenceThreshold,
+                    trackingConfidenceThreshold,
                     iouThreshold));
         }
 
@@ -170,6 +180,14 @@ namespace TeamVR.AdaptivePassthrough
                 if (cameraTexture == null)
                 {
                     return;
+                }
+
+                Pose cameraPoseAtCapture = cameraAccess.GetCameraPose();
+                if (depthProvider != null)
+                {
+                    depthProvider.BeginFrame(
+                        timestampSeconds,
+                        cameraPoseAtCapture);
                 }
 
                 using (Tensor<float> input = new Tensor<float>(modelInputShape))
@@ -223,7 +241,26 @@ namespace TeamVR.AdaptivePassthrough
                         inputWidth,
                         inputHeight);
                     LastPostProcessResult = result;
-                    controller.SubmitDetections(timestampSeconds, result.Detections);
+                    DynamicRiskFrame frame = depthProvider == null
+                        ? controller.SubmitDetections(
+                            timestampSeconds,
+                            result.Detections)
+                        : controller.SubmitDetections(
+                            timestampSeconds,
+                            result.Detections,
+                            depthProvider.Measure);
+                    if (depthProvider != null)
+                    {
+                        liveDepthTrackIds.Clear();
+                        for (int i = 0; i < frame.Assessments.Count; i++)
+                        {
+                            liveDepthTrackIds.Add(
+                                frame.Assessments[i].TrackId);
+                        }
+
+                        depthProvider.PruneExcept(liveDepthTrackIds);
+                    }
+
                     PostProcessCompleted?.Invoke(result);
 
                     if (completedInferenceCount < diagnosticInferenceCount
@@ -266,6 +303,8 @@ namespace TeamVR.AdaptivePassthrough
                         : PersonBoxCoordinateSpace.ModelPixels,
                     personClassId = personClassId,
                     confidenceThreshold = confidenceThreshold,
+                    trackingConfidenceThreshold =
+                        trackingConfidenceThreshold,
                     iouThreshold = iouThreshold,
                     maximumCandidates = maximumCandidates,
                     maximumDetections = maximumDetections,
@@ -285,12 +324,13 @@ namespace TeamVR.AdaptivePassthrough
             var message = new StringBuilder();
             message.AppendFormat(
                 "[PersonDetection] inference={0} raw={1} person={2} "
-                + "belowConfidence={3} invalid={4} nmsSuppressed={5} "
-                + "limited={6} output={7}",
+                + "belowTracking={3} lowTracking={4} invalid={5} "
+                + "nmsSuppressed={6} limited={7} output={8}",
                 inferenceIndex,
                 result.RawCandidateCount,
                 result.PersonCandidateCount,
                 result.BelowConfidenceCount,
+                result.LowConfidenceTrackingCount,
                 result.InvalidBoxCount,
                 result.SuppressedByNmsCount,
                 result.LimitedCandidateCount,

@@ -24,6 +24,19 @@ namespace TeamVR.AdaptivePassthrough
 
         public RelativeLocationEstimate Estimate(TrackedDynamicObject tracked)
         {
+            return Estimate(
+                tracked,
+                PersonDistanceMeasurement.BoundingBoxFallback(
+                    tracked.TrackId,
+                    0.0,
+                    tracked.Detection.boundingBox.Area,
+                    "legacy_bbox_estimate"));
+        }
+
+        public RelativeLocationEstimate Estimate(
+            TrackedDynamicObject tracked,
+            PersonDistanceMeasurement distance)
+        {
             NormalizedBoundingBox box = tracked.Detection.boundingBox;
             HorizontalZone zone = box.centerX < leftThreshold
                 ? HorizontalZone.Left
@@ -31,11 +44,25 @@ namespace TeamVR.AdaptivePassthrough
                     ? HorizontalZone.Right
                     : HorizontalZone.Center;
 
-            DistanceBand distanceBand = box.Area < farAreaThreshold
-                ? DistanceBand.Far
-                : box.Area < nearAreaThreshold
-                    ? DistanceBand.Mid
-                    : DistanceBand.Near;
+            bool hasMetricDistance =
+                distance != null && distance.HasMetricDistance;
+            DistanceBand distanceBand;
+            if (hasMetricDistance)
+            {
+                distanceBand = distance.FilteredDistanceMeters <= 1.50f
+                    ? DistanceBand.Near
+                    : distance.FilteredDistanceMeters <= 3.00f
+                        ? DistanceBand.Mid
+                        : DistanceBand.Far;
+            }
+            else
+            {
+                distanceBand = box.Area < farAreaThreshold
+                    ? DistanceBand.Far
+                    : box.Area < nearAreaThreshold
+                        ? DistanceBand.Mid
+                        : DistanceBand.Near;
+            }
 
             string relativeDirection;
             switch (zone)
@@ -56,7 +83,14 @@ namespace TeamVR.AdaptivePassthrough
                 relativeDirection,
                 distanceBand,
                 (box.centerX - 0.5f) * horizontalFieldOfViewDegrees,
-                box.Area);
+                box.Area,
+                distance == null
+                    ? PersonDistanceSource.Unavailable
+                    : distance.Source,
+                hasMetricDistance,
+                distance == null ? 0f : distance.RawDistanceMeters,
+                distance == null ? 0f : distance.FilteredDistanceMeters,
+                distance == null ? 0f : distance.Confidence);
         }
     }
 }

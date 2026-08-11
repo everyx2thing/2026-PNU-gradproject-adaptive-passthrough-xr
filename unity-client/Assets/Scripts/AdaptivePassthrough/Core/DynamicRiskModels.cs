@@ -116,6 +116,7 @@ namespace TeamVR.AdaptivePassthrough
         public readonly TrackLifecycle Lifecycle;
         public readonly bool ObservedThisFrame;
         public readonly int MissedFrames;
+        public readonly double UnobservedSeconds;
 
         public TrackedDynamicObject(
             int trackId,
@@ -127,7 +128,8 @@ namespace TeamVR.AdaptivePassthrough
                 areaGrowthRatePerSecond,
                 TrackLifecycle.Confirmed,
                 true,
-                0)
+                0,
+                0.0)
         {
         }
 
@@ -137,7 +139,8 @@ namespace TeamVR.AdaptivePassthrough
             float areaGrowthRatePerSecond,
             TrackLifecycle lifecycle,
             bool observedThisFrame,
-            int missedFrames)
+            int missedFrames,
+            double unobservedSeconds = 0.0)
         {
             TrackId = trackId;
             Detection = detection;
@@ -145,11 +148,16 @@ namespace TeamVR.AdaptivePassthrough
             Lifecycle = lifecycle;
             ObservedThisFrame = observedThisFrame;
             MissedFrames = Math.Max(0, missedFrames);
+            UnobservedSeconds = Math.Max(0.0, unobservedSeconds);
         }
 
         public bool IsConfirmed
         {
-            get { return Lifecycle == TrackLifecycle.Confirmed; }
+            get
+            {
+                return Lifecycle == TrackLifecycle.Confirmed
+                    || Lifecycle == TrackLifecycle.Lost;
+            }
         }
     }
 
@@ -162,6 +170,10 @@ namespace TeamVR.AdaptivePassthrough
         public readonly int SampleCount;
         public readonly double ObservationSeconds;
         public readonly float Reliability;
+        public readonly PersonDistanceSource DistanceSource;
+        public readonly bool HasMetricMotion;
+        public readonly float ClosingSpeedMetersPerSecond;
+        public readonly float? MetricTtcSeconds;
 
         public MotionEstimate(
             DynamicMotionState state,
@@ -171,6 +183,33 @@ namespace TeamVR.AdaptivePassthrough
             int sampleCount,
             double observationSeconds,
             float reliability)
+            : this(
+                state,
+                scaleRatePerSecond,
+                ttcSecondsApprox,
+                centerApproachRatePerSecond,
+                sampleCount,
+                observationSeconds,
+                reliability,
+                PersonDistanceSource.BoundingBoxProxy,
+                false,
+                0f,
+                null)
+        {
+        }
+
+        public MotionEstimate(
+            DynamicMotionState state,
+            float scaleRatePerSecond,
+            float? ttcSecondsApprox,
+            float centerApproachRatePerSecond,
+            int sampleCount,
+            double observationSeconds,
+            float reliability,
+            PersonDistanceSource distanceSource,
+            bool hasMetricMotion,
+            float closingSpeedMetersPerSecond,
+            float? metricTtcSeconds)
         {
             State = state;
             ScaleRatePerSecond = scaleRatePerSecond;
@@ -179,6 +218,46 @@ namespace TeamVR.AdaptivePassthrough
             SampleCount = sampleCount;
             ObservationSeconds = observationSeconds;
             Reliability = Math.Max(0f, Math.Min(1f, reliability));
+            DistanceSource = distanceSource;
+            HasMetricMotion = hasMetricMotion;
+            ClosingSpeedMetersPerSecond = IsFinite(
+                closingSpeedMetersPerSecond)
+                ? closingSpeedMetersPerSecond
+                : 0f;
+            MetricTtcSeconds = metricTtcSeconds.HasValue
+                && IsFinite(metricTtcSeconds.Value)
+                && metricTtcSeconds.Value >= 0f
+                    ? metricTtcSeconds
+                    : null;
+        }
+
+        public MotionEstimate WithMetric(
+            PersonDistanceSource distanceSource,
+            bool hasMetricMotion,
+            float closingSpeedMetersPerSecond,
+            float? metricTtcSeconds,
+            DynamicMotionState state,
+            float reliability,
+            int sampleCount,
+            double observationSeconds)
+        {
+            return new MotionEstimate(
+                state,
+                ScaleRatePerSecond,
+                TtcSecondsApprox,
+                CenterApproachRatePerSecond,
+                sampleCount,
+                observationSeconds,
+                reliability,
+                distanceSource,
+                hasMetricMotion,
+                closingSpeedMetersPerSecond,
+                metricTtcSeconds);
+        }
+
+        private static bool IsFinite(float value)
+        {
+            return !float.IsNaN(value) && !float.IsInfinity(value);
         }
     }
 
@@ -189,6 +268,11 @@ namespace TeamVR.AdaptivePassthrough
         public readonly DistanceBand DistanceBand;
         public readonly float BearingDegrees;
         public readonly float BoundingBoxArea;
+        public readonly PersonDistanceSource DistanceSource;
+        public readonly bool HasMetricDistance;
+        public readonly float RawDistanceMeters;
+        public readonly float FilteredDistanceMeters;
+        public readonly float DistanceConfidence;
 
         public RelativeLocationEstimate(
             HorizontalZone screenZone,
@@ -196,12 +280,60 @@ namespace TeamVR.AdaptivePassthrough
             DistanceBand distanceBand,
             float bearingDegrees,
             float boundingBoxArea)
+            : this(
+                screenZone,
+                userRelativeDirection,
+                distanceBand,
+                bearingDegrees,
+                boundingBoxArea,
+                PersonDistanceSource.BoundingBoxProxy,
+                false,
+                0f,
+                0f,
+                0f)
+        {
+        }
+
+        public RelativeLocationEstimate(
+            HorizontalZone screenZone,
+            string userRelativeDirection,
+            DistanceBand distanceBand,
+            float bearingDegrees,
+            float boundingBoxArea,
+            PersonDistanceSource distanceSource,
+            bool hasMetricDistance,
+            float rawDistanceMeters,
+            float filteredDistanceMeters,
+            float distanceConfidence)
         {
             ScreenZone = screenZone;
             UserRelativeDirection = userRelativeDirection;
             DistanceBand = distanceBand;
             BearingDegrees = bearingDegrees;
             BoundingBoxArea = boundingBoxArea;
+            DistanceSource = distanceSource;
+            HasMetricDistance = hasMetricDistance;
+            RawDistanceMeters = NonNegativeFinite(rawDistanceMeters);
+            FilteredDistanceMeters = NonNegativeFinite(
+                filteredDistanceMeters);
+            DistanceConfidence = Clamp01(distanceConfidence);
+        }
+
+        private static float NonNegativeFinite(float value)
+        {
+            return IsFinite(value) ? Math.Max(0f, value) : 0f;
+        }
+
+        private static float Clamp01(float value)
+        {
+            return IsFinite(value)
+                ? Math.Max(0f, Math.Min(1f, value))
+                : 0f;
+        }
+
+        private static bool IsFinite(float value)
+        {
+            return !float.IsNaN(value) && !float.IsInfinity(value);
         }
     }
 
@@ -244,6 +376,8 @@ namespace TeamVR.AdaptivePassthrough
         public readonly DynamicRiskLevel Level;
         public readonly string[] Reasons;
         public readonly DynamicRiskBreakdown Breakdown;
+        public readonly TrackLifecycle Lifecycle;
+        public readonly bool ObservedThisFrame;
 
         public DynamicRiskAssessment(
             int trackId,
@@ -254,6 +388,31 @@ namespace TeamVR.AdaptivePassthrough
             DynamicRiskLevel level,
             string[] reasons,
             DynamicRiskBreakdown breakdown)
+            : this(
+                trackId,
+                detection,
+                location,
+                motion,
+                score,
+                level,
+                reasons,
+                breakdown,
+                TrackLifecycle.Confirmed,
+                true)
+        {
+        }
+
+        public DynamicRiskAssessment(
+            int trackId,
+            DynamicObjectDetection detection,
+            RelativeLocationEstimate location,
+            MotionEstimate motion,
+            float score,
+            DynamicRiskLevel level,
+            string[] reasons,
+            DynamicRiskBreakdown breakdown,
+            TrackLifecycle lifecycle,
+            bool observedThisFrame)
         {
             TrackId = trackId;
             Detection = detection;
@@ -263,6 +422,8 @@ namespace TeamVR.AdaptivePassthrough
             Level = level;
             Reasons = reasons ?? Array.Empty<string>();
             Breakdown = breakdown;
+            Lifecycle = lifecycle;
+            ObservedThisFrame = observedThisFrame;
         }
     }
 

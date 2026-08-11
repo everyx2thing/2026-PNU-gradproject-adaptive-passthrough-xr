@@ -17,6 +17,10 @@ namespace TeamVR.AdaptivePassthrough
             public int ConsecutiveHighConfidenceHits;
             public float ConfidenceSum;
             public TrackLifecycle Lifecycle;
+            public float CenterVelocityX;
+            public float CenterVelocityY;
+            public float LastGrowthRate;
+            public bool ObservedThisUpdate;
             public readonly Queue<bool> RecentObservations = new Queue<bool>();
         }
 
@@ -29,6 +33,8 @@ namespace TeamVR.AdaptivePassthrough
         private readonly int fastConfirmationHits;
         private readonly float fastConfirmationConfidence;
         private readonly double maximumUnobservedSeconds;
+        private readonly float newTrackConfidence;
+        private readonly float maximumSizeRatio;
         private int nextTrackId = 1;
 
         public IEnumerable<int> LiveTrackIds
@@ -67,14 +73,16 @@ namespace TeamVR.AdaptivePassthrough
         }
 
         public SimpleObjectTracker(
-            float minimumIou = 0.2f,
-            float maximumCenterDistance = 0.25f,
-            int maximumMissedFrames = 5,
+            float minimumIou = 0.15f,
+            float maximumCenterDistance = 0.22f,
+            int maximumMissedFrames = 8,
             int confirmationHits = 3,
             int confirmationWindowFrames = 5,
             int fastConfirmationHits = 2,
             float fastConfirmationConfidence = 0.85f,
-            double maximumUnobservedSeconds = 0.5)
+            double maximumUnobservedSeconds = 0.75,
+            float newTrackConfidence = 0.55f,
+            float maximumSizeRatio = 2.50f)
         {
             this.minimumIou = minimumIou;
             this.maximumCenterDistance = maximumCenterDistance;
@@ -90,6 +98,10 @@ namespace TeamVR.AdaptivePassthrough
             this.maximumUnobservedSeconds = Math.Max(
                 0.05,
                 maximumUnobservedSeconds);
+            this.newTrackConfidence = Math.Max(
+                0f,
+                Math.Min(1f, newTrackConfidence));
+            this.maximumSizeRatio = Math.Max(1f, maximumSizeRatio);
         }
 
         public IReadOnlyList<TrackedDynamicObject> Update(
@@ -102,8 +114,10 @@ namespace TeamVR.AdaptivePassthrough
             }
 
             var assignedTrackIds = new HashSet<int>();
-            var matched = new List<(TrackState State, float GrowthRate)>(
-                detections.Count);
+            foreach (TrackState state in tracks.Values)
+            {
+                state.ObservedThisUpdate = false;
+            }
 
             for (int detectionIndex = 0; detectionIndex < detections.Count; detectionIndex++)
             {
@@ -118,14 +132,31 @@ namespace TeamVR.AdaptivePassthrough
                         continue;
                     }
 
+                    if (detection.confidence < newTrackConfidence
+                        && candidate.Lifecycle == TrackLifecycle.Tentative)
+                    {
+                        continue;
+                    }
+
+                    double predictionSeconds = Math.Max(
+                        0.0,
+                        timestampSeconds - candidate.TimestampSeconds);
+                    NormalizedBoundingBox predicted = PredictedBox(
+                        candidate,
+                        predictionSeconds);
                     float iou = IntersectionOverUnion(
-                        candidate.Detection.boundingBox,
+                        predicted,
                         detection.boundingBox);
                     float centerDistance = CenterDistance(
+                        predicted,
+                        detection.boundingBox);
+                    float sizeRatio = SizeRatio(
                         candidate.Detection.boundingBox,
                         detection.boundingBox);
 
-                    if (iou < minimumIou && centerDistance > maximumCenterDistance)
+                    if ((iou < minimumIou
+                            && centerDistance > maximumCenterDistance)
+                        || sizeRatio > maximumSizeRatio)
                     {
                         continue;
                     }
@@ -134,7 +165,18 @@ namespace TeamVR.AdaptivePassthrough
                         candidate.Detection.label,
                         detection.label,
                         StringComparison.OrdinalIgnoreCase) ? 0f : 1f;
-                    float cost = (1f - iou) + centerDistance * 0.35f + labelPenalty;
+                    float lifecyclePenalty =
+                        candidate.Lifecycle == TrackLifecycle.Tentative
+                            ? 0.25f
+                            : 0f;
+                    float sizePenalty = (float)Math.Abs(
+                        Math.Log(Math.Max(0.0001f, sizeRatio)));
+                    float cost =
+                        (1f - iou)
+                        + centerDistance * 0.35f
+                        + sizePenalty * 0.15f
+                        + labelPenalty
+                        + lifecyclePenalty;
                     if (cost < bestCost)
                     {
                         bestCost = cost;
@@ -144,36 +186,60 @@ namespace TeamVR.AdaptivePassthrough
 
                 if (bestTrack == null)
                 {
+                    if (detection.confidence < newTrackConfidence)
+                    {
+                        continue;
+                    }
+
                     bestTrack = new TrackState
                     {
                         Id = nextTrackId++,
                         Detection = detection,
                         TimestampSeconds = timestampSeconds,
                         MissedFrames = 0,
-                        Lifecycle = TrackLifecycle.Tentative
+                        Lifecycle = TrackLifecycle.Tentative,
+                        ObservedThisUpdate = true
                     };
                     tracks.Add(bestTrack.Id, bestTrack);
                     assignedTrackIds.Add(bestTrack.Id);
-                    matched.Add((bestTrack, 0f));
                     continue;
                 }
 
                 double elapsedSeconds = Math.Max(0.0001, timestampSeconds - bestTrack.TimestampSeconds);
-                float previousArea = Math.Max(0.000001f, bestTrack.Detection.boundingBox.Area);
+                NormalizedBoundingBox previousBox =
+                    bestTrack.Detection.boundingBox;
+                float previousArea = Math.Max(
+                    0.000001f,
+                    previousBox.Area);
                 float growthRate = (detection.boundingBox.Area - previousArea)
                     / previousArea
                     / (float)elapsedSeconds;
+                float observedVelocityX =
+                    (detection.boundingBox.centerX - previousBox.centerX)
+                    / (float)elapsedSeconds;
+                float observedVelocityY =
+                    (detection.boundingBox.centerY - previousBox.centerY)
+                    / (float)elapsedSeconds;
+                bestTrack.CenterVelocityX = Lerp(
+                    bestTrack.CenterVelocityX,
+                    observedVelocityX,
+                    0.5f);
+                bestTrack.CenterVelocityY = Lerp(
+                    bestTrack.CenterVelocityY,
+                    observedVelocityY,
+                    0.5f);
+                bestTrack.LastGrowthRate = growthRate;
 
                 bestTrack.Detection = detection;
                 bestTrack.TimestampSeconds = timestampSeconds;
                 bestTrack.MissedFrames = 0;
+                bestTrack.ObservedThisUpdate = true;
                 assignedTrackIds.Add(bestTrack.Id);
-                matched.Add((bestTrack, growthRate));
             }
 
             foreach (TrackState state in tracks.Values)
             {
-                bool observed = assignedTrackIds.Contains(state.Id);
+                bool observed = state.ObservedThisUpdate;
                 RecordObservation(state, observed);
                 if (observed)
                 {
@@ -216,22 +282,29 @@ namespace TeamVR.AdaptivePassthrough
                 tracks.Remove(expiredTrackIds[i]);
             }
 
-            var output = new List<TrackedDynamicObject>(matched.Count);
-            for (int i = 0; i < matched.Count; i++)
+            var orderedStates = tracks.Values
+                .OrderBy(state => state.Id)
+                .ToList();
+            var output = new List<TrackedDynamicObject>(
+                orderedStates.Count);
+            for (int i = 0; i < orderedStates.Count; i++)
             {
-                TrackState state = matched[i].State;
-                if (!tracks.ContainsKey(state.Id))
-                {
-                    continue;
-                }
-
+                TrackState state = orderedStates[i];
+                double unobservedSeconds = state.ObservedThisUpdate
+                    ? 0.0
+                    : Math.Max(
+                        0.0,
+                        timestampSeconds - state.TimestampSeconds);
                 output.Add(new TrackedDynamicObject(
                     state.Id,
                     state.Detection,
-                    matched[i].GrowthRate,
+                    state.ObservedThisUpdate
+                        ? state.LastGrowthRate
+                        : 0f,
                     state.Lifecycle,
-                    true,
-                    state.MissedFrames));
+                    state.ObservedThisUpdate,
+                    state.MissedFrames,
+                    unobservedSeconds));
             }
 
             return output;
@@ -306,6 +379,36 @@ namespace TeamVR.AdaptivePassthrough
             float dx = a.centerX - b.centerX;
             float dy = a.centerY - b.centerY;
             return (float)Math.Sqrt(dx * dx + dy * dy);
+        }
+
+        private static NormalizedBoundingBox PredictedBox(
+            TrackState state,
+            double elapsedSeconds)
+        {
+            NormalizedBoundingBox box = state.Detection.boundingBox;
+            return new NormalizedBoundingBox(
+                box.centerX
+                    + state.CenterVelocityX * (float)elapsedSeconds,
+                box.centerY
+                    + state.CenterVelocityY * (float)elapsedSeconds,
+                box.width,
+                box.height);
+        }
+
+        private static float SizeRatio(
+            NormalizedBoundingBox a,
+            NormalizedBoundingBox b)
+        {
+            float larger = Math.Max(a.Area, b.Area);
+            float smaller = Math.Max(
+                0.000001f,
+                Math.Min(a.Area, b.Area));
+            return larger / smaller;
+        }
+
+        private static float Lerp(float from, float to, float amount)
+        {
+            return from + (to - from) * amount;
         }
     }
 }

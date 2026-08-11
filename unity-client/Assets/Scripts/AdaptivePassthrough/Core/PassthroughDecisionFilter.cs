@@ -10,6 +10,7 @@ namespace TeamVR.AdaptivePassthrough
         public float onThreshold = 0.60f;
         public float offThreshold = 0.50f;
         public float minimumHoldSeconds = 0.50f;
+        public float releaseDelaySeconds = 0.25f;
     }
 
     public sealed class PassthroughDecisionFilter
@@ -17,6 +18,8 @@ namespace TeamVR.AdaptivePassthrough
         private readonly PassthroughDecisionFilterSettings settings;
         private bool enabled;
         private double stateChangedAt;
+        private double releaseCandidateSince;
+        private bool releasePending;
         private bool initialized;
 
         public PassthroughDecisionFilter(
@@ -38,6 +41,9 @@ namespace TeamVR.AdaptivePassthrough
             float minimumHoldSeconds = Math.Max(
                 0f,
                 SanitizeFinite(settings.minimumHoldSeconds));
+            float releaseDelaySeconds = Math.Max(
+                0f,
+                SanitizeFinite(settings.releaseDelaySeconds));
 
             if (!initialized)
             {
@@ -47,6 +53,18 @@ namespace TeamVR.AdaptivePassthrough
 
             if (!overallAvailable)
             {
+                if (settings.mode == PassthroughDecisionMode.Hysteresis
+                    && enabled)
+                {
+                    return HoldOrRelease(
+                        now,
+                        minimumHoldSeconds,
+                        releaseDelaySeconds,
+                        PassthroughDecisionReason.NoRiskInputs,
+                        onThreshold,
+                        offThreshold);
+                }
+
                 SetEnabled(false, now);
                 return Create(
                     PassthroughDecisionReason.NoRiskInputs,
@@ -88,26 +106,18 @@ namespace TeamVR.AdaptivePassthrough
                     offThreshold);
             }
 
-            float heldSeconds = ElapsedSinceStateChange(now);
             if (risk < offThreshold)
             {
-                if (heldSeconds < minimumHoldSeconds)
-                {
-                    return Create(
-                        PassthroughDecisionReason.MinimumHoldActive,
-                        now,
-                        onThreshold,
-                        offThreshold);
-                }
-
-                SetEnabled(false, now);
-                return Create(
-                    PassthroughDecisionReason.BelowThreshold,
+                return HoldOrRelease(
                     now,
+                    minimumHoldSeconds,
+                    releaseDelaySeconds,
+                    PassthroughDecisionReason.BelowThreshold,
                     onThreshold,
                     offThreshold);
             }
 
+            CancelPendingRelease();
             return Create(
                 PassthroughDecisionReason.HysteresisHeld,
                 now,
@@ -119,7 +129,49 @@ namespace TeamVR.AdaptivePassthrough
         {
             enabled = false;
             stateChangedAt = 0.0;
+            releaseCandidateSince = 0.0;
+            releasePending = false;
             initialized = false;
+        }
+
+        private PassthroughDecisionSnapshot HoldOrRelease(
+            double now,
+            float minimumHoldSeconds,
+            float releaseDelaySeconds,
+            PassthroughDecisionReason releasedReason,
+            float onThreshold,
+            float offThreshold)
+        {
+            if (!releasePending)
+            {
+                releasePending = true;
+                releaseCandidateSince = now;
+            }
+
+            if (ElapsedSinceStateChange(now) < minimumHoldSeconds)
+            {
+                return Create(
+                    PassthroughDecisionReason.MinimumHoldActive,
+                    now,
+                    onThreshold,
+                    offThreshold);
+            }
+
+            if (now - releaseCandidateSince < releaseDelaySeconds)
+            {
+                return Create(
+                    PassthroughDecisionReason.ReleaseDelayActive,
+                    now,
+                    onThreshold,
+                    offThreshold);
+            }
+
+            SetEnabled(false, now);
+            return Create(
+                releasedReason,
+                now,
+                onThreshold,
+                offThreshold);
         }
 
         private PassthroughDecisionSnapshot Create(
@@ -145,6 +197,13 @@ namespace TeamVR.AdaptivePassthrough
 
             enabled = value;
             stateChangedAt = now;
+            CancelPendingRelease();
+        }
+
+        private void CancelPendingRelease()
+        {
+            releaseCandidateSince = 0.0;
+            releasePending = false;
         }
 
         private float ElapsedSinceStateChange(double now)
