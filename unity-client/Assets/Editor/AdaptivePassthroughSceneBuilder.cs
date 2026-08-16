@@ -47,6 +47,8 @@ public static class AdaptivePassthroughSceneBuilder
         system.AddComponent<MockPersonDetectionSource>();
         system.AddComponent<DynamicRiskDebugOverlay>();
         system.AddComponent<DynamicRiskSessionLogger>();
+        system.AddComponent<TrackingQualityController>();
+        system.AddComponent<SpatialTrackingVisualLab>();
 
         Directory.CreateDirectory(Path.GetDirectoryName(MockScenePath));
         EditorSceneManager.SaveScene(scene, MockScenePath);
@@ -106,6 +108,9 @@ public static class AdaptivePassthroughSceneBuilder
                 system.AddComponent<EnvironmentRaycastManager>();
         }
 
+        TrackingQualityController trackingQuality =
+            GetOrAdd<TrackingQualityController>(system);
+
         QuestPersonDepthProvider depthProvider =
             GetOrAdd<QuestPersonDepthProvider>(system);
         depthProvider.Configure(cameraAccess, environmentRaycast);
@@ -118,11 +123,13 @@ public static class AdaptivePassthroughSceneBuilder
         runnerObject.FindProperty("permissionCoordinator").objectReferenceValue = permission;
         runnerObject.FindProperty("cameraAccess").objectReferenceValue = cameraAccess;
         runnerObject.FindProperty("depthProvider").objectReferenceValue = depthProvider;
+        runnerObject.FindProperty("qualityController").objectReferenceValue =
+            trackingQuality;
         runnerObject.FindProperty("modelAsset").objectReferenceValue = model;
         runnerObject.FindProperty("confidenceThreshold").floatValue = 0.55f;
         runnerObject.FindProperty("trackingConfidenceThreshold").floatValue = 0.35f;
         runnerObject.FindProperty("iouThreshold").floatValue = 0.45f;
-        runnerObject.FindProperty("inferenceRateHz").floatValue = 10f;
+        runnerObject.FindProperty("inferenceRateHz").floatValue = 5f;
         runnerObject.FindProperty("personClassId").intValue = 0;
         runnerObject.FindProperty("boxesAreCenterFormat").boolValue = true;
         runnerObject.FindProperty("boxesAreNormalized").boolValue = false;
@@ -138,6 +145,17 @@ public static class AdaptivePassthroughSceneBuilder
             Object.FindAnyObjectByType<QuestRiskExperimentLogger>();
         if (experimentLogger != null)
         {
+            QuestSpatialObstacleProvider spatialProvider =
+                GetOrAdd<QuestSpatialObstacleProvider>(system);
+            OVRCameraRig trackingRig =
+                Object.FindAnyObjectByType<OVRCameraRig>();
+            spatialProvider.Configure(
+                environmentRaycast,
+                trackingQuality,
+                experimentLogger,
+                trackingRig == null ? null : trackingRig.centerEyeAnchor,
+                trackingRig == null ? null : trackingRig.leftHandAnchor,
+                trackingRig == null ? null : trackingRig.rightHandAnchor);
             StaticPassthroughPolicyController staticPolicy =
                 GetOrAdd<StaticPassthroughPolicyController>(system);
             DynamicPassthroughPolicyController dynamicPolicy =
@@ -165,7 +183,7 @@ public static class AdaptivePassthroughSceneBuilder
             ConfigureStaticBoundaryMeasurements(experimentLogger);
             ConfigureStaticBoundaryPolicy(staticPolicy);
             ConfigureDynamicPolicy(dynamicPolicy);
-            staticPolicy.Configure(experimentLogger);
+            staticPolicy.Configure(spatialProvider);
             dynamicPolicy.Configure(
                 controller,
                 detectionRunner);
@@ -244,7 +262,8 @@ public static class AdaptivePassthroughSceneBuilder
                 staticPolicy,
                 dynamicPolicy,
                 presentation,
-                personalization);
+                personalization,
+                trackingQuality);
             EditorUtility.SetDirty(staticPolicy);
             EditorUtility.SetDirty(dynamicPolicy);
             EditorUtility.SetDirty(presentation);
@@ -252,6 +271,8 @@ public static class AdaptivePassthroughSceneBuilder
             EditorUtility.SetDirty(boundaryVisibility);
             EditorUtility.SetDirty(passthroughLayer);
             EditorUtility.SetDirty(dynamicSessionLogger);
+            EditorUtility.SetDirty(spatialProvider);
+            EditorUtility.SetDirty(trackingQuality);
         }
         else
         {
@@ -264,6 +285,7 @@ public static class AdaptivePassthroughSceneBuilder
         EditorUtility.SetDirty(environmentDepth);
         EditorUtility.SetDirty(environmentRaycast);
         EditorUtility.SetDirty(depthProvider);
+        EditorUtility.SetDirty(trackingQuality);
         EditorSceneManager.SaveScene(scene, QuestScenePath);
         AddSceneToBuildSettings(QuestScenePath, true);
         AssetDatabase.SaveAssets();
@@ -376,7 +398,8 @@ public static class AdaptivePassthroughSceneBuilder
         StaticPassthroughPolicyController staticPolicy,
         DynamicPassthroughPolicyController dynamicPolicy,
         SelectivePassthroughController presentation,
-        PersonalizationRuntimeController personalization)
+        PersonalizationRuntimeController personalization,
+        TrackingQualityController trackingQuality)
     {
         var loggerObject = new SerializedObject(experimentLogger);
         Text leftText =
@@ -546,7 +569,8 @@ public static class AdaptivePassthroughSceneBuilder
             personalization,
             staticPolicy,
             dynamicPolicy,
-            presentation);
+            presentation,
+            trackingQuality);
         EditorUtility.SetDirty(experimentLogger);
         EditorUtility.SetDirty(hud);
         EditorUtility.SetDirty(togglePanel);

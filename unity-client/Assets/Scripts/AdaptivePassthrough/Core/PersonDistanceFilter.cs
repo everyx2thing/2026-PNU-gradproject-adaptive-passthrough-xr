@@ -8,6 +8,7 @@ namespace TeamVR.AdaptivePassthrough
         private sealed class TrackState
         {
             public readonly List<float> RawWindow = new List<float>();
+            public float[] MedianScratch = Array.Empty<float>();
             public bool HasFilteredDistance;
             public float LastRawDistance;
             public float FilteredDistance;
@@ -16,19 +17,23 @@ namespace TeamVR.AdaptivePassthrough
             public int LastValidSamples;
             public double LastUpdateSeconds;
             public double LastMetricSeconds;
+            public float LastBoundingBoxArea;
             public int PendingJumpDirection;
             public int PendingJumpCount;
         }
 
         private readonly Dictionary<int, TrackState> states =
             new Dictionary<int, TrackState>();
+        private readonly List<WeightedSample> selectionScratch =
+            new List<WeightedSample>(25);
         private readonly float minimumDistanceMeters;
         private readonly float maximumDistanceMeters;
         private readonly float clusterGapMeters;
         private readonly int minimumClusterSamples;
         private readonly int medianWindowSamples;
         private readonly float smoothingTimeConstantSeconds;
-        private readonly float jumpThresholdMeters;
+        private readonly float baseJumpThresholdMeters;
+        private readonly float maximumJumpSpeedMetersPerSecond;
         private readonly int jumpConfirmationSamples;
         private readonly float metricHoldSeconds;
 
@@ -39,7 +44,8 @@ namespace TeamVR.AdaptivePassthrough
             int minimumClusterSamples = 3,
             int medianWindowSamples = 5,
             float smoothingTimeConstantSeconds = 0.25f,
-            float jumpThresholdMeters = 1.50f,
+            float jumpThresholdMeters = 0.35f,
+            float maximumJumpSpeedMetersPerSecond = 2.50f,
             int jumpConfirmationSamples = 2,
             float metricHoldSeconds = 0.50f)
         {
@@ -53,7 +59,10 @@ namespace TeamVR.AdaptivePassthrough
             this.smoothingTimeConstantSeconds = Math.Max(
                 0.001f,
                 smoothingTimeConstantSeconds);
-            this.jumpThresholdMeters = Math.Max(0.01f, jumpThresholdMeters);
+            baseJumpThresholdMeters = Math.Max(0.01f, jumpThresholdMeters);
+            this.maximumJumpSpeedMetersPerSecond = Math.Max(
+                0f,
+                maximumJumpSpeedMetersPerSecond);
             this.jumpConfirmationSamples = Math.Max(
                 1,
                 jumpConfirmationSamples);
@@ -65,20 +74,23 @@ namespace TeamVR.AdaptivePassthrough
             double timestampSeconds,
             IReadOnlyList<float> samples,
             int requestedSampleCount,
-            float boundingBoxArea)
+            float boundingBoxArea,
+            IReadOnlyList<float> sampleWeights = null)
         {
             float rawDistance;
             int selectedSampleCount;
             float dispersion;
-            if (!TrySelectNearestCluster(
+            if (!TrySelectSupportedForegroundClusterCore(
                     samples,
+                    sampleWeights,
                     minimumDistanceMeters,
                     maximumDistanceMeters,
                     clusterGapMeters,
                     minimumClusterSamples,
                     out rawDistance,
                     out selectedSampleCount,
-                    out dispersion))
+                    out dispersion,
+                    selectionScratch))
             {
                 return GetHeldOrBoundingBoxFallback(
                     trackId,
@@ -94,11 +106,21 @@ namespace TeamVR.AdaptivePassthrough
                 state.RawWindow.RemoveAt(0);
             }
 
-            float candidate = MedianCopy(state.RawWindow);
+            float candidate = MedianCopy(state);
             string note = string.Empty;
+            double jumpElapsed = state.HasFilteredDistance
+                ? Math.Max(0.0, timestampSeconds - state.LastUpdateSeconds)
+                : 0.0;
+            float dynamicJumpThreshold = baseJumpThresholdMeters
+                + maximumJumpSpeedMetersPerSecond * (float)jumpElapsed;
+            bool bboxGrowing = state.LastBoundingBoxArea > 0f
+                && boundingBoxArea > state.LastBoundingBoxArea * 1.08f;
+            bool depthMovingAway = state.HasFilteredDistance
+                && rawDistance > state.FilteredDistance + 0.05f;
+            bool bboxDepthConflict = bboxGrowing && depthMovingAway;
             if (state.HasFilteredDistance
                 && Math.Abs(rawDistance - state.FilteredDistance)
-                    > jumpThresholdMeters)
+                    > dynamicJumpThreshold)
             {
                 int direction = Math.Sign(
                     rawDistance - state.FilteredDistance);
@@ -129,6 +151,14 @@ namespace TeamVR.AdaptivePassthrough
                 state.PendingJumpCount = 0;
             }
 
+            if (bboxDepthConflict)
+            {
+                candidate = state.FilteredDistance;
+                note = string.IsNullOrEmpty(note)
+                    ? "bbox_depth_conflict"
+                    : note + ";bbox_depth_conflict";
+            }
+
             double elapsed = state.HasFilteredDistance
                 ? Math.Max(0.0, timestampSeconds - state.LastUpdateSeconds)
                 : 0.0;
@@ -147,6 +177,7 @@ namespace TeamVR.AdaptivePassthrough
                 requestedSampleCount,
                 selectedSampleCount);
             state.LastValidSamples = selectedSampleCount;
+            state.LastBoundingBoxArea = boundingBoxArea;
 
             float sampleRatio = state.LastRequestedSamples <= 0
                 ? 0f
@@ -154,6 +185,10 @@ namespace TeamVR.AdaptivePassthrough
             float consistency = (float)Math.Exp(
                 -Math.Max(0f, dispersion) / clusterGapMeters);
             state.LastConfidence = Clamp01(sampleRatio * consistency);
+            if (bboxDepthConflict)
+            {
+                state.LastConfidence *= 0.45f;
+            }
 
             return new PersonDistanceMeasurement(
                 trackId,
@@ -167,7 +202,9 @@ namespace TeamVR.AdaptivePassthrough
                 selectedSampleCount,
                 0f,
                 boundingBoxArea,
-                note);
+                note,
+                dispersion,
+                bboxDepthConflict);
         }
 
         public PersonDistanceMeasurement GetHeldOrBoundingBoxFallback(
@@ -296,6 +333,130 @@ namespace TeamVR.AdaptivePassthrough
             return false;
         }
 
+        public static bool TrySelectSupportedForegroundCluster(
+            IReadOnlyList<float> samples,
+            IReadOnlyList<float> sampleWeights,
+            float minimumDistanceMeters,
+            float maximumDistanceMeters,
+            float clusterGapMeters,
+            int minimumClusterSamples,
+            out float medianDistance,
+            out int selectedSampleCount,
+            out float dispersion)
+        {
+            return TrySelectSupportedForegroundClusterCore(
+                samples,
+                sampleWeights,
+                minimumDistanceMeters,
+                maximumDistanceMeters,
+                clusterGapMeters,
+                minimumClusterSamples,
+                out medianDistance,
+                out selectedSampleCount,
+                out dispersion,
+                new List<WeightedSample>(samples == null ? 0 : samples.Count));
+        }
+
+        private static bool TrySelectSupportedForegroundClusterCore(
+            IReadOnlyList<float> samples,
+            IReadOnlyList<float> sampleWeights,
+            float minimumDistanceMeters,
+            float maximumDistanceMeters,
+            float clusterGapMeters,
+            int minimumClusterSamples,
+            out float medianDistance,
+            out int selectedSampleCount,
+            out float dispersion,
+            List<WeightedSample> valid)
+        {
+            medianDistance = 0f;
+            selectedSampleCount = 0;
+            dispersion = 0f;
+            if (samples == null || samples.Count == 0)
+            {
+                return false;
+            }
+
+            valid.Clear();
+            for (int i = 0; i < samples.Count; i++)
+            {
+                float value = samples[i];
+                if (!IsFinite(value)
+                    || value < minimumDistanceMeters
+                    || value > maximumDistanceMeters)
+                {
+                    continue;
+                }
+
+                float weight = sampleWeights != null
+                    && i < sampleWeights.Count
+                        ? Math.Max(0.05f, sampleWeights[i])
+                        : 1f;
+                valid.Add(new WeightedSample(value, weight));
+            }
+
+            valid.Sort((a, b) => a.Distance.CompareTo(b.Distance));
+            int bestStart = -1;
+            int bestEnd = -1;
+            float bestScore = float.MinValue;
+            int start = 0;
+            while (start < valid.Count)
+            {
+                int end = start + 1;
+                float support = valid[start].Weight;
+                while (end < valid.Count
+                    && valid[end].Distance - valid[end - 1].Distance
+                        <= clusterGapMeters)
+                {
+                    support += valid[end].Weight;
+                    end++;
+                }
+
+                int count = end - start;
+                if (count >= Math.Max(1, minimumClusterSamples))
+                {
+                    float centerDistance = valid[start + count / 2].Distance;
+                    float foregroundPreference = 1f
+                        / (1f + centerDistance * 0.04f);
+                    float score = support * foregroundPreference;
+                    if (score > bestScore)
+                    {
+                        bestScore = score;
+                        bestStart = start;
+                        bestEnd = end;
+                    }
+                }
+
+                start = end;
+            }
+
+            if (bestStart < 0)
+            {
+                return false;
+            }
+
+            selectedSampleCount = bestEnd - bestStart;
+            int middle = bestStart + selectedSampleCount / 2;
+            medianDistance = selectedSampleCount % 2 == 0
+                ? (valid[middle - 1].Distance + valid[middle].Distance) * 0.5f
+                : valid[middle].Distance;
+            dispersion = valid[bestEnd - 1].Distance
+                - valid[bestStart].Distance;
+            return true;
+        }
+
+        private readonly struct WeightedSample
+        {
+            public readonly float Distance;
+            public readonly float Weight;
+
+            public WeightedSample(float distance, float weight)
+            {
+                Distance = distance;
+                Weight = weight;
+            }
+        }
+
         private TrackState GetOrCreate(int trackId)
         {
             TrackState state;
@@ -308,14 +469,25 @@ namespace TeamVR.AdaptivePassthrough
             return state;
         }
 
-        private static float MedianCopy(List<float> values)
+        private static float MedianCopy(TrackState state)
         {
-            var copy = new List<float>(values);
-            copy.Sort();
-            int middle = copy.Count / 2;
-            return copy.Count % 2 == 0
-                ? (copy[middle - 1] + copy[middle]) * 0.5f
-                : copy[middle];
+            int count = state.RawWindow.Count;
+            if (state.MedianScratch.Length < count)
+            {
+                state.MedianScratch = new float[Math.Max(5, count)];
+            }
+
+            for (int i = 0; i < count; i++)
+            {
+                state.MedianScratch[i] = state.RawWindow[i];
+            }
+
+            Array.Sort(state.MedianScratch, 0, count);
+            int middle = count / 2;
+            return count % 2 == 0
+                ? (state.MedianScratch[middle - 1]
+                    + state.MedianScratch[middle]) * 0.5f
+                : state.MedianScratch[middle];
         }
 
         private static float Lerp(float from, float to, float amount)

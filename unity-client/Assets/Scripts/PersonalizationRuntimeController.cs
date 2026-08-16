@@ -824,8 +824,13 @@ public sealed class PersonalizationRuntimeController : MonoBehaviour
         if (measurementProvider == null)
         {
             measurementProvider = staticPolicy == null
-                ? FindAnyObjectByType<QuestRiskExperimentLogger>()
+                ? null
                 : staticPolicy.MeasurementProvider;
+            if (measurementProvider == null)
+            {
+                measurementProvider =
+                    FindAnyObjectByType<QuestRiskExperimentLogger>();
+            }
         }
     }
 

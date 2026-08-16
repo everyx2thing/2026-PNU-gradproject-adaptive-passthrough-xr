@@ -108,5 +108,51 @@ namespace TeamVR.AdaptivePassthrough.Tests
                 fallback.Source,
                 Is.EqualTo(PersonDistanceSource.BoundingBoxProxy));
         }
+
+        [Test]
+        public void CenterSupportCanRejectCloserEdgeCluster()
+        {
+            float median;
+            int count;
+            float dispersion;
+            bool selected =
+                PersonDistanceFilter.TrySelectSupportedForegroundCluster(
+                    new[] { 0.50f, 0.52f, 0.54f, 1.48f, 1.50f, 1.52f, 1.54f },
+                    new[] { 0.1f, 0.1f, 0.1f, 2f, 2f, 2f, 2f },
+                    0.20f,
+                    6f,
+                    0.20f,
+                    3,
+                    out median,
+                    out count,
+                    out dispersion);
+
+            Assert.That(selected, Is.True);
+            Assert.That(median, Is.EqualTo(1.51f).Within(0.001f));
+            Assert.That(count, Is.EqualTo(4));
+        }
+
+        [Test]
+        public void GrowingBoxSuppressesZeroPointThreeTwoToOnePointTwoTwoJump()
+        {
+            var filter = new PersonDistanceFilter();
+            PersonDistanceMeasurement baseline = filter.UpdateMetric(
+                4,
+                0.0,
+                new[] { 0.31f, 0.32f, 0.33f, 0.32f },
+                4,
+                0.10f);
+            PersonDistanceMeasurement conflict = filter.UpdateMetric(
+                4,
+                0.2,
+                new[] { 1.20f, 1.22f, 1.24f, 1.22f },
+                4,
+                0.18f);
+
+            Assert.That(conflict.BoundingBoxDepthConflict, Is.True);
+            Assert.That(conflict.FilteredDistanceMeters,
+                Is.EqualTo(baseline.FilteredDistanceMeters).Within(0.001f));
+            Assert.That(conflict.Confidence, Is.LessThan(0.45f));
+        }
     }
 }

@@ -374,7 +374,7 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 5b023183069df224080314a560e6e1ff, type: 3}
-  m_Name: 
+  m_Name:
   m_EditorClassIdentifier: Meta.XR.BuildingBlocks::Meta.XR.BuildingBlocks.BuildingBlock
   blockId: 81f55626-5fad-45e9-a1df-184f330da7ba
   instanceId: 9bc44e58-3a11-4302-a4cb-a1ce7bbfc114
@@ -535,7 +535,7 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: df13963b9bc9eb64dac9bcbe58a1f8b3, type: 3}
-  m_Name: 
+  m_Name:
   m_EditorClassIdentifier: Assembly-CSharp::QuestBoundaryLogger
 --- !u!4 &103309996
 Transform:
@@ -2382,6 +2382,8 @@ GameObject:
   - component: {fileID: 458888773}
   - component: {fileID: 458888776}
   - component: {fileID: 458888777}
+  - component: {fileID: 458888779}
+  - component: {fileID: 458888778}
   m_Layer: 0
   m_Name: Adaptive Dynamic Risk System
   m_TagString: Untagged
@@ -2417,6 +2419,8 @@ MonoBehaviour:
   controller: {fileID: 0}
   presentationBehaviour: {fileID: 458888770}
   snapshotSequenceProviderBehaviour: {fileID: 0}
+  trackingQuality: {fileID: 0}
+  spatialProvider: {fileID: 0}
   enableLogging: 1
   flushEveryRecords: 10
   filePrefix: dynamic-risk
@@ -2504,12 +2508,13 @@ MonoBehaviour:
   permissionCoordinator: {fileID: 458888763}
   cameraAccess: {fileID: 458888769}
   depthProvider: {fileID: 458888773}
+  qualityController: {fileID: 458888779}
   modelAsset: {fileID: 5022602860645237092, guid: 1d795a1c44f3121489a7c2cacdff3368, type: 3}
   backend: 512
   confidenceThreshold: 0.55
   trackingConfidenceThreshold: 0.35
   iouThreshold: 0.45
-  inferenceRateHz: 10
+  inferenceRateHz: 5
   personClassId: 0
   flipVertical: 0
   boxesAreCenterFormat: 1
@@ -2612,7 +2617,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: dac786ea5d75d3d4c99476597cf4614a, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::StaticPassthroughPolicyController
-  measurementProvider: {fileID: 1676843309}
+  measurementProvider: {fileID: 458888778}
   evaluationRateHz: 20
   policySettings:
     stableOnThreshold: 0.65
@@ -2733,6 +2738,44 @@ MonoBehaviour:
     HandFullThreshold: 0.85
   enableLogging: 1
   filePrefix: personalization
+--- !u!114 &458888778
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 458888762}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 133603613b3b307468e5da6235983378, type: 3}
+  m_Name:
+  m_EditorClassIdentifier: TeamVR.AdaptivePassthrough.Runtime::TeamVR.AdaptivePassthrough.QuestSpatialObstacleProvider
+  raycastManager: {fileID: 458888774}
+  qualityController: {fileID: 458888779}
+  roomSceneProviderBehaviour: {fileID: 1676843309}
+  maximumDistanceMeters: 6
+  headSafetyRadius: 0.16
+  handSafetyRadius: 0.1
+  smoothingTimeSeconds: 0.18
+  clusterGapMeters: 0.3
+  staleAfterSeconds: 0.25
+  head: {fileID: 999914984}
+  leftHand: {fileID: 1436053723}
+  rightHand: {fileID: 726580204}
+--- !u!114 &458888779
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 458888762}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: fd05c8f9e7b114d42b90debe0fa30723, type: 3}
+  m_Name:
+  m_EditorClassIdentifier: TeamVR.AdaptivePassthrough.Runtime::TeamVR.AdaptivePassthrough.TrackingQualityController
+  profile: 0
+  adaptiveRateEnabled: 1
 --- !u!1 &464549247
 GameObject:
   m_ObjectHideFlags: 0
@@ -3731,6 +3774,7 @@ MonoBehaviour:
   staticPolicy: {fileID: 458888772}
   dynamicPolicy: {fileID: 458888771}
   presentation: {fileID: 458888770}
+  trackingQuality: {fileID: 458888779}
   refreshRateHz: 5
   panelOpacity: 1
 --- !u!1 &607719369

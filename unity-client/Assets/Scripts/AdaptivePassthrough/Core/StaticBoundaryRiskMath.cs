@@ -302,8 +302,7 @@ namespace TeamVR.AdaptivePassthrough
             float releaseMargin = StaticBoundaryRiskMath.NonNegative(
                 settings.emergencyReleaseMargin);
             bool emergencyTrigger =
-                frame.Head.ClosestDistanceMeters <= emergencyDistance
-                && headApproachingForEmergency;
+                frame.Head.ClosestDistanceMeters <= emergencyDistance;
 
             if (emergencyTrigger)
             {

@@ -60,14 +60,19 @@ namespace TeamVR.AdaptivePassthrough
             }
 
             detections.Clear();
-            detections.Add(BuildPrimaryPerson(elapsed));
+            bool primaryOccluded = elapsed >= 5.25 && elapsed <= 6.0;
+            if (!primaryOccluded)
+            {
+                detections.Add(BuildPrimaryPerson(elapsed));
+            }
             if (includeSecondPerson && elapsed >= 2.0 && elapsed <= 9.0)
             {
                 detections.Add(new DynamicObjectDetection(
                     "person",
                     0.82f,
                     new NormalizedBoundingBox(
-                        0.79f,
+                        Lerp(0.79f, 0.21f,
+                            (float)((elapsed - 2.0) / 7.0)),
                         0.49f,
                         0.12f,
                         0.30f)));

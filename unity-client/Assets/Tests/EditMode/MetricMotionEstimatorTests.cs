@@ -53,6 +53,33 @@ namespace TeamVR.AdaptivePassthrough.Tests
             Assert.That(result.MetricTtcSeconds.HasValue, Is.False);
         }
 
+        [Test]
+        public void GrowingBoundingBoxBlocksConflictingRecedingState()
+        {
+            var estimator = new MetricMotionEstimator();
+            MotionEstimate result = null;
+            var bboxApproach = new MotionEstimate(
+                DynamicMotionState.Approaching,
+                0.20f,
+                5f,
+                0f,
+                5,
+                0.5,
+                1f);
+            for (int i = 0; i < 5; i++)
+            {
+                result = estimator.Estimate(
+                    i * 0.1,
+                    9,
+                    Metric(9, i * 0.1, 0.32f + i * 0.20f),
+                    bboxApproach);
+            }
+
+            Assert.That(result.MetricConflict, Is.True);
+            Assert.That(result.State,
+                Is.Not.EqualTo(DynamicMotionState.Receding));
+        }
+
         private static PersonDistanceMeasurement Metric(
             int trackId,
             double timestamp,

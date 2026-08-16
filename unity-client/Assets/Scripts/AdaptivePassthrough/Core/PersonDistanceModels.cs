@@ -1,7 +1,42 @@
 using System;
+using UnityEngine;
 
 namespace TeamVR.AdaptivePassthrough
 {
+    public readonly struct PersonObservation
+    {
+        public readonly DynamicObjectDetection Detection;
+        public readonly Pose CapturePose;
+        public readonly double CaptureTimestampSeconds;
+        public readonly float RawClusterDistanceMeters;
+        public readonly float ClusterDispersionMeters;
+        public readonly int ClusterSampleCount;
+        public readonly bool HasWorldPoint;
+        public readonly Vector3 WorldPoint;
+
+        public PersonObservation(
+            DynamicObjectDetection detection,
+            Pose capturePose,
+            double captureTimestampSeconds,
+            float rawClusterDistanceMeters,
+            float clusterDispersionMeters,
+            int clusterSampleCount,
+            bool hasWorldPoint = false,
+            Vector3 worldPoint = default)
+        {
+            Detection = detection;
+            CapturePose = capturePose;
+            CaptureTimestampSeconds = Math.Max(0.0, captureTimestampSeconds);
+            RawClusterDistanceMeters = Mathf.Max(
+                0f,
+                rawClusterDistanceMeters);
+            ClusterDispersionMeters = Mathf.Max(0f, clusterDispersionMeters);
+            ClusterSampleCount = Mathf.Max(0, clusterSampleCount);
+            HasWorldPoint = hasWorldPoint;
+            WorldPoint = hasWorldPoint ? worldPoint : Vector3.zero;
+        }
+    }
+
     public enum PersonDistanceSource
     {
         Unavailable,
@@ -22,6 +57,10 @@ namespace TeamVR.AdaptivePassthrough
         public readonly int ValidSampleCount;
         public readonly float SourceAgeSeconds;
         public readonly float BoundingBoxArea;
+        public readonly float SampleDispersionMeters;
+        public readonly bool BoundingBoxDepthConflict;
+        public readonly bool HasWorldPoint;
+        public readonly Vector3 WorldPoint;
         public readonly string FailureReason;
 
         public PersonDistanceMeasurement(
@@ -36,7 +75,11 @@ namespace TeamVR.AdaptivePassthrough
             int validSampleCount,
             float sourceAgeSeconds,
             float boundingBoxArea,
-            string failureReason = null)
+            string failureReason = null,
+            float sampleDispersionMeters = 0f,
+            bool boundingBoxDepthConflict = false,
+            bool hasWorldPoint = false,
+            Vector3 worldPoint = default)
         {
             TrackId = Math.Max(0, trackId);
             TimestampSeconds = Math.Max(0.0, timestampSeconds);
@@ -49,6 +92,11 @@ namespace TeamVR.AdaptivePassthrough
             ValidSampleCount = Math.Max(0, validSampleCount);
             SourceAgeSeconds = NonNegativeFinite(sourceAgeSeconds);
             BoundingBoxArea = Clamp01(boundingBoxArea);
+            SampleDispersionMeters = NonNegativeFinite(
+                sampleDispersionMeters);
+            BoundingBoxDepthConflict = boundingBoxDepthConflict;
+            HasWorldPoint = hasWorldPoint;
+            WorldPoint = hasWorldPoint ? worldPoint : Vector3.zero;
             FailureReason = failureReason ?? string.Empty;
         }
 
@@ -60,6 +108,27 @@ namespace TeamVR.AdaptivePassthrough
                     && Source == PersonDistanceSource.EnvironmentDepth
                     && FilteredDistanceMeters >= 0.20f;
             }
+        }
+
+        public PersonDistanceMeasurement WithWorldPoint(Vector3 worldPoint)
+        {
+            return new PersonDistanceMeasurement(
+                TrackId,
+                TimestampSeconds,
+                Source,
+                Available,
+                RawDistanceMeters,
+                FilteredDistanceMeters,
+                Confidence,
+                RequestedSampleCount,
+                ValidSampleCount,
+                SourceAgeSeconds,
+                BoundingBoxArea,
+                FailureReason,
+                SampleDispersionMeters,
+                BoundingBoxDepthConflict,
+                true,
+                worldPoint);
         }
 
         public static PersonDistanceMeasurement BoundingBoxFallback(

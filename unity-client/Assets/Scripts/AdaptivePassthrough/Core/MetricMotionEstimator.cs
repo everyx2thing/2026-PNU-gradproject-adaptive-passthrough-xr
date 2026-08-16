@@ -149,6 +149,17 @@ namespace TeamVR.AdaptivePassthrough
             state.StableState = NextState(
                 state.StableState,
                 state.SmoothedClosingSpeed);
+            bool metricConflict = distance.BoundingBoxDepthConflict
+                || (state.StableState == DynamicMotionState.Receding
+                    && boundingBoxFallback != null
+                    && (boundingBoxFallback.State
+                            == DynamicMotionState.Approaching
+                        || boundingBoxFallback.ScaleRatePerSecond > 0.05f));
+            if (metricConflict
+                && state.StableState == DynamicMotionState.Receding)
+            {
+                state.StableState = DynamicMotionState.Unknown;
+            }
 
             float? metricTtc = state.SmoothedClosingSpeed > 0.10f
                 ? (float?)Math.Min(
@@ -168,7 +179,8 @@ namespace TeamVR.AdaptivePassthrough
                 state.StableState,
                 reliability,
                 state.Samples.Count,
-                observationSeconds);
+                observationSeconds,
+                metricConflict);
         }
 
         public void PruneExcept(IEnumerable<int> liveTrackIds)

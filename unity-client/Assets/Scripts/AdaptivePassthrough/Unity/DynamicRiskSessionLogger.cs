@@ -11,6 +11,7 @@ namespace TeamVR.AdaptivePassthrough
         [Serializable]
         private sealed class LogRecord
         {
+            public int schemaVersion = 2;
             public string recordType;
             public string utc;
             public double timestampSeconds;
@@ -50,11 +51,34 @@ namespace TeamVR.AdaptivePassthrough
             public float windowWidth;
             public float windowHeight;
             public float windowOpacity;
+            public string trackingProfile;
+            public int adaptiveLevel;
+            public string spatialSource;
+            public float spatialDistanceMeters;
+            public float spatialConfidence;
+            public int spatialSampleCount;
+            public float spatialDispersionMeters;
+            public float spatialAgeSeconds;
+            public float spatialRateHz;
+            public float spatialMilliseconds;
+            public float inferenceRateHz;
+            public float inferenceMilliseconds;
+            public float framesPerSecond;
+            public float frameP95Milliseconds;
+            public float depthSampleDispersionMeters;
+            public bool bboxDepthConflict;
+            public bool idHandoff;
+            public float missingSeconds;
+            public string marker;
         }
 
         [SerializeField] private DynamicRiskController controller;
         [SerializeField] private MonoBehaviour presentationBehaviour;
         [SerializeField] private MonoBehaviour snapshotSequenceProviderBehaviour;
+        [SerializeField] private TrackingQualityController trackingQuality;
+#if ADAPTIVE_PASSTHROUGH_QUEST_CAMERA
+        [SerializeField] private QuestSpatialObstacleProvider spatialProvider;
+#endif
         [SerializeField] private bool enableLogging = true;
         [SerializeField, Min(1)] private int flushEveryRecords = 10;
         [SerializeField] private string filePrefix = "dynamic-risk";
@@ -75,6 +99,7 @@ namespace TeamVR.AdaptivePassthrough
 
             ResolveSnapshotSequenceProvider();
             ResolvePresentation();
+            ResolveQualityReferences();
         }
 
         private void OnEnable()
@@ -88,6 +113,11 @@ namespace TeamVR.AdaptivePassthrough
             {
                 OpenWriter();
             }
+
+            if (trackingQuality != null)
+            {
+                trackingQuality.TestMarkerRequested += OnTestMarker;
+            }
         }
 
         private void OnDisable()
@@ -95,6 +125,11 @@ namespace TeamVR.AdaptivePassthrough
             if (controller != null)
             {
                 controller.FrameProcessed -= OnFrameProcessed;
+            }
+
+            if (trackingQuality != null)
+            {
+                trackingQuality.TestMarkerRequested -= OnTestMarker;
             }
 
             CloseWriter();
@@ -107,16 +142,12 @@ namespace TeamVR.AdaptivePassthrough
                 return;
             }
 
-            WriteRecord(new LogRecord
-            {
-                recordType = "frame",
-                utc = DateTime.UtcNow.ToString("O"),
-                timestampSeconds = frame.TimestampSeconds,
-                latestRiskSnapshotSequence = LatestSnapshotSequence(),
-                confirmedPersonCount = frame.ConfirmedPersonCount,
-                dynamicRisk = frame.MaximumRisk,
-                riskLevel = frame.MaximumLevel.ToString()
-            });
+            LogRecord frameRecord = NewRecord("frame", frame.TimestampSeconds);
+            frameRecord.latestRiskSnapshotSequence = LatestSnapshotSequence();
+            frameRecord.confirmedPersonCount = frame.ConfirmedPersonCount;
+            frameRecord.dynamicRisk = frame.MaximumRisk;
+            frameRecord.riskLevel = frame.MaximumLevel.ToString();
+            WriteRecord(frameRecord);
 
             for (int i = 0; i < frame.Assessments.Count; i++)
             {
@@ -130,57 +161,50 @@ namespace TeamVR.AdaptivePassthrough
                         assessment.TrackId,
                         out windowRect,
                         out windowOpacity);
-                var record = new LogRecord
-                {
-                    recordType = "assessment",
-                    utc = DateTime.UtcNow.ToString("O"),
-                    timestampSeconds = frame.TimestampSeconds,
-                    latestRiskSnapshotSequence = LatestSnapshotSequence(),
-                    confirmedPersonCount = frame.ConfirmedPersonCount,
-                    trackId = assessment.TrackId,
-                    label = assessment.Detection.label,
-                    confidence = assessment.Detection.confidence,
-                    centerX = box.centerX,
-                    centerY = box.centerY,
-                    width = box.width,
-                    height = box.height,
-                    screenZone = assessment.Location.ScreenZone.ToString(),
-                    userRelativeDirection = assessment.Location.UserRelativeDirection,
-                    distanceBand = assessment.Location.DistanceBand.ToString(),
-                    distanceSource =
-                        assessment.Location.DistanceSource.ToString(),
-                    distanceAvailable =
-                        assessment.Location.HasMetricDistance,
-                    rawDistanceMeters =
-                        assessment.Location.RawDistanceMeters,
-                    filteredDistanceMeters =
-                        assessment.Location.FilteredDistanceMeters,
-                    distanceConfidence =
-                        assessment.Location.DistanceConfidence,
-                    boundingBoxArea = assessment.Location.BoundingBoxArea,
-                    motionState = assessment.Motion.State.ToString(),
-                    scaleRatePerSecond = assessment.Motion.ScaleRatePerSecond,
-                    closingSpeedMetersPerSecond =
-                        assessment.Motion.ClosingSpeedMetersPerSecond,
-                    ttcSecondsApprox = assessment.Motion.TtcSecondsApprox.GetValueOrDefault(),
-                    hasTtc = assessment.Motion.TtcSecondsApprox.HasValue,
-                    metricTtcSeconds =
-                        assessment.Motion.MetricTtcSeconds.GetValueOrDefault(),
-                    hasMetricTtc =
-                        assessment.Motion.MetricTtcSeconds.HasValue,
-                    collisionPath = assessment.Breakdown.CollisionPath,
-                    dynamicRisk = assessment.Score,
-                    riskLevel = assessment.Level.ToString(),
-                    reasons = string.Join(",", assessment.Reasons),
-                    observedThisFrame = assessment.ObservedThisFrame,
-                    windowVisible = windowVisible,
-                    windowX = windowVisible ? windowRect.x : 0f,
-                    windowY = windowVisible ? windowRect.y : 0f,
-                    windowWidth = windowVisible ? windowRect.width : 0f,
-                    windowHeight = windowVisible ? windowRect.height : 0f,
-                    windowOpacity = windowVisible ? windowOpacity : 0f
-                };
-
+                LogRecord record = NewRecord(
+                    "assessment",
+                    frame.TimestampSeconds);
+                record.latestRiskSnapshotSequence = LatestSnapshotSequence();
+                record.confirmedPersonCount = frame.ConfirmedPersonCount;
+                record.trackId = assessment.TrackId;
+                record.label = assessment.Detection.label;
+                record.confidence = assessment.Detection.confidence;
+                record.centerX = box.centerX;
+                record.centerY = box.centerY;
+                record.width = box.width;
+                record.height = box.height;
+                record.screenZone = assessment.Location.ScreenZone.ToString();
+                record.userRelativeDirection = assessment.Location.UserRelativeDirection;
+                record.distanceBand = assessment.Location.DistanceBand.ToString();
+                record.distanceSource = assessment.Location.DistanceSource.ToString();
+                record.distanceAvailable = assessment.Location.HasMetricDistance;
+                record.rawDistanceMeters = assessment.Location.RawDistanceMeters;
+                record.filteredDistanceMeters = assessment.Location.FilteredDistanceMeters;
+                record.distanceConfidence = assessment.Location.DistanceConfidence;
+                record.boundingBoxArea = assessment.Location.BoundingBoxArea;
+                record.motionState = assessment.Motion.State.ToString();
+                record.scaleRatePerSecond = assessment.Motion.ScaleRatePerSecond;
+                record.closingSpeedMetersPerSecond = assessment.Motion.ClosingSpeedMetersPerSecond;
+                record.ttcSecondsApprox = assessment.Motion.TtcSecondsApprox.GetValueOrDefault();
+                record.hasTtc = assessment.Motion.TtcSecondsApprox.HasValue;
+                record.metricTtcSeconds = assessment.Motion.MetricTtcSeconds.GetValueOrDefault();
+                record.hasMetricTtc = assessment.Motion.MetricTtcSeconds.HasValue;
+                record.collisionPath = assessment.Breakdown.CollisionPath;
+                record.dynamicRisk = assessment.Score;
+                record.riskLevel = assessment.Level.ToString();
+                record.reasons = string.Join(",", assessment.Reasons);
+                record.observedThisFrame = assessment.ObservedThisFrame;
+                record.windowVisible = windowVisible;
+                record.windowX = windowVisible ? windowRect.x : 0f;
+                record.windowY = windowVisible ? windowRect.y : 0f;
+                record.windowWidth = windowVisible ? windowRect.width : 0f;
+                record.windowHeight = windowVisible ? windowRect.height : 0f;
+                record.windowOpacity = windowVisible ? windowOpacity : 0f;
+                record.depthSampleDispersionMeters =
+                    assessment.Location.DepthSampleDispersionMeters;
+                record.bboxDepthConflict = assessment.Motion.MetricConflict;
+                record.missingSeconds = assessment.MissingSeconds;
+                record.idHandoff = assessment.IdHandoff;
                 WriteRecord(record);
             }
 
@@ -195,6 +219,58 @@ namespace TeamVR.AdaptivePassthrough
         {
             writer.WriteLine(JsonUtility.ToJson(record));
             pendingRecords++;
+        }
+
+        private LogRecord NewRecord(string recordType, double timestampSeconds)
+        {
+            var record = new LogRecord
+            {
+                recordType = recordType,
+                utc = DateTime.UtcNow.ToString("O"),
+                timestampSeconds = timestampSeconds
+            };
+            if (trackingQuality != null)
+            {
+                TrackingDiagnosticsSnapshot snapshot =
+                    trackingQuality.GetSnapshot();
+                record.trackingProfile = snapshot.Profile.ToString();
+                record.adaptiveLevel = snapshot.AdaptiveLevel;
+                record.spatialSource = snapshot.SpatialSource.ToString();
+                record.spatialDistanceMeters = snapshot.SpatialDistanceMeters;
+                record.spatialConfidence = snapshot.SpatialConfidence;
+                record.spatialRateHz = snapshot.SpatialRateHz;
+                record.spatialMilliseconds = snapshot.SpatialMilliseconds;
+                record.inferenceRateHz = snapshot.InferenceRateHz;
+                record.inferenceMilliseconds = snapshot.InferenceMilliseconds;
+                record.framesPerSecond = snapshot.FramesPerSecond;
+                record.frameP95Milliseconds = snapshot.FrameP95Milliseconds;
+            }
+#if ADAPTIVE_PASSTHROUGH_QUEST_CAMERA
+            if (spatialProvider != null)
+            {
+                SpatialObstacleMeasurement spatial =
+                    spatialProvider.LatestMeasurement;
+                record.spatialSampleCount = spatial.SampleCount;
+                record.spatialDispersionMeters =
+                    spatial.SampleDispersionMeters;
+                record.spatialAgeSeconds = spatial.AgeSeconds;
+            }
+#endif
+            return record;
+        }
+
+        private void OnTestMarker(string marker, double timestampSeconds)
+        {
+            if (!enableLogging || writer == null)
+            {
+                return;
+            }
+
+            LogRecord record = NewRecord("marker", timestampSeconds);
+            record.marker = marker;
+            WriteRecord(record);
+            writer.Flush();
+            pendingRecords = 0;
         }
 
         private long LatestSnapshotSequence()
@@ -215,7 +291,7 @@ namespace TeamVR.AdaptivePassthrough
             }
 
             MonoBehaviour[] behaviours =
-                FindObjectsByType<MonoBehaviour>(FindObjectsSortMode.None);
+                FindObjectsByType<MonoBehaviour>();
             for (int i = 0; i < behaviours.Length; i++)
             {
                 if (behaviours[i] is IRiskSnapshotSequenceProvider provider)
@@ -237,8 +313,7 @@ namespace TeamVR.AdaptivePassthrough
             }
 
             MonoBehaviour[] behaviours =
-                FindObjectsByType<MonoBehaviour>(
-                    FindObjectsSortMode.None);
+                FindObjectsByType<MonoBehaviour>();
             for (int i = 0; i < behaviours.Length; i++)
             {
                 if (behaviours[i]
@@ -249,6 +324,22 @@ namespace TeamVR.AdaptivePassthrough
                     return;
                 }
             }
+        }
+
+        private void ResolveQualityReferences()
+        {
+            if (trackingQuality == null)
+            {
+                trackingQuality =
+                    FindAnyObjectByType<TrackingQualityController>();
+            }
+#if ADAPTIVE_PASSTHROUGH_QUEST_CAMERA
+            if (spatialProvider == null)
+            {
+                spatialProvider =
+                    FindAnyObjectByType<QuestSpatialObstacleProvider>();
+            }
+#endif
         }
 
         private void OpenWriter()

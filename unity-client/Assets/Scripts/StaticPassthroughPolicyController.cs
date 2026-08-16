@@ -6,12 +6,13 @@ using UnityEngine;
 [DisallowMultipleComponent]
 public sealed class StaticPassthroughPolicyController : MonoBehaviour
 {
-    [SerializeField] private QuestRiskExperimentLogger measurementProvider;
+    [SerializeField] private MonoBehaviour measurementProvider;
     [SerializeField, Min(1f)] private float evaluationRateHz = 20f;
     [SerializeField] private StaticBoundaryPolicySettings policySettings =
         new StaticBoundaryPolicySettings();
 
     private StaticBoundaryPolicy policy;
+    private IStaticBoundaryFrameProvider frameProvider;
     private double nextEvaluationAt;
     private long sequence;
 
@@ -23,7 +24,12 @@ public sealed class StaticPassthroughPolicyController : MonoBehaviour
 
     public QuestRiskExperimentLogger MeasurementProvider
     {
-        get { return measurementProvider; }
+        get { return measurementProvider as QuestRiskExperimentLogger; }
+    }
+
+    public IStaticBoundaryFrameProvider FrameProvider
+    {
+        get { return frameProvider; }
     }
 
     public float StableOnThreshold
@@ -128,7 +134,7 @@ public sealed class StaticPassthroughPolicyController : MonoBehaviour
         Evaluate(now);
     }
 
-    public void Configure(QuestRiskExperimentLogger provider)
+    public void Configure(MonoBehaviour provider)
     {
         measurementProvider = provider;
         ResolveReference();
@@ -168,9 +174,9 @@ public sealed class StaticPassthroughPolicyController : MonoBehaviour
         }
 
         StaticBoundaryRiskFrame frame =
-            measurementProvider == null
+            frameProvider == null
                 ? StaticBoundaryRiskFrame.Unavailable
-                : measurementProvider.CurrentStaticBoundaryFrame;
+                : frameProvider.CurrentStaticBoundaryFrame;
 
         sequence++;
         LatestStatic = policy.Evaluate(
@@ -185,10 +191,13 @@ public sealed class StaticPassthroughPolicyController : MonoBehaviour
 
     private void ResolveReference()
     {
-        if (measurementProvider == null)
+        frameProvider = measurementProvider as IStaticBoundaryFrameProvider;
+        if (frameProvider == null)
         {
             measurementProvider =
                 FindAnyObjectByType<QuestRiskExperimentLogger>();
+            frameProvider = measurementProvider
+                as IStaticBoundaryFrameProvider;
         }
     }
 

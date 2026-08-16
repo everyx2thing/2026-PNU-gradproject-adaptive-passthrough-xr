@@ -5,12 +5,18 @@ using UnityEngine;
 using UnityEngine.Android;
 using UnityEngine.UI;
 
-public class QuestRiskExperimentLogger : MonoBehaviour
+public class QuestRiskExperimentLogger : MonoBehaviour,
+    IStaticBoundaryFrameProvider
 {
     private struct WallSurface
     {
         public Vector3 position;
+        public Quaternion rotation;
         public Vector3 normal;
+        public bool hasPlaneBounds;
+        public Rect planeBounds;
+        public bool hasVolumeBounds;
+        public Bounds volumeBounds;
         public string label;
         public int index;
     }
@@ -243,12 +249,22 @@ public class QuestRiskExperimentLogger : MonoBehaviour
             }
 
             string label = labels.Labels;
-            bool isWall =
-                label.Contains(OVRSceneManager.Classification.WallFace)
-                || label.Contains(
-                    OVRSceneManager.Classification.InvisibleWallFace);
-            if (!isWall
+            bool floorOrCeiling =
+                label.Contains(OVRSceneManager.Classification.Floor)
+                || label.Contains(OVRSceneManager.Classification.Ceiling);
+            if (floorOrCeiling
                 || !anchor.TryGetComponent(out OVRLocatable locatable))
+            {
+                continue;
+            }
+
+            bool hasPlaneBounds =
+                anchor.TryGetComponent(out OVRBounded2D bounded2D)
+                && bounded2D.IsEnabled;
+            bool hasVolumeBounds =
+                anchor.TryGetComponent(out OVRBounded3D bounded3D)
+                && bounded3D.IsEnabled;
+            if (!hasPlaneBounds && !hasVolumeBounds)
             {
                 continue;
             }
@@ -268,12 +284,21 @@ public class QuestRiskExperimentLogger : MonoBehaviour
                 new WallSurface
                 {
                     position = worldPosition,
+                    rotation = worldRotation,
                     normal = worldRotation * Vector3.forward,
+                    hasPlaneBounds = hasPlaneBounds,
+                    planeBounds = hasPlaneBounds
+                        ? bounded2D.BoundingBox
+                        : default,
+                    hasVolumeBounds = hasVolumeBounds,
+                    volumeBounds = hasVolumeBounds
+                        ? bounded3D.BoundingBox
+                        : default,
                     label = label,
                     index = wallSurfaces.Count
                 });
             Debug.Log(
-                $"[RiskExperimentLogger] Added wall surface: "
+                $"[RiskExperimentLogger] Added finite scene obstacle: "
                 + $"{label} at {worldPosition}");
         }
 
@@ -658,10 +683,40 @@ public class QuestRiskExperimentLogger : MonoBehaviour
 
         foreach (WallSurface surface in wallSurfaces)
         {
-            float signed = Vector3.Dot(
-                point - surface.position,
-                surface.normal);
-            float candidateDistance = Mathf.Abs(signed);
+            Vector3 closestPoint = Vector3.zero;
+            float candidateDistance = float.PositiveInfinity;
+            if (surface.hasPlaneBounds)
+            {
+                Vector3 planePoint =
+                    FiniteSpatialBoundsMath.ClosestPointOnPlane(
+                        point,
+                        surface.position,
+                        surface.rotation,
+                        surface.planeBounds);
+                candidateDistance = Vector3.Distance(point, planePoint);
+                closestPoint = planePoint;
+            }
+
+            bool insideVolume = false;
+            if (surface.hasVolumeBounds)
+            {
+                Vector3 volumePoint =
+                    FiniteSpatialBoundsMath.ClosestPointOnVolume(
+                        point,
+                        surface.position,
+                        surface.rotation,
+                        surface.volumeBounds,
+                        out insideVolume);
+                float volumeDistance = insideVolume
+                    ? 0f
+                    : Vector3.Distance(point, volumePoint);
+                if (volumeDistance < candidateDistance)
+                {
+                    candidateDistance = volumeDistance;
+                    closestPoint = volumePoint;
+                }
+            }
+
             if (candidateDistance >= distance)
             {
                 continue;
@@ -669,7 +724,10 @@ public class QuestRiskExperimentLogger : MonoBehaviour
 
             distance = candidateDistance;
             wallIndex = surface.index;
-            directionToWall = -Mathf.Sign(signed) * surface.normal;
+            Vector3 delta = closestPoint - point;
+            directionToWall = delta.sqrMagnitude > 0.000001f
+                ? delta.normalized
+                : -surface.normal;
         }
 
         return wallIndex >= 0;
@@ -754,7 +812,8 @@ public class QuestRiskExperimentLogger : MonoBehaviour
         left.AppendLine(
             $"Head: ({hmdPosition.x:F2}, {hmdPosition.y:F2}, "
             + $"{hmdPosition.z:F2})");
-        left.AppendLine($"Closest Wall: #{CurrentClosestWallIndex}");
+        left.AppendLine(
+            $"Closest Scene Obstacle: #{CurrentClosestWallIndex}");
         left.AppendLine(
             $"Distance: {CurrentStaticMeasurement.ClosestDistanceMeters:F3}m");
         left.AppendLine();

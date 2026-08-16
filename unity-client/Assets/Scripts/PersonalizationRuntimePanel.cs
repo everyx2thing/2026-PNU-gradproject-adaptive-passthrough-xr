@@ -26,6 +26,7 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
         public bool StaticFeatureEnabled = true;
         public bool DynamicFeatureEnabled = true;
         public bool MlEnabled;
+        public int TrackingProfile;
     }
 
     private sealed class SliderBinding
@@ -67,6 +68,7 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
     [SerializeField] private StaticPassthroughPolicyController staticPolicy;
     [SerializeField] private DynamicPassthroughPolicyController dynamicPolicy;
     [SerializeField] private SelectivePassthroughController presentation;
+    [SerializeField] private TrackingQualityController trackingQuality;
     [SerializeField, Min(1f)] private float refreshRateHz = 5f;
     [SerializeField, Range(0.35f, 1f)] private float panelOpacity = 1f;
 
@@ -105,6 +107,12 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
     private MetricTile headSpeedTile;
     private MetricTile eventTile;
     private MetricTile logTile;
+    private MetricTile trackingSpatialTile;
+    private MetricTile trackingSourceTile;
+    private MetricTile trackingPersonTile;
+    private MetricTile trackingDistanceTile;
+    private MetricTile trackingInferenceTile;
+    private MetricTile trackingFrameTile;
     private CanvasGroup panelCanvasGroup;
     private TMP_Text featureHelpText;
     private TMP_Text thresholdHelpText;
@@ -187,7 +195,8 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
         PersonalizationRuntimeController runtime,
         StaticPassthroughPolicyController staticController,
         DynamicPassthroughPolicyController dynamicController,
-        SelectivePassthroughController presentationController)
+        SelectivePassthroughController presentationController,
+        TrackingQualityController qualityController = null)
     {
         if (personalization != null)
         {
@@ -198,6 +207,7 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
         staticPolicy = staticController;
         dynamicPolicy = dynamicController;
         presentation = presentationController;
+        trackingQuality = qualityController;
         if (isActiveAndEnabled && personalization != null)
         {
             personalization.SnapshotUpdated += Refresh;
@@ -457,58 +467,70 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
 
         GameObject mlCard = CreateCard(
             parent,
-            "MachineLearningCard",
+            "TrackingQualityCard",
             new Vector2(0.015f, 0.19f),
             new Vector2(0.985f, 0.47f),
-            "ML FEATURE VECTOR");
+            "TRACKING QUALITY");
         inferenceChip = CreateStatusChip(
             mlCard.transform,
-            "InferenceState",
+            "TrackingProfile",
             new Vector2(0.77f, 0.72f),
             new Vector2(0.98f, 0.96f));
-        string[] featureLabels =
-        {
-            "f_pt", "r_cancel", "t_pt_bar", "v_h_bar",
-            "v_h_max", "A_space", "T_session"
-        };
-        for (int i = 0; i < featureTiles.Length; i++)
-        {
-            float left = 0.02f + i * 0.138f;
-            featureTiles[i] = CreateMetricTile(
-                mlCard.transform,
-                "Feature" + i,
-                i + "  " + featureLabels[i],
-                left,
-                left + 0.128f,
-                0.36f,
-                0.69f);
-            MakeCompact(featureTiles[i]);
-        }
+        CreateActionButton(
+            mlCard.transform, "BALANCED",
+            new Vector2(0.02f, 0.54f), new Vector2(0.17f, 0.76f),
+            () => trackingQuality?.SetProfile(
+                TrackingQualityProfile.Balanced), ButtonColor);
+        CreateActionButton(
+            mlCard.transform, "ACCURACY",
+            new Vector2(0.18f, 0.54f), new Vector2(0.33f, 0.76f),
+            () => trackingQuality?.SetProfile(
+                TrackingQualityProfile.Accuracy), ButtonColor);
+        CreateActionButton(
+            mlCard.transform, "PERFORMANCE",
+            new Vector2(0.34f, 0.54f), new Vector2(0.51f, 0.76f),
+            () => trackingQuality?.SetProfile(
+                TrackingQualityProfile.Performance), ButtonColor);
+        CreateActionButton(
+            mlCard.transform, "OBJECT APPROACH",
+            new Vector2(0.52f, 0.54f), new Vector2(0.67f, 0.76f),
+            () => trackingQuality?.AddTestMarker("object_approach"),
+            MutedColor);
+        CreateActionButton(
+            mlCard.transform, "PERSON APPROACH",
+            new Vector2(0.68f, 0.54f), new Vector2(0.83f, 0.76f),
+            () => trackingQuality?.AddTestMarker("person_approach"),
+            MutedColor);
+        CreateActionButton(
+            mlCard.transform, "PERSON RECEDE",
+            new Vector2(0.84f, 0.54f), new Vector2(0.98f, 0.76f),
+            () => trackingQuality?.AddTestMarker("person_recede"),
+            MutedColor);
 
-        stableThresholdTile = CreateMetricTile(
-            mlCard.transform, "StableThreshold", "STABLE ON",
-            0.02f, 0.145f, 0.04f, 0.31f);
-        rapidThresholdTile = CreateMetricTile(
-            mlCard.transform, "RapidThreshold", "RAPID ON",
-            0.155f, 0.28f, 0.04f, 0.31f);
-        handThresholdTile = CreateMetricTile(
-            mlCard.transform, "HandThreshold", "HAND FULL",
-            0.29f, 0.415f, 0.04f, 0.31f);
-        headSpeedTile = CreateMetricTile(
-            mlCard.transform, "HeadSpeed", "HEAD SPEED",
-            0.425f, 0.55f, 0.04f, 0.31f);
-        eventTile = CreateMetricTile(
-            mlCard.transform, "Events", "EVENTS",
-            0.56f, 0.685f, 0.04f, 0.31f);
-        logTile = CreateMetricTile(
-            mlCard.transform, "Log", "LOG FILE",
-            0.695f, 0.98f, 0.04f, 0.31f);
-        MakeCompact(stableThresholdTile);
-        MakeCompact(rapidThresholdTile);
-        MakeCompact(handThresholdTile);
-        MakeCompact(headSpeedTile);
-        MakeCompact(eventTile);
-        MakeCompact(logTile);
+        trackingSpatialTile = CreateMetricTile(
+            mlCard.transform, "TrackingSpatial", "SPATIAL HZ / MS",
+            0.02f, 0.17f, 0.04f, 0.48f);
+        trackingSourceTile = CreateMetricTile(
+            mlCard.transform, "TrackingSource", "SOURCE / DIST / CONF",
+            0.18f, 0.36f, 0.04f, 0.48f);
+        trackingPersonTile = CreateMetricTile(
+            mlCard.transform, "TrackingPerson", "PERSON ID / MOTION / MISS",
+            0.37f, 0.54f, 0.04f, 0.48f);
+        trackingDistanceTile = CreateMetricTile(
+            mlCard.transform, "TrackingDistance", "RAW / FILTERED",
+            0.55f, 0.69f, 0.04f, 0.48f);
+        trackingInferenceTile = CreateMetricTile(
+            mlCard.transform, "TrackingInference", "INFER HZ / MS",
+            0.70f, 0.84f, 0.04f, 0.48f);
+        trackingFrameTile = CreateMetricTile(
+            mlCard.transform, "TrackingFrame", "FPS / P95",
+            0.85f, 0.98f, 0.04f, 0.48f);
+        MakeCompact(trackingSpatialTile);
+        MakeCompact(trackingSourceTile);
+        MakeCompact(trackingPersonTile);
+        MakeCompact(trackingDistanceTile);
+        MakeCompact(trackingInferenceTile);
+        MakeCompact(trackingFrameTile);
 
         CreateToggleButton(
             parent,
@@ -973,9 +995,9 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
         StaticPassthroughDecision staticDetail =
             staticPolicy == null ? null : staticPolicy.LatestStatic;
         StaticBoundaryRiskFrame staticFrame =
-            staticPolicy == null || staticPolicy.MeasurementProvider == null
+            staticPolicy == null || staticPolicy.FrameProvider == null
                 ? null
-                : staticPolicy.MeasurementProvider.CurrentStaticBoundaryFrame;
+                : staticPolicy.FrameProvider.CurrentStaticBoundaryFrame;
         float distance = staticFrame == null || !staticFrame.Available
             ? -1f
             : staticFrame.Head.ClosestDistanceMeters;
@@ -1029,53 +1051,58 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
             emergency ? new Color(1f, 0.58f, 0.52f) : Color.white);
 
         RefreshDynamicCard();
+        RefreshTrackingQualityCard();
+    }
 
-        if (personalization == null)
+    private void RefreshTrackingQualityCard()
+    {
+        if (trackingQuality == null)
         {
-            SetChip(inferenceChip, "RUNTIME MISSING", DisabledColor);
-            for (int i = 0; i < featureTiles.Length; i++)
-            {
-                SetMetric(featureTiles[i], "--");
-            }
+            SetChip(inferenceChip, "QUALITY MISSING", DisabledColor);
+            SetMetric(trackingSpatialTile, "--");
+            SetMetric(trackingSourceTile, "--");
+            SetMetric(trackingPersonTile, "--");
+            SetMetric(trackingDistanceTile, "--");
+            SetMetric(trackingInferenceTile, "--");
+            SetMetric(trackingFrameTile, "--");
             return;
         }
 
-        PersonalizationFeatureVector f = personalization.LastFeatures;
-        PersonalizedThresholds t = personalization.LastThresholds;
-        string logName = string.IsNullOrEmpty(personalization.CurrentLogPath)
-            ? "--"
-            : Path.GetFileName(personalization.CurrentLogPath);
+        TrackingDiagnosticsSnapshot snapshot = trackingQuality.GetSnapshot();
         SetChip(
             inferenceChip,
-            personalization.ModelReady ? "MODEL READY" : "SOURCE ONLY",
-            personalization.ModelReady ? EnabledColor : WarningColor);
-        float[] featureValues =
-        {
-            f.ActivationFrequency,
-            f.ManualCancelRatio,
-            f.MeanPassthroughDurationSeconds,
-            f.MeanHeadSpeedMetersPerSecond,
-            f.MaximumHeadSpeedMetersPerSecond,
-            f.NormalizedSpaceArea,
-            f.NormalizedSessionElapsed
-        };
-        for (int i = 0; i < featureTiles.Length; i++)
-        {
-            SetMetric(featureTiles[i], featureValues[i].ToString("F3"));
-        }
-
-        SetMetric(stableThresholdTile, t.StableOnThreshold.ToString("F2"));
-        SetMetric(rapidThresholdTile, t.RapidOnThreshold.ToString("F2"));
-        SetMetric(handThresholdTile, t.HandFullThreshold.ToString("F2"));
+            snapshot.Profile.ToString().ToUpperInvariant()
+                + (snapshot.AdaptiveLevel > 0
+                    ? " -" + snapshot.AdaptiveLevel
+                    : string.Empty),
+            snapshot.AdaptiveLevel > 0 ? WarningColor : EnabledColor);
         SetMetric(
-            headSpeedTile,
-            personalization.CurrentHeadSpeedMetersPerSecond.ToString("F2")
-                + " m/s");
+            trackingSpatialTile,
+            snapshot.SpatialRateHz.ToString("F1") + " / "
+                + snapshot.SpatialMilliseconds.ToString("F1"));
         SetMetric(
-            eventTile,
-            personalization.RecentActivationCount + "/"
-                + personalization.EventWindowSize);
-        SetMetric(logTile, logName, new Color(0.66f, 0.88f, 1f));
+            trackingSourceTile,
+            snapshot.SpatialSource + "\n"
+                + snapshot.SpatialDistanceMeters.ToString("F2") + "m  "
+                + snapshot.SpatialConfidence.ToString("F2"));
+        SetMetric(
+            trackingPersonTile,
+            "#" + snapshot.PersonTrackId + "  "
+                + snapshot.PersonMotion + "  "
+                + snapshot.PersonMissingSeconds.ToString("F2") + "s");
+        SetMetric(
+            trackingDistanceTile,
+            snapshot.PersonRawDistanceMeters.ToString("F2") + " / "
+                + snapshot.PersonFilteredDistanceMeters.ToString("F2")
+                + " m");
+        SetMetric(
+            trackingInferenceTile,
+            snapshot.InferenceRateHz.ToString("F1") + " / "
+                + snapshot.InferenceMilliseconds.ToString("F1"));
+        SetMetric(
+            trackingFrameTile,
+            snapshot.FramesPerSecond.ToString("F0") + " / "
+                + snapshot.FrameP95Milliseconds.ToString("F1") + "ms");
     }
 
     private void RefreshDynamicCard()
@@ -1712,7 +1739,10 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
             DynamicFeatureEnabled = presentation == null
                 || presentation.DynamicFeatureEnabled,
             MlEnabled = personalization != null
-                && personalization.MlEnabled
+                && personalization.MlEnabled,
+            TrackingProfile = trackingQuality == null
+                ? (int)TrackingQualityProfile.Balanced
+                : (int)trackingQuality.Profile
         };
 
         PlayerPrefs.DeleteKey(LegacyRuntimeSettingsPreferenceKey);
@@ -1753,6 +1783,14 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
             presentation?.SetDynamicFeatureEnabled(
                 settings.DynamicFeatureEnabled);
             personalization?.SetMlEnabled(settings.MlEnabled);
+            if (trackingQuality != null
+                && Enum.IsDefined(
+                    typeof(TrackingQualityProfile),
+                    settings.TrackingProfile))
+            {
+                trackingQuality.SetProfile(
+                    (TrackingQualityProfile)settings.TrackingProfile);
+            }
             SetSettingsNotice("SAVED SETTINGS LOADED", AccentColor);
         }
         catch (Exception exception)
@@ -1776,6 +1814,7 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
         presentation?.SetStaticFeatureEnabled(true);
         presentation?.SetDynamicFeatureEnabled(true);
         personalization?.SetMlEnabled(false);
+        trackingQuality?.ResetSavedProfile();
         ApplyPanelOpacity(panelOpacity, false);
         if (pages.Count > 0)
         {
@@ -1854,6 +1893,12 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
         {
             presentation =
                 FindAnyObjectByType<SelectivePassthroughController>();
+        }
+
+        if (trackingQuality == null)
+        {
+            trackingQuality =
+                FindAnyObjectByType<TrackingQualityController>();
         }
     }
 }

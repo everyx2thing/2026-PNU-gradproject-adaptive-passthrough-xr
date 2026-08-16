@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using UnityEngine;
 
 namespace TeamVR.AdaptivePassthrough
 {
@@ -94,17 +95,28 @@ namespace TeamVR.AdaptivePassthrough
         public int classId;
         public float confidence;
         public NormalizedBoundingBox boundingBox;
+        public bool hasWorldPoint;
+        public Vector3 worldPoint;
+        public float worldPointConfidence;
 
         public DynamicObjectDetection(
             string label,
             float confidence,
             NormalizedBoundingBox boundingBox,
-            int classId = 0)
+            int classId = 0,
+            bool hasWorldPoint = false,
+            Vector3 worldPoint = default,
+            float worldPointConfidence = 0f)
         {
             this.label = string.IsNullOrWhiteSpace(label) ? "unknown" : label;
             this.classId = classId;
             this.confidence = Math.Max(0f, Math.Min(1f, confidence));
             this.boundingBox = boundingBox;
+            this.hasWorldPoint = hasWorldPoint;
+            this.worldPoint = hasWorldPoint ? worldPoint : Vector3.zero;
+            this.worldPointConfidence = hasWorldPoint
+                ? Math.Max(0f, Math.Min(1f, worldPointConfidence))
+                : 0f;
         }
     }
 
@@ -117,6 +129,7 @@ namespace TeamVR.AdaptivePassthrough
         public readonly bool ObservedThisFrame;
         public readonly int MissedFrames;
         public readonly double UnobservedSeconds;
+        public readonly bool ReidentifiedThisFrame;
 
         public TrackedDynamicObject(
             int trackId,
@@ -140,7 +153,8 @@ namespace TeamVR.AdaptivePassthrough
             TrackLifecycle lifecycle,
             bool observedThisFrame,
             int missedFrames,
-            double unobservedSeconds = 0.0)
+            double unobservedSeconds = 0.0,
+            bool reidentifiedThisFrame = false)
         {
             TrackId = trackId;
             Detection = detection;
@@ -149,6 +163,7 @@ namespace TeamVR.AdaptivePassthrough
             ObservedThisFrame = observedThisFrame;
             MissedFrames = Math.Max(0, missedFrames);
             UnobservedSeconds = Math.Max(0.0, unobservedSeconds);
+            ReidentifiedThisFrame = reidentifiedThisFrame;
         }
 
         public bool IsConfirmed
@@ -174,6 +189,7 @@ namespace TeamVR.AdaptivePassthrough
         public readonly bool HasMetricMotion;
         public readonly float ClosingSpeedMetersPerSecond;
         public readonly float? MetricTtcSeconds;
+        public readonly bool MetricConflict;
 
         public MotionEstimate(
             DynamicMotionState state,
@@ -209,7 +225,8 @@ namespace TeamVR.AdaptivePassthrough
             PersonDistanceSource distanceSource,
             bool hasMetricMotion,
             float closingSpeedMetersPerSecond,
-            float? metricTtcSeconds)
+            float? metricTtcSeconds,
+            bool metricConflict = false)
         {
             State = state;
             ScaleRatePerSecond = scaleRatePerSecond;
@@ -229,6 +246,7 @@ namespace TeamVR.AdaptivePassthrough
                 && metricTtcSeconds.Value >= 0f
                     ? metricTtcSeconds
                     : null;
+            MetricConflict = metricConflict;
         }
 
         public MotionEstimate WithMetric(
@@ -239,7 +257,8 @@ namespace TeamVR.AdaptivePassthrough
             DynamicMotionState state,
             float reliability,
             int sampleCount,
-            double observationSeconds)
+            double observationSeconds,
+            bool metricConflict = false)
         {
             return new MotionEstimate(
                 state,
@@ -252,7 +271,8 @@ namespace TeamVR.AdaptivePassthrough
                 distanceSource,
                 hasMetricMotion,
                 closingSpeedMetersPerSecond,
-                metricTtcSeconds);
+                metricTtcSeconds,
+                metricConflict);
         }
 
         private static bool IsFinite(float value)
@@ -273,6 +293,9 @@ namespace TeamVR.AdaptivePassthrough
         public readonly float RawDistanceMeters;
         public readonly float FilteredDistanceMeters;
         public readonly float DistanceConfidence;
+        public readonly bool HasWorldPoint;
+        public readonly Vector3 WorldPoint;
+        public readonly float DepthSampleDispersionMeters;
 
         public RelativeLocationEstimate(
             HorizontalZone screenZone,
@@ -304,7 +327,10 @@ namespace TeamVR.AdaptivePassthrough
             bool hasMetricDistance,
             float rawDistanceMeters,
             float filteredDistanceMeters,
-            float distanceConfidence)
+            float distanceConfidence,
+            bool hasWorldPoint = false,
+            Vector3 worldPoint = default,
+            float depthSampleDispersionMeters = 0f)
         {
             ScreenZone = screenZone;
             UserRelativeDirection = userRelativeDirection;
@@ -317,6 +343,10 @@ namespace TeamVR.AdaptivePassthrough
             FilteredDistanceMeters = NonNegativeFinite(
                 filteredDistanceMeters);
             DistanceConfidence = Clamp01(distanceConfidence);
+            HasWorldPoint = hasWorldPoint;
+            WorldPoint = hasWorldPoint ? worldPoint : Vector3.zero;
+            DepthSampleDispersionMeters = NonNegativeFinite(
+                depthSampleDispersionMeters);
         }
 
         private static float NonNegativeFinite(float value)
@@ -378,6 +408,8 @@ namespace TeamVR.AdaptivePassthrough
         public readonly DynamicRiskBreakdown Breakdown;
         public readonly TrackLifecycle Lifecycle;
         public readonly bool ObservedThisFrame;
+        public readonly float MissingSeconds;
+        public readonly bool IdHandoff;
 
         public DynamicRiskAssessment(
             int trackId,
@@ -412,7 +444,9 @@ namespace TeamVR.AdaptivePassthrough
             string[] reasons,
             DynamicRiskBreakdown breakdown,
             TrackLifecycle lifecycle,
-            bool observedThisFrame)
+            bool observedThisFrame,
+            float missingSeconds = 0f,
+            bool idHandoff = false)
         {
             TrackId = trackId;
             Detection = detection;
@@ -424,6 +458,8 @@ namespace TeamVR.AdaptivePassthrough
             Breakdown = breakdown;
             Lifecycle = lifecycle;
             ObservedThisFrame = observedThisFrame;
+            MissingSeconds = Math.Max(0f, missingSeconds);
+            IdHandoff = idHandoff;
         }
     }
 

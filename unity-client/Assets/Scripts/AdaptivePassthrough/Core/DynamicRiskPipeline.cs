@@ -149,7 +149,8 @@ namespace TeamVR.AdaptivePassthrough
                 reasons.ToArray(),
                 previous.Breakdown,
                 TrackLifecycle.Lost,
-                false);
+                false,
+                (float)tracked.UnobservedSeconds);
         }
 
         private void PruneAssessments(IEnumerable<int> liveTrackIds)

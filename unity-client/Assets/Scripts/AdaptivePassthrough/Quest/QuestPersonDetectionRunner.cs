@@ -20,8 +20,11 @@ namespace TeamVR.AdaptivePassthrough
         [SerializeField] private QuestCameraPermissionCoordinator permissionCoordinator;
         [SerializeField] private PassthroughCameraAccess cameraAccess;
         [SerializeField] private QuestPersonDepthProvider depthProvider;
+        [SerializeField] private TrackingQualityController qualityController;
         [SerializeField] private ModelAsset modelAsset;
         [SerializeField] private BackendType backend = BackendType.CPU;
+        [SerializeField] private bool benchmarkCpuGpuOnQuest = true;
+        [SerializeField, Range(5, 30)] private int backendBenchmarkSamples = 12;
         [SerializeField, Range(0f, 1f)] private float confidenceThreshold = 0.55f;
         [SerializeField, Range(0f, 1f)] private float trackingConfidenceThreshold = 0.35f;
         [SerializeField, Range(0f, 1f)] private float iouThreshold = 0.45f;
@@ -39,6 +42,15 @@ namespace TeamVR.AdaptivePassthrough
         [SerializeField, Min(0)] private int diagnosticInferenceCount = 10;
 
         private Worker worker;
+        private Model runtimeModel;
+        private BackendType activeBackend = BackendType.CPU;
+        private int backendBenchmarkPhase;
+        private int backendSampleCount;
+        private float backendFrameP95Maximum;
+        private readonly float[] backendDurations = new float[30];
+        private readonly float[] backendDurationScratch = new float[30];
+        private readonly List<InferenceBackendBenchmark> backendBenchmarks =
+            new List<InferenceBackendBenchmark>(2);
         private TensorShape modelInputShape;
         private PersonDetectionPostProcessor postProcessor;
         private int inputWidth;
@@ -48,7 +60,10 @@ namespace TeamVR.AdaptivePassthrough
         private bool outputContractLogged;
         private int completedInferenceCount;
         private double nextInferenceAt;
+        private bool cameraResolutionLogged;
         private readonly List<int> liveDepthTrackIds = new List<int>();
+        private readonly List<DynamicObjectDetection> enrichedDetections =
+            new List<DynamicObjectDetection>(10);
 
         public event Action<PersonDetectionPostProcessResult> PostProcessCompleted;
 
@@ -75,6 +90,11 @@ namespace TeamVR.AdaptivePassthrough
             {
                 depthProvider = GetComponent<QuestPersonDepthProvider>();
             }
+
+            if (qualityController == null)
+            {
+                qualityController = GetComponent<TrackingQualityController>();
+            }
         }
 
         private void OnEnable()
@@ -99,6 +119,7 @@ namespace TeamVR.AdaptivePassthrough
             inferenceInProgress = false;
             worker?.Dispose();
             worker = null;
+            runtimeModel = null;
         }
 
         private void Update()
@@ -118,7 +139,21 @@ namespace TeamVR.AdaptivePassthrough
                 return;
             }
 
-            nextInferenceAt = now + 1.0 / Math.Max(1f, inferenceRateHz);
+            float targetRate = qualityController == null
+                ? inferenceRateHz
+                : qualityController.EffectiveSettings.personInferenceRateHz;
+            double interval = 1.0 / Math.Max(1f, targetRate);
+            if (nextInferenceAt <= 0.0)
+            {
+                nextInferenceAt = now;
+            }
+
+            do
+            {
+                nextInferenceAt += interval;
+            }
+            while (nextInferenceAt <= now);
+
             RunInference(now);
         }
 
@@ -154,7 +189,15 @@ namespace TeamVR.AdaptivePassthrough
             modelInputShape = new TensorShape(dimensions);
             inputHeight = dimensions[2];
             inputWidth = dimensions[3];
-            worker = new Worker(model, backend);
+            runtimeModel = model;
+            bool runBenchmark = benchmarkCpuGpuOnQuest
+                && Application.platform == RuntimePlatform.Android;
+            activeBackend = runBenchmark ? BackendType.CPU : backend;
+            backendBenchmarkPhase = runBenchmark ? 1 : 0;
+            backendSampleCount = 0;
+            backendFrameP95Maximum = 0f;
+            backendBenchmarks.Clear();
+            worker = new Worker(runtimeModel, activeBackend);
             postProcessor = CreatePostProcessor();
 
             Debug.Log(
@@ -169,11 +212,16 @@ namespace TeamVR.AdaptivePassthrough
                     confidenceThreshold,
                     trackingConfidenceThreshold,
                     iouThreshold));
+            Debug.Log(
+                "[PersonDetection] active-backend=" + activeBackend
+                + (runBenchmark ? " (Quest A/B warmup)" : string.Empty));
         }
 
-        private async void RunInference(double timestampSeconds)
+        private async void RunInference(double scheduledTimestampSeconds)
         {
             inferenceInProgress = true;
+            double captureTimestampSeconds = scheduledTimestampSeconds;
+            float inferenceStartedAt = Time.realtimeSinceStartup;
             try
             {
                 Texture cameraTexture = cameraAccess.GetTexture();
@@ -182,11 +230,27 @@ namespace TeamVR.AdaptivePassthrough
                     return;
                 }
 
+                if (!cameraResolutionLogged)
+                {
+                    cameraResolutionLogged = true;
+                    Debug.Log(
+                        string.Format(
+                            "[PersonDetection] camera-input={0}x{1} expected=1280x960",
+                            cameraTexture.width,
+                            cameraTexture.height));
+                }
+
                 Pose cameraPoseAtCapture = cameraAccess.GetCameraPose();
+                DateTime captureTimestamp = cameraAccess.Timestamp;
+                if (captureTimestamp != default)
+                {
+                    captureTimestampSeconds = captureTimestamp.Ticks
+                        / (double)TimeSpan.TicksPerSecond;
+                }
                 if (depthProvider != null)
                 {
                     depthProvider.BeginFrame(
-                        timestampSeconds,
+                        captureTimestampSeconds,
                         cameraPoseAtCapture);
                 }
 
@@ -241,13 +305,42 @@ namespace TeamVR.AdaptivePassthrough
                         inputWidth,
                         inputHeight);
                     LastPostProcessResult = result;
+                    IReadOnlyList<DynamicObjectDetection> submittedDetections =
+                        result.Detections;
+                    if (depthProvider != null)
+                    {
+                        enrichedDetections.Clear();
+                        for (int i = 0; i < result.Detections.Count; i++)
+                        {
+                            DynamicObjectDetection detection =
+                                result.Detections[i];
+                            Vector3 worldPoint;
+                            float worldConfidence;
+                            bool hasWorldPoint =
+                                depthProvider.TryMeasureObservationWorldPoint(
+                                    detection.boundingBox,
+                                    out worldPoint,
+                                    out worldConfidence);
+                            enrichedDetections.Add(
+                                new DynamicObjectDetection(
+                                    detection.label,
+                                    detection.confidence,
+                                    detection.boundingBox,
+                                    detection.classId,
+                                    hasWorldPoint,
+                                    worldPoint,
+                                    worldConfidence));
+                        }
+
+                        submittedDetections = enrichedDetections;
+                    }
                     DynamicRiskFrame frame = depthProvider == null
                         ? controller.SubmitDetections(
-                            timestampSeconds,
-                            result.Detections)
+                            captureTimestampSeconds,
+                            submittedDetections)
                         : controller.SubmitDetections(
-                            timestampSeconds,
-                            result.Detections,
+                            captureTimestampSeconds,
+                            submittedDetections,
                             depthProvider.Measure);
                     if (depthProvider != null)
                     {
@@ -259,6 +352,18 @@ namespace TeamVR.AdaptivePassthrough
                         }
 
                         depthProvider.PruneExcept(liveDepthTrackIds);
+                    }
+
+                    if (qualityController != null
+                        && frame.Assessments.Count > 0)
+                    {
+                        DynamicRiskAssessment primary = frame.Assessments[0];
+                        qualityController.RecordPerson(
+                            primary.TrackId,
+                            primary.Location.RawDistanceMeters,
+                            primary.Location.FilteredDistanceMeters,
+                            primary.Motion.State.ToString(),
+                            primary.MissingSeconds);
                     }
 
                     PostProcessCompleted?.Invoke(result);
@@ -287,6 +392,109 @@ namespace TeamVR.AdaptivePassthrough
             finally
             {
                 inferenceInProgress = false;
+                float elapsedMilliseconds =
+                    (Time.realtimeSinceStartup - inferenceStartedAt) * 1000f;
+                qualityController?.RecordInference(
+                    captureTimestampSeconds,
+                    elapsedMilliseconds);
+                RecordBackendBenchmark(elapsedMilliseconds);
+            }
+        }
+
+        private void RecordBackendBenchmark(float elapsedMilliseconds)
+        {
+            if (backendBenchmarkPhase <= 0
+                || backendBenchmarkPhase > 2
+                || runtimeModel == null)
+            {
+                return;
+            }
+
+            int required = Mathf.Clamp(backendBenchmarkSamples, 5, 30);
+            if (backendSampleCount < required)
+            {
+                backendDurations[backendSampleCount++] =
+                    Mathf.Max(0f, elapsedMilliseconds);
+            }
+
+            if (qualityController != null)
+            {
+                backendFrameP95Maximum = Mathf.Max(
+                    backendFrameP95Maximum,
+                    qualityController.GetSnapshot().FrameP95Milliseconds);
+            }
+
+            if (backendSampleCount < required)
+            {
+                return;
+            }
+
+            Array.Copy(
+                backendDurations,
+                backendDurationScratch,
+                required);
+            Array.Sort(backendDurationScratch, 0, required);
+            float median = required % 2 == 0
+                ? (backendDurationScratch[required / 2 - 1]
+                    + backendDurationScratch[required / 2]) * 0.5f
+                : backendDurationScratch[required / 2];
+            backendBenchmarks.Add(new InferenceBackendBenchmark(
+                activeBackend,
+                median,
+                backendFrameP95Maximum));
+
+            if (backendBenchmarkPhase == 1)
+            {
+                backendBenchmarkPhase = 2;
+                backendSampleCount = 0;
+                backendFrameP95Maximum = 0f;
+                if (!TrySwitchBackend(BackendType.GPUCompute))
+                {
+                    backendBenchmarkPhase = 0;
+                    TrySwitchBackend(BackendType.CPU);
+                }
+
+                return;
+            }
+
+            BackendType selected = InferenceBackendSelector.Select(
+                backendBenchmarks,
+                13.9f,
+                0.10f);
+            backendBenchmarkPhase = 0;
+            TrySwitchBackend(selected);
+            Debug.Log(
+                string.Format(
+                    "[PersonDetection] Quest A/B selected={0} "
+                    + "cpu={1:F1}ms/{2:F1}p95 gpu={3:F1}ms/{4:F1}p95",
+                    selected,
+                    backendBenchmarks[0].MedianInferenceMilliseconds,
+                    backendBenchmarks[0].FrameP95Milliseconds,
+                    backendBenchmarks.Count > 1
+                        ? backendBenchmarks[1].MedianInferenceMilliseconds
+                        : 0f,
+                    backendBenchmarks.Count > 1
+                        ? backendBenchmarks[1].FrameP95Milliseconds
+                        : 0f));
+        }
+
+        private bool TrySwitchBackend(BackendType value)
+        {
+            try
+            {
+                worker?.Dispose();
+                worker = new Worker(runtimeModel, value);
+                activeBackend = value;
+                backend = value;
+                return true;
+            }
+            catch (Exception exception)
+            {
+                Debug.LogWarning(
+                    "[PersonDetection] Backend unavailable: "
+                    + value + " - " + exception.Message);
+                worker = null;
+                return false;
             }
         }
 

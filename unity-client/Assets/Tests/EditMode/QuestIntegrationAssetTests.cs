@@ -174,6 +174,8 @@ namespace TeamVR.AdaptivePassthrough.Tests
                 MonoBehaviour rightControllerHelper = null;
                 MonoBehaviour personalization = null;
                 MonoBehaviour personalizationPanel = null;
+                MonoBehaviour spatialProvider = null;
+                MonoBehaviour trackingQuality = null;
                 int legacySnapshotCount = 0;
                 int passthroughLayerCount = 0;
                 int controllerLaserCount = 0;
@@ -214,6 +216,12 @@ namespace TeamVR.AdaptivePassthrough.Tests
                                 break;
                             case "PersonalizationRuntimePanel":
                                 personalizationPanel = behaviour;
+                                break;
+                            case "QuestSpatialObstacleProvider":
+                                spatialProvider = behaviour;
+                                break;
+                            case "TrackingQualityController":
+                                trackingQuality = behaviour;
                                 break;
                             case "OVRPassthroughLayer":
                                 passthroughLayer = behaviour;
@@ -274,6 +282,8 @@ namespace TeamVR.AdaptivePassthrough.Tests
                 MonoBehaviour experimentLogger =
                     FindBehaviourInScene(scene, "QuestRiskExperimentLogger");
                 Assert.That(experimentLogger, Is.Not.Null);
+                Assert.That(spatialProvider, Is.Not.Null);
+                Assert.That(trackingQuality, Is.Not.Null);
                 Transform labelRoot = new SerializedObject(experimentLogger)
                     .FindProperty("labelRoot")
                     .objectReferenceValue as Transform;
@@ -305,7 +315,19 @@ namespace TeamVR.AdaptivePassthrough.Tests
                     serializedStaticPolicy
                         .FindProperty("measurementProvider")
                         .objectReferenceValue,
+                    Is.SameAs(spatialProvider));
+                var serializedSpatialProvider =
+                    new SerializedObject(spatialProvider);
+                Assert.That(
+                    serializedSpatialProvider
+                        .FindProperty("roomSceneProviderBehaviour")
+                        .objectReferenceValue,
                     Is.SameAs(experimentLogger));
+                Assert.That(
+                    serializedSpatialProvider
+                        .FindProperty("qualityController")
+                        .objectReferenceValue,
+                    Is.SameAs(trackingQuality));
                 SerializedProperty staticSettings =
                     serializedStaticPolicy.FindProperty("policySettings");
                 Assert.That(staticSettings, Is.Not.Null);

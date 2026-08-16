@@ -241,6 +241,27 @@ public sealed class SelectivePassthroughController :
                 personMaximumWidth,
                 personMinimumHeight,
                 personMaximumHeight);
+            if (assessment.Location.HasWorldPoint
+                && presentationCamera != null)
+            {
+                Vector3 reprojected =
+                    presentationCamera.WorldToViewportPoint(
+                        assessment.Location.WorldPoint);
+                if (reprojected.z > 0f)
+                {
+                    float centerX = Mathf.Clamp(
+                        reprojected.x,
+                        cameraViewport.xMin + rect.width * 0.5f,
+                        cameraViewport.xMax - rect.width * 0.5f);
+                    float centerY = Mathf.Clamp(
+                        reprojected.y,
+                        cameraViewport.yMin + rect.height * 0.5f,
+                        cameraViewport.yMax - rect.height * 0.5f);
+                    rect.position = new Vector2(
+                        centerX - rect.width * 0.5f,
+                        centerY - rect.height * 0.5f);
+                }
+            }
             float area = rect.width * rect.height;
             if (revealArea + area > maximumPersonRevealArea
                 && revealArea > 0f)

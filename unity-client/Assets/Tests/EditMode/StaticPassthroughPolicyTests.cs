@@ -80,7 +80,7 @@ namespace TeamVR.AdaptivePassthrough.Tests
         }
 
         [Test]
-        public void EmergencyRequiresApproachAndReleasesWhenApproachStops()
+        public void EmergencyTriggersWhileStationaryAndReleasesAfterDistanceClears()
         {
             var policy = new StaticBoundaryPolicy();
 
@@ -88,26 +88,25 @@ namespace TeamVR.AdaptivePassthrough.Tests
                 1L,
                 0.0,
                 Frame(headRisk: 0.1f, distance: 0.20f, headTowardSpeed: 0f));
-            StaticPassthroughDecision approaching = policy.Evaluate(
+            StaticPassthroughDecision stillClose = policy.Evaluate(
                 2L,
                 0.1,
-                Frame(headRisk: 0.1f, distance: 0.20f, headTowardSpeed: 0.2f));
-            StaticPassthroughDecision stopped = policy.Evaluate(
+                Frame(headRisk: 0.1f, distance: 0.20f, headTowardSpeed: 0f));
+            StaticPassthroughDecision cleared = policy.Evaluate(
                 3L,
                 0.2,
-                Frame(headRisk: 0.1f, distance: 0.20f, headTowardSpeed: 0f));
+                Frame(headRisk: 0.1f, distance: 0.50f, headTowardSpeed: 0f));
             StaticPassthroughDecision released = policy.Evaluate(
                 4L,
                 1.6,
-                Frame(headRisk: 0.1f, distance: 0.20f, headTowardSpeed: 0f));
+                Frame(headRisk: 0.1f, distance: 0.50f, headTowardSpeed: 0f));
 
-            Assert.That(stationary.Enabled, Is.False);
-            Assert.That(stationary.EmergencyTrigger, Is.False);
-            Assert.That(approaching.Enabled, Is.True);
-            Assert.That(approaching.Cause, Is.EqualTo(StaticActivationCause.Emergency));
-            Assert.That(approaching.EmergencyHold, Is.True);
-            Assert.That(stopped.EmergencyHold, Is.False);
-            Assert.That(stopped.Enabled, Is.True);
+            Assert.That(stationary.Enabled, Is.True);
+            Assert.That(stationary.EmergencyTrigger, Is.True);
+            Assert.That(stationary.Cause, Is.EqualTo(StaticActivationCause.Emergency));
+            Assert.That(stillClose.EmergencyHold, Is.True);
+            Assert.That(cleared.EmergencyHold, Is.False);
+            Assert.That(cleared.Enabled, Is.True);
             Assert.That(released.Enabled, Is.False);
         }
 

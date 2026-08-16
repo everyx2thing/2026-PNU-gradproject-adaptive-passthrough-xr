@@ -90,7 +90,12 @@ namespace TeamVR.AdaptivePassthrough
                 hasMetricDistance,
                 distance == null ? 0f : distance.RawDistanceMeters,
                 distance == null ? 0f : distance.FilteredDistanceMeters,
-                distance == null ? 0f : distance.Confidence);
+                distance == null ? 0f : distance.Confidence,
+                distance != null && distance.HasWorldPoint,
+                distance == null
+                    ? UnityEngine.Vector3.zero
+                    : distance.WorldPoint,
+                distance == null ? 0f : distance.SampleDispersionMeters);
         }
     }
 }
