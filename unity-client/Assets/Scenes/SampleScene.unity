@@ -2701,15 +2701,13 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::PersonalizationRuntimeController
   staticPolicy: {fileID: 458888772}
   measurementProvider: {fileID: 1676843309}
-  modelAsset: {fileID: 0}
+  modelAsset: {fileID: 5022602860645237092, guid: 9d168baf74a4f324abe98b25a990b50f, type: 3}
   sourceModelArtifact: {fileID: 102900000, guid: fc8b1a252568c1647942452ddf2c24ab, type: 3}
-  probabilityOutputName: probabilities
-  negativeClassIndex: -1
-  negativeClassPresent: 0
+  probabilityOutputName: risk_probability
   backend: 512
   shadowMode: 1
   applyPersonalization: 0
-  automaticInference: 1
+  automaticInference: 0
   inferenceIntervalSeconds: 5
   minimumSessionCount: 5
   bypassColdStartForTesting: 0

@@ -42,6 +42,7 @@ python hyperparam_tuning.py       # 8. 윈도우 크기/stride 비교 실험 (�
 | `build_features.py` | 라벨링 규칙 적용 + 슬라이딩 윈도우 기반 7차원 feature 추출 (`--source mock`/`real`) |
 | `train_model.py` | Random Forest 개인화 모델 학습 및 평가 (`--source mock`/`real`) |
 | `convert_to_onnx.py` | 학습된 모델을 ONNX로 변환, 클래스/확률 예측 둘 다 sklearn과 일치하는지 검증 (`--source mock`/`real`) |
+| `convert_tree_onnx_for_unity.py` | `TreeEnsembleClassifier`를 Unity 호환 표준 ONNX 연산으로 변환하고 `Neutral`을 위험 확률로 검증 |
 | `cold_start.py` | 세션 수 기준 cold-start 판단 + `personalize.py` 매핑까지 합친 최종 진입점(`get_personalized_params`) |
 | `personalize.py` | 모델 확률(Negative 확률) 기반으로 실제 stable_on_threshold/rapid_on_threshold/hand_full_threshold 계산 |
 | `test_personalization.py` | cold_start + personalize 통합 동작 확인 (`--source mock`/`real`) |
@@ -72,9 +73,15 @@ python hyperparam_tuning.py       # 8. 윈도우 크기/stride 비교 실험 (�
    python convert_to_onnx.py --source real
    python test_personalization.py --source real   # 세션별로 값이 잘 나오는지 눈으로 확인
    ```
-   `convert_to_onnx.py`가 마지막에 `models/rf_personalization_real.onnx`를 만듦. 이 파일과, 콘솔에 찍힌
-   `학습된 클래스 순서 (model.classes_): [...]` 로그 한 줄을 같이 Unity 담당자에게 전달할 것
-   (이 순서가 Sentis 쪽 `negativeClassIndex` 설정에 필요함 — `docs/ONDEVICE_SENTIS_INTEGRATION.md` 참고).
+   `convert_to_onnx.py`가 마지막에 `models/rf_personalization_real.onnx`를 만듦. Unity 프로젝트에는 이 파일을
+   `Assets/Models/rf_personalization_real.onnx.source`로 보존한 뒤 다음 변환을 실행할 것.
+
+   ```bash
+   python ml-personalization/src/convert_tree_onnx_for_unity.py
+   ```
+
+   결과물 `Assets/Models/personalization_runtime.onnx`는
+   `risk_probability = P(Neutral) = 1 - P(Positive)`를 출력함.
 
 4. **Unity 쪽 통합**: `docs/ONDEVICE_SENTIS_INTEGRATION.md` + `PersonalizationSentisRunner.cs` 참고.
    onnx 파일을 `unity-client/Assets/Models/`에 넣고 Sentis `ModelAsset`으로 임포트하면 됨.
@@ -95,8 +102,7 @@ python hyperparam_tuning.py       # 8. 윈도우 크기/stride 비교 실험 (�
 
 ## 아직 안 된 것 (TODO)
 
-- [ ] Unity Sentis 실제 로드 테스트 (onnx import, opset 17 호환 여부, 출력 텐서 파싱) — 이 저장소 환경에는
-      Quest/Unity Editor가 없어서 파이썬 쪽(onnxruntime) 검증까지만 하고 못 넘어감
+- [x] Unity InferenceEngine 실제 로드 테스트 및 `risk_probability` 출력 텐서 파싱
 - [ ] 실제 Quest 로그로 `parse_risk_snapshot_log.py` ~ `test_personalization.py --source real` 전체를
       진짜 데이터로 한 번 실행 (지금까지는 합성 로그로 코드 동작만 검증함, 라벨 분포/정확도는 무의미)
 - [ ] 라벨링 경계 케이스(두 임계값 사이 구간) 처리 방식 재검토
@@ -114,7 +120,7 @@ python hyperparam_tuning.py       # 8. 윈도우 크기/stride 비교 실험 (�
 - mock 결과는 **mock 데이터 기반**이라, RF 모델 accuracy(97%)는 라벨이 feature로부터 파생된 구조라서 나온 결과, 실제데이터로 재검증 전까지는 무의미 (정상 동작 확인용)
 - real 파이프라인은 합성(가짜) 로그로 **코드가 안 깨지는지만** 검증한 상태 — 실제 Quest 로그로 다시 돌려서
   라벨 분포/모델 품질을 재확인해야 함
-- 표본이 적으면 학습 데이터에 특정 클래스(특히 Negative)가 아예 안 나올 수 있음 — 실제로 dry-run 중에도
-  발생함. `model.classes_`를 항상 확인하고, Unity 쪽 `negativeClassIndex`를 하드코딩하지 말 것
+- 현재 실모델의 클래스는 `Neutral`, `Positive`이며 사용자 결정에 따라 `Neutral`을 `Negative` 위험으로 사용함.
+  재학습 후 클래스 순서가 바뀌면 Unity 호환 변환 스크립트의 검증이 실패하도록 되어 있음
 - `mock_*.csv`, `real_*.csv`, `*.joblib`, `*.onnx` 파일은 `.gitignore` 처리되어 있어서 저장소에는 안 올라감
   → onnx 모델 파일은 Unity 담당자에게 **직접 전달**해야 함 (git으로 안 감)

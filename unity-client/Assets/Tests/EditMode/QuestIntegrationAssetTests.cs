@@ -460,13 +460,20 @@ namespace TeamVR.AdaptivePassthrough.Tests
                     serializedPersonalization
                         .FindProperty("modelAsset")
                         .objectReferenceValue,
-                    Is.Null,
-                    "The incompatible RF ONNX must not be used as a runtime model.");
+                    Is.Not.Null,
+                    "The Unity-compatible Neutral-risk ONNX must be assigned.");
+                Assert.That(
+                    AssetDatabase.GetAssetPath(
+                        serializedPersonalization
+                            .FindProperty("modelAsset")
+                            .objectReferenceValue),
+                    Is.EqualTo(
+                        "Assets/Models/personalization_runtime.onnx"));
                 Assert.That(
                     serializedPersonalization
-                        .FindProperty("negativeClassPresent")
-                        .boolValue,
-                    Is.False);
+                        .FindProperty("probabilityOutputName")
+                        .stringValue,
+                    Is.EqualTo("risk_probability"));
                 Assert.That(
                     serializedPersonalization
                         .FindProperty("shadowMode")
@@ -477,6 +484,12 @@ namespace TeamVR.AdaptivePassthrough.Tests
                         .FindProperty("applyPersonalization")
                         .boolValue,
                     Is.False);
+                Assert.That(
+                    serializedPersonalization
+                        .FindProperty("automaticInference")
+                        .boolValue,
+                    Is.False,
+                    "ML OFF must stop background inference as well as apply.");
                 var serializedPersonalizationPanel =
                     new SerializedObject(personalizationPanel);
                 Assert.That(

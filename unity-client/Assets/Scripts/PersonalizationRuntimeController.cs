@@ -61,15 +61,13 @@ public sealed class PersonalizationRuntimeController : MonoBehaviour
     [Header("InferenceEngine Model")]
     [SerializeField] private ModelAsset modelAsset;
     [SerializeField] private UnityEngine.Object sourceModelArtifact;
-    [SerializeField] private string probabilityOutputName = "probabilities";
-    [SerializeField] private int negativeClassIndex = -1;
-    [SerializeField] private bool negativeClassPresent;
+    [SerializeField] private string probabilityOutputName = "risk_probability";
     [SerializeField] private BackendType backend = BackendType.CPU;
 
     [Header("Safe Rollout")]
     [SerializeField] private bool shadowMode = true;
     [SerializeField] private bool applyPersonalization;
-    [SerializeField] private bool automaticInference = true;
+    [SerializeField] private bool automaticInference;
     [SerializeField, Min(0.5f)] private float inferenceIntervalSeconds = 5f;
     [SerializeField, Min(0)] private int minimumSessionCount =
         PersonalizationMath.DefaultMinimumSessionCount;
@@ -137,6 +135,8 @@ public sealed class PersonalizationRuntimeController : MonoBehaviour
     public bool ShadowMode => shadowMode;
     public bool ApplyPersonalization => applyPersonalization;
     public bool AutomaticInference => automaticInference;
+    public bool MlEnabled =>
+        automaticInference && applyPersonalization && !shadowMode;
     public bool BypassColdStartForTesting => bypassColdStartForTesting;
     public bool ManualFeatureOverride => manualFeatureOverride;
     public bool NegativeProbabilityOverride => negativeProbabilityOverride;
@@ -244,14 +244,67 @@ public sealed class PersonalizationRuntimeController : MonoBehaviour
         measurementProvider = provider;
         modelAsset = compatibleModel;
         sourceModelArtifact = sourceArtifact;
+        probabilityOutputName = "risk_probability";
+        automaticInference = false;
+        applyPersonalization = false;
+        shadowMode = true;
         ResolveReferences();
         SubscribeToPolicy();
-        TryInitializeModel();
+        if (Application.isPlaying)
+        {
+            TryInitializeModel();
+        }
+        else
+        {
+            worker?.Dispose();
+            worker = null;
+            runtimeModel = null;
+            ModelStatus = modelAsset == null
+                ? "Unity-compatible ONNX is not assigned."
+                : "Neutral-as-Negative ONNX assigned for runtime.";
+        }
     }
 
     public void RunNow()
     {
         RunNowInternal("manual");
+    }
+
+    public void SetMlEnabled(bool enabled)
+    {
+        automaticInference = enabled;
+        applyPersonalization = enabled;
+        shadowMode = !enabled;
+        nextInferenceAt = Time.realtimeSinceStartupAsDouble + 0.1;
+
+        if (enabled)
+        {
+            RunNowInternal("ml-enabled");
+            return;
+        }
+
+        ResolveReferences();
+        thresholdPreview = PersonalizationMath.Defaults;
+        LastThresholds = thresholdPreview;
+        staticPolicy?.RestoreDefaultThresholds();
+        LastThresholdsApplied = staticPolicy != null;
+        LastInferenceSource = "ml-disabled";
+        LastStatus = "ML disabled; safe default thresholds restored.";
+        WriteLog("ml-disabled");
+        SnapshotUpdated?.Invoke();
+    }
+
+    public void ToggleMlEnabled()
+    {
+        SetMlEnabled(!MlEnabled);
+    }
+
+    public void ApplyModelNow()
+    {
+        RunNowInternal(
+            "manual-apply-now",
+            ignoreColdStart: true,
+            forceApply: true);
     }
 
     public void SetShadowMode(bool enabled)
@@ -457,12 +510,16 @@ public sealed class PersonalizationRuntimeController : MonoBehaviour
         SnapshotUpdated?.Invoke();
     }
 
-    private void RunNowInternal(string trigger)
+    private void RunNowInternal(
+        string trigger,
+        bool ignoreColdStart = false,
+        bool forceApply = false)
     {
         ResolveReferences();
         LastFeatures = GetCurrentFeatureVector();
         LastRunWasColdStart =
-            !bypassColdStartForTesting
+            !ignoreColdStart
+            && !bypassColdStartForTesting
             && PersonalizationMath.IsColdStart(
                 AccumulatedSessionCount,
                 minimumSessionCount);
@@ -493,7 +550,8 @@ public sealed class PersonalizationRuntimeController : MonoBehaviour
             {
                 HasNegativeProbability = true;
                 LastInferenceSource = "inference-engine";
-                LastStatus = "Compatible model inference completed.";
+                LastStatus =
+                    "ONNX inference completed; Neutral is Negative risk.";
             }
             else
             {
@@ -512,8 +570,8 @@ public sealed class PersonalizationRuntimeController : MonoBehaviour
         }
 
         thresholdPreview = LastThresholds;
-        if (applyPersonalization
-            && !shadowMode
+        if ((forceApply
+                || (applyPersonalization && !shadowMode))
             && staticPolicy != null)
         {
             staticPolicy.ApplyPersonalizedThresholds(
@@ -705,7 +763,7 @@ public sealed class PersonalizationRuntimeController : MonoBehaviour
 
             using (Tensor<float> readable = output.ReadbackAndClone())
             {
-                negativeProbability = readable[negativeClassIndex];
+                negativeProbability = readable[0];
             }
 
             if (float.IsNaN(negativeProbability)
@@ -716,7 +774,7 @@ public sealed class PersonalizationRuntimeController : MonoBehaviour
                 return false;
             }
 
-            ModelStatus = "Compatible model ready.";
+            ModelStatus = "Neutral-as-Negative ONNX ready.";
             return true;
         }
         catch (Exception exception)
@@ -737,15 +795,8 @@ public sealed class PersonalizationRuntimeController : MonoBehaviour
         {
             ModelStatus = sourceModelArtifact == null
                 ? "No compatible personalization model is assigned."
-                : "RF ONNX source is preserved but incompatible with "
-                    + "InferenceEngine 2.6.1.";
-            return;
-        }
-
-        if (!negativeClassPresent || negativeClassIndex < 0)
-        {
-            ModelStatus =
-                "Model is blocked: Negative class/index is not approved.";
+                : "RF ONNX source exists, but its Unity-compatible model "
+                    + "is not assigned.";
             return;
         }
 
@@ -753,7 +804,7 @@ public sealed class PersonalizationRuntimeController : MonoBehaviour
         {
             runtimeModel = ModelLoader.Load(modelAsset);
             worker = new Worker(runtimeModel, backend);
-            ModelStatus = "Compatible model ready.";
+            ModelStatus = "Neutral-as-Negative ONNX ready.";
         }
         catch (Exception exception)
         {

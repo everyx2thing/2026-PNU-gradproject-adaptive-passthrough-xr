@@ -12,6 +12,21 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
 {
     private const string PanelOpacityPreferenceKey =
         "TeamVR.AdaptivePassthrough.PanelOpacity";
+    private const string RuntimeSettingsPreferenceKey =
+        "TeamVR.AdaptivePassthrough.RuntimePanelSettings.v2";
+    private const string LegacyRuntimeSettingsPreferenceKey =
+        "TeamVR.AdaptivePassthrough.RuntimePanelSettings.v1";
+    private const int RuntimeSettingsVersion = 2;
+
+    [Serializable]
+    private sealed class RuntimePanelSettings
+    {
+        public int Version = RuntimeSettingsVersion;
+        public int SelectedPage;
+        public bool StaticFeatureEnabled = true;
+        public bool DynamicFeatureEnabled = true;
+        public bool MlEnabled;
+    }
 
     private sealed class SliderBinding
     {
@@ -93,6 +108,9 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
     private CanvasGroup panelCanvasGroup;
     private TMP_Text featureHelpText;
     private TMP_Text thresholdHelpText;
+    private string settingsNotice;
+    private Color settingsNoticeColor = EnabledColor;
+    private double settingsNoticeUntil;
     private double nextRefreshAt;
     private bool refreshing;
     private int currentPage;
@@ -127,6 +145,7 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
             0.35f,
             1f);
         ResolveReferences();
+        LoadRuntimeSettings();
         ResolvePanelCanvasGroup();
         BuildUi();
         ApplyPanelOpacity(panelOpacity, false);
@@ -278,10 +297,25 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
             dashboard.transform,
             "RuntimeStatus",
             new Vector2(0.02f, 0.855f),
-            new Vector2(0.61f, 0.918f),
+            new Vector2(0.34f, 0.918f),
             17f,
             TextAlignmentOptions.MidlineLeft);
         headerStatusText.color = new Color(0.72f, 0.78f, 0.86f);
+
+        CreateActionButton(
+            dashboard.transform,
+            "SAVE SETTINGS",
+            new Vector2(0.35f, 0.855f),
+            new Vector2(0.475f, 0.918f),
+            SaveRuntimeSettings,
+            ButtonColor);
+        CreateActionButton(
+            dashboard.transform,
+            "RESET SETTINGS",
+            new Vector2(0.485f, 0.855f),
+            new Vector2(0.61f, 0.918f),
+            ResetRuntimeSettings,
+            WarningColor);
 
         TMP_Text opacityLabel = CreateText(
             dashboard.transform,
@@ -327,24 +361,13 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
             Format = "F2"
         });
 
-        CreateTabButton(dashboard.transform, "LIVE", 0, -360f);
-        CreateTabButton(dashboard.transform, "FEATURES", 1, 0f);
-        CreateTabButton(dashboard.transform, "THRESHOLDS", 2, 360f);
-
         GameObject livePage = CreatePage(dashboard.transform, "LivePage");
-        GameObject featurePage = CreatePage(
-            dashboard.transform,
-            "FeaturePage");
-        GameObject thresholdPage = CreatePage(
-            dashboard.transform,
-            "ThresholdPage");
+        livePage.GetComponent<RectTransform>().anchorMax =
+            new Vector2(0.99f, 0.835f);
         pages.Add(livePage);
-        pages.Add(featurePage);
-        pages.Add(thresholdPage);
 
         BuildLivePage(livePage.transform);
-        BuildFeaturePage(featurePage.transform);
-        BuildThresholdPage(thresholdPage.transform);
+        currentPage = 0;
         SetPage(0);
     }
 
@@ -491,30 +514,30 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
             parent,
             "STATIC",
             new Vector2(0.02f, 0.03f),
-            new Vector2(0.24f, 0.17f),
+            new Vector2(0.23f, 0.17f),
             () => presentation != null && presentation.StaticFeatureEnabled,
             () => presentation?.ToggleStaticFeature());
         CreateToggleButton(
             parent,
             "DYNAMIC",
-            new Vector2(0.26f, 0.03f),
-            new Vector2(0.48f, 0.17f),
+            new Vector2(0.25f, 0.03f),
+            new Vector2(0.46f, 0.17f),
             () => presentation != null && presentation.DynamicFeatureEnabled,
             () => presentation?.ToggleDynamicFeature());
+        CreateToggleButton(
+            parent,
+            "ML",
+            new Vector2(0.49f, 0.03f),
+            new Vector2(0.72f, 0.17f),
+            () => personalization != null && personalization.MlEnabled,
+            () => personalization?.ToggleMlEnabled());
         CreateActionButton(
             parent,
-            "RUN ML NOW",
-            new Vector2(0.51f, 0.03f),
-            new Vector2(0.73f, 0.17f),
-            () => personalization?.RunNow(),
-            ButtonColor);
-        CreateActionButton(
-            parent,
-            "MARK UNNECESSARY",
-            new Vector2(0.75f, 0.03f),
+            "APPLY ML NOW",
+            new Vector2(0.74f, 0.03f),
             new Vector2(0.98f, 0.17f),
-            () => personalization?.MarkActivationUnnecessary(),
-            WarningColor);
+            () => personalization?.ApplyModelNow(),
+            AccentColor);
     }
 
     private void BuildFeaturePage(Transform parent)
@@ -881,25 +904,21 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
             SetChip(modeChip, "MODE  UNAVAILABLE", DisabledColor);
             SetChip(sessionChip, "SESSION  --", MutedColor);
             SetChip(modelChip, "MODEL  MISSING", DisabledColor);
-            SetChip(probabilityChip, "pNEG  --", MutedColor);
+            SetChip(probabilityChip, "pRISK  --", MutedColor);
             SetChip(appliedChip, "APPLIED  NO", MutedColor);
             headerStatusText.text = "Personalization runtime component is missing.";
             headerStatusText.color = new Color(1f, 0.55f, 0.55f);
             return;
         }
 
-        string mode = personalization.ShadowMode
-            ? "SHADOW"
-            : personalization.ApplyPersonalization
-                ? "AUTO APPLY"
-                : "MANUAL TEST";
+        string mode = personalization.MlEnabled ? "ML ON" : "ML OFF";
         string probability = personalization.HasNegativeProbability
             ? personalization.LastNegativeProbability.ToString("F3")
             : "N/A";
         SetChip(
             modeChip,
             "MODE  " + mode,
-            personalization.ShadowMode ? WarningColor : AccentColor);
+            personalization.MlEnabled ? EnabledColor : MutedColor);
         SetChip(
             sessionChip,
             string.Format(
@@ -914,7 +933,7 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
             personalization.ModelReady ? EnabledColor : WarningColor);
         SetChip(
             probabilityChip,
-            "pNEG  " + probability,
+            "pRISK  " + probability,
             personalization.HasNegativeProbability
                 ? AccentColor : MutedColor);
         SetChip(
@@ -931,6 +950,17 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
         headerStatusText.color = personalization.ModelReady
             ? new Color(0.68f, 0.90f, 0.74f)
             : new Color(1f, 0.78f, 0.38f);
+
+        if (!string.IsNullOrEmpty(settingsNotice)
+            && Time.realtimeSinceStartupAsDouble < settingsNoticeUntil)
+        {
+            headerStatusText.text = settingsNotice;
+            headerStatusText.color = settingsNoticeColor;
+        }
+        else
+        {
+            settingsNotice = null;
+        }
     }
 
     private void RefreshLivePage()
@@ -1668,6 +1698,100 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
             stableOn ?? current.StableOnThreshold,
             rapidOn ?? current.RapidOnThreshold,
             handFull ?? current.HandFullThreshold);
+    }
+
+    private void SaveRuntimeSettings()
+    {
+        ResolveReferences();
+        var settings = new RuntimePanelSettings
+        {
+            Version = RuntimeSettingsVersion,
+            SelectedPage = currentPage,
+            StaticFeatureEnabled = presentation == null
+                || presentation.StaticFeatureEnabled,
+            DynamicFeatureEnabled = presentation == null
+                || presentation.DynamicFeatureEnabled,
+            MlEnabled = personalization != null
+                && personalization.MlEnabled
+        };
+
+        PlayerPrefs.DeleteKey(LegacyRuntimeSettingsPreferenceKey);
+        PlayerPrefs.SetString(
+            RuntimeSettingsPreferenceKey,
+            JsonUtility.ToJson(settings));
+        PlayerPrefs.SetFloat(
+            PanelOpacityPreferenceKey,
+            panelOpacity);
+        PlayerPrefs.Save();
+        SetSettingsNotice("SETTINGS SAVED", EnabledColor);
+        Refresh();
+    }
+
+    private void LoadRuntimeSettings()
+    {
+        if (!PlayerPrefs.HasKey(RuntimeSettingsPreferenceKey))
+        {
+            return;
+        }
+
+        try
+        {
+            RuntimePanelSettings settings =
+                JsonUtility.FromJson<RuntimePanelSettings>(
+                    PlayerPrefs.GetString(RuntimeSettingsPreferenceKey));
+            if (settings == null
+                || settings.Version != RuntimeSettingsVersion)
+            {
+                Debug.LogWarning(
+                    "[AdaptiveLab] Ignoring unsupported runtime settings.");
+                return;
+            }
+
+            currentPage = 0;
+            presentation?.SetStaticFeatureEnabled(
+                settings.StaticFeatureEnabled);
+            presentation?.SetDynamicFeatureEnabled(
+                settings.DynamicFeatureEnabled);
+            personalization?.SetMlEnabled(settings.MlEnabled);
+            SetSettingsNotice("SAVED SETTINGS LOADED", AccentColor);
+        }
+        catch (Exception exception)
+        {
+            Debug.LogWarning(
+                "[AdaptiveLab] Could not load runtime settings: "
+                + exception.Message);
+            SetSettingsNotice("SETTINGS LOAD FAILED", DisabledColor);
+        }
+    }
+
+    private void ResetRuntimeSettings()
+    {
+        ResolveReferences();
+        PlayerPrefs.DeleteKey(RuntimeSettingsPreferenceKey);
+        PlayerPrefs.DeleteKey(LegacyRuntimeSettingsPreferenceKey);
+        PlayerPrefs.DeleteKey(PanelOpacityPreferenceKey);
+
+        panelOpacity = 1f;
+        currentPage = 0;
+        presentation?.SetStaticFeatureEnabled(true);
+        presentation?.SetDynamicFeatureEnabled(true);
+        personalization?.SetMlEnabled(false);
+        ApplyPanelOpacity(panelOpacity, false);
+        if (pages.Count > 0)
+        {
+            SetPage(currentPage);
+        }
+
+        PlayerPrefs.Save();
+        SetSettingsNotice("SETTINGS RESET TO SAFE DEFAULTS", WarningColor);
+        Refresh();
+    }
+
+    private void SetSettingsNotice(string text, Color color)
+    {
+        settingsNotice = text;
+        settingsNoticeColor = color;
+        settingsNoticeUntil = Time.realtimeSinceStartupAsDouble + 3.0;
     }
 
     private void ApplyPanelOpacity(float value, bool savePreference)

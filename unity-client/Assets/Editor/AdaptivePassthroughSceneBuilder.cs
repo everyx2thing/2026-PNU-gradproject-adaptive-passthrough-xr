@@ -21,7 +21,7 @@ public static class AdaptivePassthroughSceneBuilder
     public const string PersonalizationSourceModelPath =
         "Assets/Models/rf_personalization_real.onnx.source";
     public const string PersonalizationRuntimeModelPath =
-        "Assets/Models/personalization_runtime.sentis";
+        "Assets/Models/personalization_runtime.onnx";
     public const string PassthroughWindowShaderPath =
         "Assets/Shaders/AdaptivePassthrough/PassthroughWindow.shader";
     public const string OvrRayHelperPrefabPath =
