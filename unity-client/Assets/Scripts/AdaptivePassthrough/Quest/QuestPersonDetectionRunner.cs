@@ -1,5 +1,6 @@
 #if ADAPTIVE_PASSTHROUGH_QUEST_CAMERA
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Text;
 using Meta.XR;
@@ -23,12 +24,12 @@ namespace TeamVR.AdaptivePassthrough
         [SerializeField] private TrackingQualityController qualityController;
         [SerializeField] private ModelAsset modelAsset;
         [SerializeField] private BackendType backend = BackendType.CPU;
-        [SerializeField] private bool benchmarkCpuGpuOnQuest = true;
+        [SerializeField] private bool benchmarkCpuGpuOnQuest;
         [SerializeField, Range(5, 30)] private int backendBenchmarkSamples = 12;
         [SerializeField, Range(0f, 1f)] private float confidenceThreshold = 0.55f;
         [SerializeField, Range(0f, 1f)] private float trackingConfidenceThreshold = 0.35f;
         [SerializeField, Range(0f, 1f)] private float iouThreshold = 0.45f;
-        [SerializeField, Min(1f)] private float inferenceRateHz = 10f;
+        [SerializeField, Min(1f)] private float inferenceRateHz = 3f;
         [SerializeField] private int personClassId;
         [SerializeField] private bool flipVertical;
         [Tooltip("The Meta YOLO sample emits center X, center Y, width, height.")]
@@ -56,6 +57,15 @@ namespace TeamVR.AdaptivePassthrough
         private int inputWidth;
         private int inputHeight;
         private bool inferenceInProgress;
+        private IEnumerator inferenceSchedule;
+        private Tensor<float> activeInput;
+        private double activeCaptureTimestampSeconds;
+        private DateTime activeCaptureTimestamp;
+        private float activeInferenceStartedRealtime;
+        private float activeInferenceMilliseconds;
+        private int activeScheduledLayerCount;
+        private int inferenceGeneration;
+        private bool applicationPaused;
         private bool shuttingDown;
         private bool outputContractLogged;
         private int completedInferenceCount;
@@ -100,6 +110,7 @@ namespace TeamVR.AdaptivePassthrough
         private void OnEnable()
         {
             shuttingDown = false;
+            applicationPaused = false;
             if (permissionCoordinator != null)
             {
                 permissionCoordinator.PermissionResolved += OnPermissionResolved;
@@ -116,7 +127,7 @@ namespace TeamVR.AdaptivePassthrough
                 permissionCoordinator.PermissionResolved -= OnPermissionResolved;
             }
 
-            inferenceInProgress = false;
+            CancelInferenceAndWorker(false);
             worker?.Dispose();
             worker = null;
             runtimeModel = null;
@@ -124,11 +135,21 @@ namespace TeamVR.AdaptivePassthrough
 
         private void Update()
         {
+            if (inferenceInProgress)
+            {
+                if (inferenceSchedule != null)
+                {
+                    AdvanceInferenceSchedule();
+                }
+
+                return;
+            }
+
             if (worker == null
                 || controller == null
                 || cameraAccess == null
                 || !cameraAccess.IsPlaying
-                || inferenceInProgress)
+                || applicationPaused)
             {
                 return;
             }
@@ -154,7 +175,32 @@ namespace TeamVR.AdaptivePassthrough
             }
             while (nextInferenceAt <= now);
 
-            RunInference(now);
+            StartInference(now);
+        }
+
+        private void OnApplicationPause(bool paused)
+        {
+            applicationPaused = paused;
+            CancelInferenceAndWorker(paused);
+            qualityController?.ResetRuntimeMeasurements();
+            if (!paused && isActiveAndEnabled)
+            {
+                shuttingDown = false;
+                TryCreateWorker();
+                nextInferenceAt = 0.0;
+            }
+        }
+
+        private void OnApplicationFocus(bool focused)
+        {
+            if (!focused)
+            {
+                OnApplicationPause(true);
+            }
+            else if (applicationPaused)
+            {
+                OnApplicationPause(false);
+            }
         }
 
         private void OnPermissionResolved(bool granted)
@@ -192,7 +238,8 @@ namespace TeamVR.AdaptivePassthrough
             runtimeModel = model;
             bool runBenchmark = benchmarkCpuGpuOnQuest
                 && Application.platform == RuntimePlatform.Android;
-            activeBackend = runBenchmark ? BackendType.CPU : backend;
+            activeBackend = BackendType.CPU;
+            backend = BackendType.CPU;
             backendBenchmarkPhase = runBenchmark ? 1 : 0;
             backendSampleCount = 0;
             backendFrameP95Maximum = 0f;
@@ -217,16 +264,20 @@ namespace TeamVR.AdaptivePassthrough
                 + (runBenchmark ? " (Quest A/B warmup)" : string.Empty));
         }
 
-        private async void RunInference(double scheduledTimestampSeconds)
+        private void StartInference(double scheduledTimestampSeconds)
         {
             inferenceInProgress = true;
-            double captureTimestampSeconds = scheduledTimestampSeconds;
-            float inferenceStartedAt = Time.realtimeSinceStartup;
+            activeCaptureTimestampSeconds = scheduledTimestampSeconds;
+            activeInferenceStartedRealtime = Time.realtimeSinceStartup;
+            activeInferenceMilliseconds = 0f;
+            activeScheduledLayerCount = 0;
+            inferenceGeneration++;
             try
             {
                 Texture cameraTexture = cameraAccess.GetTexture();
                 if (cameraTexture == null)
                 {
+                    FinishInference(inferenceGeneration, false);
                     return;
                 }
 
@@ -242,24 +293,102 @@ namespace TeamVR.AdaptivePassthrough
 
                 Pose cameraPoseAtCapture = cameraAccess.GetCameraPose();
                 DateTime captureTimestamp = cameraAccess.Timestamp;
+                activeCaptureTimestamp = captureTimestamp;
                 if (captureTimestamp != default)
                 {
-                    captureTimestampSeconds = captureTimestamp.Ticks
+                    activeCaptureTimestampSeconds = captureTimestamp.Ticks
                         / (double)TimeSpan.TicksPerSecond;
                 }
                 if (depthProvider != null)
                 {
                     depthProvider.BeginFrame(
-                        captureTimestampSeconds,
+                        activeCaptureTimestampSeconds,
                         cameraPoseAtCapture);
                 }
 
-                using (Tensor<float> input = new Tensor<float>(modelInputShape))
+                activeInput = new Tensor<float>(modelInputShape);
+                TextureTransform transform = new TextureTransform();
+                TextureConverter.ToTensor(
+                    cameraTexture,
+                    activeInput,
+                    transform);
+                inferenceSchedule = worker.ScheduleIterable(activeInput);
+                qualityController?.SetInferenceActive(
+                    true,
+                    activeBackend.ToString());
+            }
+            catch (Exception exception)
+            {
+                if (!shuttingDown)
                 {
-                    TextureTransform transform = new TextureTransform();
-                    TextureConverter.ToTensor(cameraTexture, input, transform);
-                    worker.Schedule(input);
+                    Debug.LogError(
+                        "[DynamicRisk] Inference start failed: "
+                        + exception.Message);
                 }
+
+                FinishInference(inferenceGeneration, false);
+            }
+        }
+
+        private void AdvanceInferenceSchedule()
+        {
+            TrackingQualitySettings settings = qualityController == null
+                ? TrackingQualitySettings.For(TrackingQualityProfile.Balanced)
+                : qualityController.EffectiveSettings;
+            float sliceMilliseconds = Mathf.Max(
+                0.1f,
+                settings.inferenceSliceMilliseconds);
+            int maximumLayers = Mathf.Max(
+                1,
+                settings.maximumLayersPerFrame);
+            float sliceStartedAt = Time.realtimeSinceStartup;
+            bool hasMore = true;
+            int layers = 0;
+            try
+            {
+                while (layers < maximumLayers)
+                {
+                    hasMore = inferenceSchedule.MoveNext();
+                    if (!hasMore)
+                    {
+                        break;
+                    }
+
+                    layers++;
+                    if ((Time.realtimeSinceStartup - sliceStartedAt) * 1000f
+                        >= sliceMilliseconds)
+                    {
+                        break;
+                    }
+                }
+
+                activeScheduledLayerCount += layers;
+                activeInferenceMilliseconds +=
+                    (Time.realtimeSinceStartup - sliceStartedAt) * 1000f;
+                if (!hasMore)
+                {
+                    (inferenceSchedule as IDisposable)?.Dispose();
+                    inferenceSchedule = null;
+                    CompleteInferenceAsync(inferenceGeneration);
+                }
+            }
+            catch (Exception exception)
+            {
+                if (!shuttingDown)
+                {
+                    Debug.LogError(
+                        "[DynamicRisk] Inference scheduling failed: "
+                        + exception.Message);
+                }
+
+                FinishInference(inferenceGeneration, false);
+            }
+        }
+
+        private async void CompleteInferenceAsync(int generation)
+        {
+            try
+            {
 
                 Tensor<float> boxes = worker.PeekOutput(0) as Tensor<float>;
                 Tensor<int> classIds = worker.PeekOutput(1) as Tensor<int>;
@@ -285,7 +414,10 @@ namespace TeamVR.AdaptivePassthrough
                 using (Tensor<int> classesCpu = await classIds.ReadbackAndCloneAsync())
                 using (Tensor<float> scoresCpu = await scores.ReadbackAndCloneAsync())
                 {
-                    if (shuttingDown || controller == null)
+                    if (shuttingDown
+                        || applicationPaused
+                        || generation != inferenceGeneration
+                        || controller == null)
                     {
                         return;
                     }
@@ -336,10 +468,10 @@ namespace TeamVR.AdaptivePassthrough
                     }
                     DynamicRiskFrame frame = depthProvider == null
                         ? controller.SubmitDetections(
-                            captureTimestampSeconds,
+                            activeCaptureTimestampSeconds,
                             submittedDetections)
                         : controller.SubmitDetections(
-                            captureTimestampSeconds,
+                            activeCaptureTimestampSeconds,
                             submittedDetections,
                             depthProvider.Measure);
                     if (depthProvider != null)
@@ -363,7 +495,9 @@ namespace TeamVR.AdaptivePassthrough
                             primary.Location.RawDistanceMeters,
                             primary.Location.FilteredDistanceMeters,
                             primary.Motion.State.ToString(),
-                            primary.MissingSeconds);
+                            primary.MissingSeconds,
+                            primary.Location.IsMetricReliable,
+                            primary.Location.DepthRejectedReason);
                     }
 
                     PostProcessCompleted?.Invoke(result);
@@ -384,20 +518,87 @@ namespace TeamVR.AdaptivePassthrough
             }
             catch (Exception exception)
             {
-                if (!shuttingDown)
+                if (!shuttingDown
+                    && !applicationPaused
+                    && generation == inferenceGeneration)
                 {
                     Debug.LogError("[DynamicRisk] Inference failed: " + exception.Message);
                 }
             }
             finally
             {
-                inferenceInProgress = false;
-                float elapsedMilliseconds =
-                    (Time.realtimeSinceStartup - inferenceStartedAt) * 1000f;
-                qualityController?.RecordInference(
-                    captureTimestampSeconds,
-                    elapsedMilliseconds);
-                RecordBackendBenchmark(elapsedMilliseconds);
+                FinishInference(generation, true);
+            }
+        }
+
+        private void FinishInference(int generation, bool recordMetrics)
+        {
+            if (generation != inferenceGeneration)
+            {
+                return;
+            }
+
+            float wallMilliseconds = Mathf.Max(
+                0f,
+                (Time.realtimeSinceStartup - activeInferenceStartedRealtime)
+                    * 1000f);
+            float captureAgeMilliseconds = Mathf.Max(
+                0f,
+                wallMilliseconds);
+            if (activeCaptureTimestamp != default)
+            {
+                double measuredCaptureAge =
+                    (DateTime.UtcNow
+                        - activeCaptureTimestamp.ToUniversalTime())
+                    .TotalMilliseconds;
+                if (measuredCaptureAge >= 0.0
+                    && measuredCaptureAge <= 60000.0)
+                {
+                    captureAgeMilliseconds = (float)measuredCaptureAge;
+                }
+            }
+            (inferenceSchedule as IDisposable)?.Dispose();
+            inferenceSchedule = null;
+            activeInput?.Dispose();
+            activeInput = null;
+            inferenceInProgress = false;
+            activeCaptureTimestamp = default;
+            qualityController?.SetInferenceActive(
+                false,
+                activeBackend.ToString());
+            if (!recordMetrics || applicationPaused || shuttingDown)
+            {
+                return;
+            }
+
+            qualityController?.RecordInference(
+                activeCaptureTimestampSeconds,
+                activeInferenceMilliseconds,
+                wallMilliseconds,
+                captureAgeMilliseconds,
+                activeScheduledLayerCount,
+                activeBackend.ToString(),
+                false);
+            RecordBackendBenchmark(wallMilliseconds);
+        }
+
+        private void CancelInferenceAndWorker(bool recreateAfterResume)
+        {
+            inferenceGeneration++;
+            (inferenceSchedule as IDisposable)?.Dispose();
+            inferenceSchedule = null;
+            activeInput?.Dispose();
+            activeInput = null;
+            inferenceInProgress = false;
+            activeCaptureTimestamp = default;
+            qualityController?.SetInferenceActive(
+                false,
+                activeBackend.ToString());
+            worker?.Dispose();
+            worker = null;
+            if (!recreateAfterResume)
+            {
+                runtimeModel = null;
             }
         }
 

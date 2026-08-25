@@ -16,6 +16,8 @@ namespace TeamVR.AdaptivePassthrough
         public event Action<DynamicRiskFrame> FrameProcessed;
 
         public DynamicRiskFrame LatestFrame { get; private set; }
+        public long LatestFrameSequence { get; private set; }
+        public double LatestFrameProcessedRealtimeSeconds { get; private set; }
 
         public float LatestMaximumRisk
         {
@@ -62,6 +64,9 @@ namespace TeamVR.AdaptivePassthrough
                 timestampSeconds,
                 detections,
                 distanceResolver);
+            LatestFrameSequence++;
+            LatestFrameProcessedRealtimeSeconds =
+                Time.realtimeSinceStartupAsDouble;
             FrameProcessed?.Invoke(LatestFrame);
             return LatestFrame;
         }
@@ -80,12 +85,16 @@ namespace TeamVR.AdaptivePassthrough
             }
 
             LatestFrame = null;
+            LatestFrameSequence = 0;
+            LatestFrameProcessedRealtimeSeconds = 0.0;
         }
 
         private void RebuildPipeline()
         {
             pipeline = new DynamicRiskPipeline(riskSettings, targetLabel);
             LatestFrame = null;
+            LatestFrameSequence = 0;
+            LatestFrameProcessedRealtimeSeconds = 0.0;
         }
     }
 }

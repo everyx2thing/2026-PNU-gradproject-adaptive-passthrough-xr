@@ -16,6 +16,7 @@ namespace TeamVR.AdaptivePassthrough
             public string utc;
             public double timestampSeconds;
             public long latestRiskSnapshotSequence;
+            public long frameSequence;
             public int confirmedPersonCount;
             public int trackId;
             public string label;
@@ -67,9 +68,30 @@ namespace TeamVR.AdaptivePassthrough
             public float frameP95Milliseconds;
             public float depthSampleDispersionMeters;
             public bool bboxDepthConflict;
+            public bool metricDepthReliable;
+            public string depthRejectedReason;
             public bool idHandoff;
             public float missingSeconds;
             public string marker;
+            public bool spatialAvailable;
+            public bool spatialRawOverlap;
+            public bool spatialConfirmedOverlap;
+            public int spatialValidRayHitCount;
+            public string inferenceBackend;
+            public bool inferenceActive;
+            public float inferenceActiveMilliseconds;
+            public float inferenceWallMilliseconds;
+            public float captureAgeMilliseconds;
+            public int inferenceScheduledLayerCount;
+            public bool staticWindowVisible;
+            public bool dynamicWindowVisible;
+            public string visibilitySource;
+            public float holdRemainingSeconds;
+            public bool applicationPaused;
+            public string scenarioId;
+            public string scenario;
+            public string markerPhase;
+            public float groundTruthDistanceMeters = -1f;
         }
 
         [SerializeField] private DynamicRiskController controller;
@@ -87,6 +109,9 @@ namespace TeamVR.AdaptivePassthrough
         private int pendingRecords;
         private IRiskSnapshotSequenceProvider snapshotSequenceProvider;
         private IPersonWindowSnapshotProvider presentation;
+        private IPassthroughPresentationSnapshotProvider
+            presentationSnapshotProvider;
+        private IPassthroughVisibilityEventSource visibilityEventSource;
 
         public string CurrentLogPath { get; private set; }
 
@@ -117,6 +142,13 @@ namespace TeamVR.AdaptivePassthrough
             if (trackingQuality != null)
             {
                 trackingQuality.TestMarkerRequested += OnTestMarker;
+                trackingQuality.ScenarioMarkerRequested += OnScenarioMarker;
+            }
+
+            if (visibilityEventSource != null)
+            {
+                visibilityEventSource.VisibilityChanged +=
+                    OnVisibilityChanged;
             }
         }
 
@@ -130,6 +162,13 @@ namespace TeamVR.AdaptivePassthrough
             if (trackingQuality != null)
             {
                 trackingQuality.TestMarkerRequested -= OnTestMarker;
+                trackingQuality.ScenarioMarkerRequested -= OnScenarioMarker;
+            }
+
+            if (visibilityEventSource != null)
+            {
+                visibilityEventSource.VisibilityChanged -=
+                    OnVisibilityChanged;
             }
 
             CloseWriter();
@@ -144,6 +183,9 @@ namespace TeamVR.AdaptivePassthrough
 
             LogRecord frameRecord = NewRecord("frame", frame.TimestampSeconds);
             frameRecord.latestRiskSnapshotSequence = LatestSnapshotSequence();
+            frameRecord.frameSequence = controller == null
+                ? 0L
+                : controller.LatestFrameSequence;
             frameRecord.confirmedPersonCount = frame.ConfirmedPersonCount;
             frameRecord.dynamicRisk = frame.MaximumRisk;
             frameRecord.riskLevel = frame.MaximumLevel.ToString();
@@ -165,6 +207,9 @@ namespace TeamVR.AdaptivePassthrough
                     "assessment",
                     frame.TimestampSeconds);
                 record.latestRiskSnapshotSequence = LatestSnapshotSequence();
+                record.frameSequence = controller == null
+                    ? 0L
+                    : controller.LatestFrameSequence;
                 record.confirmedPersonCount = frame.ConfirmedPersonCount;
                 record.trackId = assessment.TrackId;
                 record.label = assessment.Detection.label;
@@ -203,6 +248,10 @@ namespace TeamVR.AdaptivePassthrough
                 record.depthSampleDispersionMeters =
                     assessment.Location.DepthSampleDispersionMeters;
                 record.bboxDepthConflict = assessment.Motion.MetricConflict;
+                record.metricDepthReliable =
+                    assessment.Location.IsMetricReliable;
+                record.depthRejectedReason =
+                    assessment.Location.DepthRejectedReason;
                 record.missingSeconds = assessment.MissingSeconds;
                 record.idHandoff = assessment.IdHandoff;
                 WriteRecord(record);
@@ -227,7 +276,10 @@ namespace TeamVR.AdaptivePassthrough
             {
                 recordType = recordType,
                 utc = DateTime.UtcNow.ToString("O"),
-                timestampSeconds = timestampSeconds
+                timestampSeconds = timestampSeconds,
+                frameSequence = controller == null
+                    ? 0L
+                    : controller.LatestFrameSequence
             };
             if (trackingQuality != null)
             {
@@ -242,6 +294,17 @@ namespace TeamVR.AdaptivePassthrough
                 record.spatialMilliseconds = snapshot.SpatialMilliseconds;
                 record.inferenceRateHz = snapshot.InferenceRateHz;
                 record.inferenceMilliseconds = snapshot.InferenceMilliseconds;
+                record.inferenceActiveMilliseconds =
+                    snapshot.InferenceActiveMilliseconds;
+                record.inferenceWallMilliseconds =
+                    snapshot.InferenceWallMilliseconds;
+                record.captureAgeMilliseconds =
+                    snapshot.CaptureAgeMilliseconds;
+                record.inferenceScheduledLayerCount =
+                    snapshot.ScheduledLayerCount;
+                record.inferenceBackend = snapshot.InferenceBackend;
+                record.inferenceActive = snapshot.InferenceActive;
+                record.applicationPaused = snapshot.ApplicationPaused;
                 record.framesPerSecond = snapshot.FramesPerSecond;
                 record.frameP95Milliseconds = snapshot.FrameP95Milliseconds;
             }
@@ -251,12 +314,85 @@ namespace TeamVR.AdaptivePassthrough
                 SpatialObstacleMeasurement spatial =
                     spatialProvider.LatestMeasurement;
                 record.spatialSampleCount = spatial.SampleCount;
+                record.spatialAvailable = spatial.Available;
+                record.spatialRawOverlap = spatial.RawSafetyVolumeOverlap;
+                record.spatialConfirmedOverlap = spatial.SafetyVolumeOverlap;
+                record.spatialValidRayHitCount = spatial.ValidRayHitCount;
                 record.spatialDispersionMeters =
                     spatial.SampleDispersionMeters;
                 record.spatialAgeSeconds = spatial.AgeSeconds;
             }
 #endif
+            if (presentationSnapshotProvider != null)
+            {
+                PassthroughPresentationSnapshot presentationSnapshot =
+                    presentationSnapshotProvider.GetPresentationSnapshot();
+                record.staticWindowVisible =
+                    presentationSnapshot.StaticVisible;
+                record.dynamicWindowVisible =
+                    presentationSnapshot.DynamicVisible;
+                record.visibilitySource =
+                    presentationSnapshot.VisibilitySource;
+                record.holdRemainingSeconds =
+                    presentationSnapshot.HoldRemainingSeconds;
+            }
             return record;
+        }
+
+        private void OnScenarioMarker(TrackingTestMarker marker)
+        {
+            if (!enableLogging || writer == null)
+            {
+                return;
+            }
+
+            LogRecord record = NewRecord(
+                "distance_marker",
+                marker.TimestampSeconds);
+            record.scenarioId = marker.ScenarioId;
+            record.scenario = marker.Scenario;
+            record.markerPhase = marker.Phase;
+            record.groundTruthDistanceMeters =
+                marker.GroundTruthDistanceMeters;
+            WriteRecord(record);
+            writer.Flush();
+            pendingRecords = 0;
+        }
+
+        private void OnVisibilityChanged(
+            bool visible,
+            string source,
+            double timestampSeconds)
+        {
+            if (!enableLogging || writer == null)
+            {
+                return;
+            }
+
+            LogRecord record = NewRecord(
+                "visibility",
+                timestampSeconds);
+            record.windowVisible = visible;
+            record.visibilitySource = source ?? "none";
+            WriteRecord(record);
+            writer.Flush();
+            pendingRecords = 0;
+        }
+
+        private void OnApplicationPause(bool paused)
+        {
+            if (!enableLogging || writer == null)
+            {
+                return;
+            }
+
+            LogRecord record = NewRecord(
+                paused ? "pause" : "resume",
+                Time.realtimeSinceStartupAsDouble);
+            record.applicationPaused = paused;
+            WriteRecord(record);
+            writer.Flush();
+            pendingRecords = 0;
         }
 
         private void OnTestMarker(string marker, double timestampSeconds)
@@ -307,6 +443,11 @@ namespace TeamVR.AdaptivePassthrough
         {
             presentation =
                 presentationBehaviour as IPersonWindowSnapshotProvider;
+            presentationSnapshotProvider =
+                presentationBehaviour
+                    as IPassthroughPresentationSnapshotProvider;
+            visibilityEventSource = presentationBehaviour
+                as IPassthroughVisibilityEventSource;
             if (presentation != null)
             {
                 return;
@@ -321,6 +462,10 @@ namespace TeamVR.AdaptivePassthrough
                 {
                     presentationBehaviour = behaviours[i];
                     presentation = provider;
+                    presentationSnapshotProvider = behaviours[i]
+                        as IPassthroughPresentationSnapshotProvider;
+                    visibilityEventSource = behaviours[i]
+                        as IPassthroughVisibilityEventSource;
                     return;
                 }
             }

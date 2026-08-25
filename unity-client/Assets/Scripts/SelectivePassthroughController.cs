@@ -8,7 +8,9 @@ using UnityEngine.Rendering;
 [DisallowMultipleComponent]
 public sealed class SelectivePassthroughController :
     MonoBehaviour,
-    IPersonWindowSnapshotProvider
+    IPersonWindowSnapshotProvider,
+    IPassthroughPresentationSnapshotProvider,
+    IPassthroughVisibilityEventSource
 {
     private sealed class WindowSlot
     {
@@ -66,6 +68,12 @@ public sealed class SelectivePassthroughController :
     private Mesh sharedQuad;
     private Material runtimeMaterial;
     private bool initialized;
+    private bool visibilityStateInitialized;
+    private bool lastPublishedVisibility;
+    private string lastPublishedVisibilitySource = "none";
+    private long lastObservedFrameSequence;
+
+    public event Action<bool, string, double> VisibilityChanged;
 
     public int ActivePersonWindowCount { get; private set; }
     public bool StaticWindowVisible { get; private set; }
@@ -84,6 +92,11 @@ public sealed class SelectivePassthroughController :
             return ActivePersonWindowCount > 0
                 || StaticWindowVisible;
         }
+    }
+
+    public string VisibleSource
+    {
+        get { return GetVisibilitySource(); }
     }
 
     private void Awake()
@@ -114,18 +127,21 @@ public sealed class SelectivePassthroughController :
         if (!initialized)
         {
             SetLayerVisible(false);
+            PublishVisibilityState();
             return;
         }
 
         UpdatePersonWindows();
         UpdateWallWindow();
         SetLayerVisible(AnyWindowVisible);
+        PublishVisibilityState();
     }
 
     private void OnDisable()
     {
         DisableAllWindows();
         SetLayerVisible(false);
+        PublishVisibilityState();
     }
 
     private void OnDestroy()
@@ -160,6 +176,8 @@ public sealed class SelectivePassthroughController :
             SetSlotActive(wallSlot, false);
             StaticWindowVisible = false;
         }
+
+        PublishVisibilityState();
     }
 
     public void SetDynamicFeatureEnabled(bool enabled)
@@ -176,6 +194,8 @@ public sealed class SelectivePassthroughController :
 
             ActivePersonWindowCount = 0;
         }
+
+        PublishVisibilityState();
     }
 
     public void ToggleStaticFeature()
@@ -207,10 +227,19 @@ public sealed class SelectivePassthroughController :
         DynamicRiskFrame frame =
             controller == null ? null : controller.LatestFrame;
 
+        bool hasNewFrame = controller != null
+            && controller.LatestFrameSequence > 0
+            && controller.LatestFrameSequence != lastObservedFrameSequence;
+        if (hasNewFrame)
+        {
+            lastObservedFrameSequence = controller.LatestFrameSequence;
+        }
+
         if (dynamicFeatureEnabled
             && decision != null
             && decision.Enabled
-            && frame != null)
+            && frame != null
+            && hasNewFrame)
         {
             for (int i = 0; i < frame.Assessments.Count; i++)
             {
@@ -274,7 +303,9 @@ public sealed class SelectivePassthroughController :
                 assessment.TrackId,
                 rect,
                 assessment.Score,
-                now);
+                controller == null
+                    ? now
+                    : controller.LatestFrameProcessedRealtimeSeconds);
         }
 
         personWindowTracker.Update(
@@ -601,6 +632,61 @@ public sealed class SelectivePassthroughController :
         }
     }
 
+    public PassthroughPresentationSnapshot GetPresentationSnapshot()
+    {
+        double now = Time.realtimeSinceStartupAsDouble;
+        return new PassthroughPresentationSnapshot(
+            AnyWindowVisible,
+            StaticWindowVisible,
+            ActivePersonWindowCount > 0,
+            ActivePersonWindowCount,
+            GetVisibilitySource(),
+            personWindowTracker == null
+                ? 0f
+                : personWindowTracker.GetMaximumHoldRemainingSeconds(now),
+            now);
+    }
+
+    private string GetVisibilitySource()
+    {
+        bool staticVisible = StaticWindowVisible;
+        bool dynamicVisible = ActivePersonWindowCount > 0;
+        if (staticVisible && dynamicVisible)
+        {
+            return "static+dynamic";
+        }
+
+        if (staticVisible)
+        {
+            return "static";
+        }
+
+        return dynamicVisible ? "dynamic" : "none";
+    }
+
+    private void PublishVisibilityState()
+    {
+        bool visible = AnyWindowVisible;
+        string source = GetVisibilitySource();
+        if (visibilityStateInitialized
+            && visible == lastPublishedVisibility
+            && string.Equals(
+                source,
+                lastPublishedVisibilitySource,
+                StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        visibilityStateInitialized = true;
+        lastPublishedVisibility = visible;
+        lastPublishedVisibilitySource = source;
+        VisibilityChanged?.Invoke(
+            visible,
+            source,
+            Time.realtimeSinceStartupAsDouble);
+    }
+
     private void DestroyRuntimeResources()
     {
         DisableAllWindows();
@@ -617,6 +703,7 @@ public sealed class SelectivePassthroughController :
         runtimeMaterial = null;
         sharedQuad = null;
         personWindowTracker?.Reset();
+        lastObservedFrameSequence = 0;
         initialized = false;
     }
 
@@ -627,7 +714,9 @@ public sealed class SelectivePassthroughController :
             personSizeSmoothingSeconds,
             personFadeInSeconds,
             personLostHoldSeconds,
-            personFadeOutSeconds);
+            personFadeOutSeconds,
+            0.50f,
+            1.50f);
     }
 
     private static void DestroySlot(WindowSlot slot)

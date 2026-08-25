@@ -33,6 +33,38 @@ public sealed class DynamicPassthroughPolicyController : MonoBehaviour
         get { return dynamicRiskController; }
     }
 
+    public float OnThreshold
+    {
+        get
+        {
+            return decisionSettings == null
+                ? PersonalizationMath.DefaultDynamicOnThreshold
+                : decisionSettings.onThreshold;
+        }
+    }
+
+    public float OffThreshold
+    {
+        get
+        {
+            return decisionSettings == null
+                ? PersonalizationMath.DefaultDynamicOffThreshold
+                : decisionSettings.offThreshold;
+        }
+    }
+
+    public float MinimumHoldSeconds
+    {
+        get
+        {
+            return decisionSettings == null
+                ? 1.50f
+                : decisionSettings.minimumHoldSeconds;
+        }
+    }
+
+    public bool LatestForcePassthrough { get; private set; }
+
     private void Awake()
     {
         ResolveReferences();
@@ -67,6 +99,34 @@ public sealed class DynamicPassthroughPolicyController : MonoBehaviour
         RebuildFilter();
     }
 
+    public void ApplyPersonalizedThresholds(
+        float onThreshold,
+        float offThreshold)
+    {
+        EnsureDecisionSettings();
+        float onDelta = SafeThresholdDelta(
+            onThreshold,
+            PersonalizationMath.DefaultDynamicOnThreshold);
+        float offDelta = SafeThresholdDelta(
+            offThreshold,
+            PersonalizationMath.DefaultDynamicOffThreshold);
+        float sharedDelta = Mathf.Clamp(
+            Mathf.Min(onDelta, offDelta),
+            0f,
+            PersonalizationMath.MaximumAdjustmentDelta);
+        decisionSettings.onThreshold =
+            PersonalizationMath.DefaultDynamicOnThreshold + sharedDelta;
+        decisionSettings.offThreshold =
+            PersonalizationMath.DefaultDynamicOffThreshold + sharedDelta;
+    }
+
+    public void RestoreDefaultThresholds()
+    {
+        ApplyPersonalizedThresholds(
+            PersonalizationMath.DefaultDynamicOnThreshold,
+            PersonalizationMath.DefaultDynamicOffThreshold);
+    }
+
     public PassthroughSourceDecision Evaluate(double timestampSeconds)
     {
         ResolveReferences();
@@ -83,7 +143,9 @@ public sealed class DynamicPassthroughPolicyController : MonoBehaviour
             ? float.MaxValue
             : (float)Math.Max(
                 0.0,
-                timestampSeconds - frame.TimestampSeconds);
+                timestampSeconds
+                    - dynamicRiskController
+                        .LatestFrameProcessedRealtimeSeconds);
         bool cameraReady =
             detectionRunner != null
             && detectionRunner.IsCameraReady;
@@ -91,7 +153,8 @@ public sealed class DynamicPassthroughPolicyController : MonoBehaviour
             cameraReady
             && frame != null
             && age <= Mathf.Max(0f, staleAfterSeconds);
-        float risk = available ? frame.MaximumRisk : 0f;
+        LatestForcePassthrough = available && frame.ForcePassthrough;
+        float risk = available ? frame.PolicyRisk : 0f;
         PassthroughDecisionSnapshot filtered =
             filter.Evaluate(timestampSeconds, available, risk);
 
@@ -124,9 +187,36 @@ public sealed class DynamicPassthroughPolicyController : MonoBehaviour
 
     private void RebuildFilter()
     {
+        EnsureDecisionSettings();
         filter = new PassthroughDecisionFilter(
-            decisionSettings ?? new PassthroughDecisionFilterSettings());
+            decisionSettings);
         sequence = 0;
         Latest = null;
+        LatestForcePassthrough = false;
+    }
+
+    private void EnsureDecisionSettings()
+    {
+        if (decisionSettings == null)
+        {
+            decisionSettings = new PassthroughDecisionFilterSettings
+            {
+                mode = PassthroughDecisionMode.Hysteresis,
+                onThreshold = PersonalizationMath.DefaultDynamicOnThreshold,
+                offThreshold = PersonalizationMath.DefaultDynamicOffThreshold,
+                minimumHoldSeconds = 1.50f,
+                releaseDelaySeconds = 0.35f
+            };
+        }
+    }
+
+    private static float SafeThresholdDelta(float value, float baseline)
+    {
+        if (float.IsNaN(value) || float.IsInfinity(value))
+        {
+            return 0f;
+        }
+
+        return Mathf.Max(0f, value - baseline);
     }
 }

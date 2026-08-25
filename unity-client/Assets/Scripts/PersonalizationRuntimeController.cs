@@ -17,11 +17,13 @@ public sealed class PersonalizationRuntimeController : MonoBehaviour
         public float MeanHeadSpeed;
         public float MaximumHeadSpeed;
         public bool ManualCancel;
+        public string Source;
     }
 
     [Serializable]
     private sealed class PersonalizationLogRecord
     {
+        public int schemaVersion = 2;
         public string recordType;
         public string utc;
         public string trigger;
@@ -31,6 +33,8 @@ public sealed class PersonalizationRuntimeController : MonoBehaviour
         public bool shadowMode;
         public bool applyEnabled;
         public bool thresholdsApplied;
+        public bool staticThresholdsApplied;
+        public bool dynamicThresholdsApplied;
         public bool manualFeatureOverride;
         public bool probabilityOverride;
         public string inferenceSource;
@@ -47,8 +51,16 @@ public sealed class PersonalizationRuntimeController : MonoBehaviour
         public float stableOnThreshold;
         public float rapidOnThreshold;
         public float handFullThreshold;
+        public float dynamicOnThreshold;
+        public float dynamicOffThreshold;
+        public float adjustmentDelta;
+        public string activationSource;
+        public bool combinedPassthroughVisible;
         public float staticRisk;
         public bool staticPassthroughEnabled;
+        public float dynamicRisk;
+        public bool dynamicPassthroughEnabled;
+        public bool dynamicForcePassthrough;
     }
 
     private const string SessionCountKey =
@@ -56,6 +68,8 @@ public sealed class PersonalizationRuntimeController : MonoBehaviour
 
     [Header("Runtime Sources")]
     [SerializeField] private StaticPassthroughPolicyController staticPolicy;
+    [SerializeField] private DynamicPassthroughPolicyController dynamicPolicy;
+    [SerializeField] private SelectivePassthroughController presentation;
     [SerializeField] private QuestRiskExperimentLogger measurementProvider;
 
     [Header("InferenceEngine Model")]
@@ -105,7 +119,9 @@ public sealed class PersonalizationRuntimeController : MonoBehaviour
         new List<ActivationEvent>();
     private Worker worker;
     private Model runtimeModel;
-    private StaticPassthroughPolicyController subscribedPolicy;
+    private StaticPassthroughPolicyController subscribedStaticPolicy;
+    private DynamicPassthroughPolicyController subscribedDynamicPolicy;
+    private SelectivePassthroughController subscribedPresentation;
     private StreamWriter writer;
     private double sessionStartedAt;
     private double nextInferenceAt;
@@ -116,6 +132,11 @@ public sealed class PersonalizationRuntimeController : MonoBehaviour
     private float activationMaximumHeadSpeed;
     private int activationHeadSpeedSamples;
     private ActivationEvent lastCompletedEvent;
+    private bool activationIncludedStatic;
+    private bool activationIncludedDynamic;
+    private bool fallbackStaticVisible;
+    private bool fallbackDynamicVisible;
+    private bool usingPresentationSubscription;
 
     public event Action SnapshotUpdated;
 
@@ -126,6 +147,8 @@ public sealed class PersonalizationRuntimeController : MonoBehaviour
     public bool HasNegativeProbability { get; private set; }
     public bool LastRunWasColdStart { get; private set; }
     public bool LastThresholdsApplied { get; private set; }
+    public bool LastStaticThresholdsApplied { get; private set; }
+    public bool LastDynamicThresholdsApplied { get; private set; }
     public string LastInferenceSource { get; private set; } = "not-run";
     public string LastStatus { get; private set; } = "Waiting for first inference.";
     public string ModelStatus { get; private set; } = "Not initialized.";
@@ -173,6 +196,11 @@ public sealed class PersonalizationRuntimeController : MonoBehaviour
     public PersonalizedThresholds ThresholdPreview => thresholdPreview;
     public int MinimumSessionCount => minimumSessionCount;
     public int EventWindowSize => eventWindowSize;
+    public string CurrentActivationSource => activationActive
+        ? FormatActivationSource()
+        : lastCompletedEvent == null
+            ? "none"
+            : lastCompletedEvent.Source;
 
     private void Awake()
     {
@@ -187,7 +215,7 @@ public sealed class PersonalizationRuntimeController : MonoBehaviour
     private void OnEnable()
     {
         ResolveReferences();
-        SubscribeToPolicy();
+        SubscribeToSources();
         nextInferenceAt = Time.realtimeSinceStartupAsDouble + 0.5;
         if (enableLogging)
         {
@@ -204,7 +232,7 @@ public sealed class PersonalizationRuntimeController : MonoBehaviour
                 activationManualCancel);
         }
 
-        UnsubscribeFromPolicy();
+        UnsubscribeFromSources();
         CloseWriter();
     }
 
@@ -218,7 +246,7 @@ public sealed class PersonalizationRuntimeController : MonoBehaviour
     private void Update()
     {
         ResolveReferences();
-        SubscribeToPolicy();
+        SubscribeToSources();
         if (activationActive)
         {
             SampleActiveHeadSpeed();
@@ -239,8 +267,27 @@ public sealed class PersonalizationRuntimeController : MonoBehaviour
         ModelAsset compatibleModel,
         UnityEngine.Object sourceArtifact)
     {
-        UnsubscribeFromPolicy();
-        staticPolicy = policyController;
+        Configure(
+            policyController,
+            null,
+            null,
+            provider,
+            compatibleModel,
+            sourceArtifact);
+    }
+
+    public void Configure(
+        StaticPassthroughPolicyController staticPolicyController,
+        DynamicPassthroughPolicyController dynamicPolicyController,
+        SelectivePassthroughController presentationController,
+        QuestRiskExperimentLogger provider,
+        ModelAsset compatibleModel,
+        UnityEngine.Object sourceArtifact)
+    {
+        UnsubscribeFromSources();
+        staticPolicy = staticPolicyController;
+        dynamicPolicy = dynamicPolicyController;
+        presentation = presentationController;
         measurementProvider = provider;
         modelAsset = compatibleModel;
         sourceModelArtifact = sourceArtifact;
@@ -249,7 +296,7 @@ public sealed class PersonalizationRuntimeController : MonoBehaviour
         applyPersonalization = false;
         shadowMode = true;
         ResolveReferences();
-        SubscribeToPolicy();
+        SubscribeToSources();
         if (Application.isPlaying)
         {
             TryInitializeModel();
@@ -286,8 +333,7 @@ public sealed class PersonalizationRuntimeController : MonoBehaviour
         ResolveReferences();
         thresholdPreview = PersonalizationMath.Defaults;
         LastThresholds = thresholdPreview;
-        staticPolicy?.RestoreDefaultThresholds();
-        LastThresholdsApplied = staticPolicy != null;
+        RestorePolicyDefaults();
         LastInferenceSource = "ml-disabled";
         LastStatus = "ML disabled; safe default thresholds restored.";
         WriteLog("ml-disabled");
@@ -331,8 +377,11 @@ public sealed class PersonalizationRuntimeController : MonoBehaviour
         }
         else
         {
-            LastThresholdsApplied = false;
-            LastStatus = "Automatic threshold application is OFF.";
+            thresholdPreview = PersonalizationMath.Defaults;
+            LastThresholds = thresholdPreview;
+            RestorePolicyDefaults();
+            LastStatus =
+                "Automatic threshold application is OFF; defaults restored.";
             WriteLog("apply-disabled");
             SnapshotUpdated?.Invoke();
         }
@@ -440,34 +489,47 @@ public sealed class PersonalizationRuntimeController : MonoBehaviour
         float rapidOn,
         float handFull)
     {
+        SetFullThresholdPreview(
+            stableOn,
+            rapidOn,
+            handFull,
+            thresholdPreview.DynamicOnThreshold,
+            thresholdPreview.DynamicOffThreshold);
+    }
+
+    public void SetFullThresholdPreview(
+        float stableOn,
+        float rapidOn,
+        float handFull,
+        float dynamicOn,
+        float dynamicOff)
+    {
         thresholdPreview = new PersonalizedThresholds(
             Mathf.Clamp(stableOn, 0.05f, 0.95f),
             Mathf.Clamp(rapidOn, 0.05f, 0.95f),
-            Mathf.Clamp(handFull, 0.05f, 0.95f));
+            Mathf.Clamp(handFull, 0.05f, 0.95f),
+            Mathf.Clamp(dynamicOn, 0.05f, 0.95f),
+            Mathf.Clamp(dynamicOff, 0.05f, 0.95f));
         SnapshotUpdated?.Invoke();
     }
 
     public void ApplyThresholdPreview()
     {
         ResolveReferences();
-        if (staticPolicy == null)
+        if (staticPolicy == null && dynamicPolicy == null)
         {
-            LastStatus = "Cannot apply sliders: static policy is missing.";
+            LastStatus = "Cannot apply preview: policy targets are missing.";
             SnapshotUpdated?.Invoke();
             return;
         }
 
-        staticPolicy.ApplyPersonalizedThresholds(
-            thresholdPreview.StableOnThreshold,
-            thresholdPreview.RapidOnThreshold,
-            thresholdPreview.HandFullThreshold);
+        ApplyThresholds(thresholdPreview);
         shadowMode = false;
         applyPersonalization = false;
         LastThresholds = thresholdPreview;
-        LastThresholdsApplied = true;
         LastInferenceSource = "manual-thresholds";
         LastStatus =
-            "Manual slider thresholds applied. ML auto-apply remains OFF.";
+            "Manual threshold preview applied. ML auto-apply remains OFF.";
         WriteLog("manual-threshold-apply");
         SnapshotUpdated?.Invoke();
     }
@@ -477,10 +539,9 @@ public sealed class PersonalizationRuntimeController : MonoBehaviour
         ResolveReferences();
         thresholdPreview = PersonalizationMath.Defaults;
         LastThresholds = thresholdPreview;
-        staticPolicy?.RestoreDefaultThresholds();
+        RestorePolicyDefaults();
         shadowMode = true;
         applyPersonalization = false;
-        LastThresholdsApplied = staticPolicy != null;
         LastInferenceSource = "safe-defaults";
         LastStatus = "Safe default thresholds restored; Shadow mode ON.";
         WriteLog("restore-defaults");
@@ -526,6 +587,8 @@ public sealed class PersonalizationRuntimeController : MonoBehaviour
         HasNegativeProbability = false;
         LastNegativeProbability = 0f;
         LastThresholdsApplied = false;
+        LastStaticThresholdsApplied = false;
+        LastDynamicThresholdsApplied = false;
 
         if (LastRunWasColdStart)
         {
@@ -570,16 +633,22 @@ public sealed class PersonalizationRuntimeController : MonoBehaviour
         }
 
         thresholdPreview = LastThresholds;
-        if ((forceApply
-                || (applyPersonalization && !shadowMode))
-            && staticPolicy != null)
+        if (forceApply || (applyPersonalization && !shadowMode))
         {
-            staticPolicy.ApplyPersonalizedThresholds(
-                LastThresholds.StableOnThreshold,
-                LastThresholds.RapidOnThreshold,
-                LastThresholds.HandFullThreshold);
-            LastThresholdsApplied = true;
-            LastStatus += " Applied to the static policy.";
+            ApplyThresholds(LastThresholds);
+            if (LastStaticThresholdsApplied
+                && LastDynamicThresholdsApplied)
+            {
+                LastStatus += " Applied to static and dynamic policies.";
+            }
+            else if (LastThresholdsApplied)
+            {
+                LastStatus += " Partially applied to the available policy.";
+            }
+            else
+            {
+                LastStatus += " No policy target is available.";
+            }
         }
         else
         {
@@ -650,30 +719,113 @@ public sealed class PersonalizationRuntimeController : MonoBehaviour
             sessionMaximumSeconds);
     }
 
+    public void RecordPresentationVisibility(
+        bool visible,
+        string source,
+        double timestampSeconds)
+    {
+        double now = double.IsNaN(timestampSeconds)
+            || double.IsInfinity(timestampSeconds)
+                ? Time.realtimeSinceStartupAsDouble
+                : timestampSeconds;
+        if (visible)
+        {
+            if (!activationActive)
+            {
+                StartActivation(now);
+            }
+
+            MergeActivationSource(source);
+            return;
+        }
+
+        if (activationActive)
+        {
+            CompleteActivation(now, activationManualCancel);
+        }
+    }
+
+    private void OnPresentationVisibilityChanged(
+        bool visible,
+        string source,
+        double timestampSeconds)
+    {
+        RecordPresentationVisibility(visible, source, timestampSeconds);
+    }
+
     private void OnStaticDecision(StaticPassthroughDecision decision)
     {
-        if (decision == null)
+        if (decision == null || subscribedPresentation != null)
         {
             return;
         }
 
+        fallbackStaticVisible = decision.Enabled;
         double now = decision.SourceDecision == null
             ? Time.realtimeSinceStartupAsDouble
             : decision.SourceDecision.TimestampSeconds;
-        if (decision.Enabled && !activationActive)
+        RecordFallbackVisibility(now);
+    }
+
+    private void OnDynamicDecision(PassthroughSourceDecision decision)
+    {
+        if (decision == null || subscribedPresentation != null)
         {
-            activationActive = true;
-            activationManualCancel = false;
-            activationStartedAt = now;
-            activationHeadSpeedSum = 0f;
-            activationMaximumHeadSpeed = 0f;
-            activationHeadSpeedSamples = 0;
-            SampleActiveHeadSpeed();
+            return;
         }
-        else if (!decision.Enabled && activationActive)
+
+        fallbackDynamicVisible = decision.Enabled;
+        RecordFallbackVisibility(decision.TimestampSeconds);
+    }
+
+    private void RecordFallbackVisibility(double timestampSeconds)
+    {
+        string source = fallbackStaticVisible
+            ? fallbackDynamicVisible ? "static+dynamic" : "static"
+            : fallbackDynamicVisible ? "dynamic" : "none";
+        RecordPresentationVisibility(
+            fallbackStaticVisible || fallbackDynamicVisible,
+            source,
+            timestampSeconds);
+    }
+
+    private void StartActivation(double timestampSeconds)
+    {
+        activationActive = true;
+        activationManualCancel = false;
+        activationStartedAt = timestampSeconds;
+        activationHeadSpeedSum = 0f;
+        activationMaximumHeadSpeed = 0f;
+        activationHeadSpeedSamples = 0;
+        activationIncludedStatic = false;
+        activationIncludedDynamic = false;
+        SampleActiveHeadSpeed();
+    }
+
+    private void MergeActivationSource(string source)
+    {
+        string safeSource = source ?? string.Empty;
+        activationIncludedStatic |= safeSource.IndexOf(
+            "static",
+            StringComparison.OrdinalIgnoreCase) >= 0;
+        activationIncludedDynamic |= safeSource.IndexOf(
+            "dynamic",
+            StringComparison.OrdinalIgnoreCase) >= 0;
+    }
+
+    private string FormatActivationSource()
+    {
+        if (activationIncludedStatic && activationIncludedDynamic)
         {
-            CompleteActivation(now, activationManualCancel);
+            return "static+dynamic";
         }
+
+        if (activationIncludedStatic)
+        {
+            return "static";
+        }
+
+        return activationIncludedDynamic ? "dynamic" : "unknown";
     }
 
     private void SampleActiveHeadSpeed()
@@ -695,7 +847,8 @@ public sealed class PersonalizationRuntimeController : MonoBehaviour
                 ? 0f
                 : activationHeadSpeedSum / activationHeadSpeedSamples,
             MaximumHeadSpeed = activationMaximumHeadSpeed,
-            ManualCancel = activationManualCancel
+            ManualCancel = activationManualCancel,
+            Source = FormatActivationSource()
         };
     }
 
@@ -710,7 +863,8 @@ public sealed class PersonalizationRuntimeController : MonoBehaviour
                 ? 0f
                 : activationHeadSpeedSum / activationHeadSpeedSamples,
             MaximumHeadSpeed = activationMaximumHeadSpeed,
-            ManualCancel = manualCancel
+            ManualCancel = manualCancel,
+            Source = FormatActivationSource()
         };
         recentEvents.Enqueue(completed);
         lastCompletedEvent = completed;
@@ -724,6 +878,8 @@ public sealed class PersonalizationRuntimeController : MonoBehaviour
         activationHeadSpeedSum = 0f;
         activationMaximumHeadSpeed = 0f;
         activationHeadSpeedSamples = 0;
+        activationIncludedStatic = false;
+        activationIncludedDynamic = false;
     }
 
     private bool TryRunModel(
@@ -813,12 +969,57 @@ public sealed class PersonalizationRuntimeController : MonoBehaviour
         }
     }
 
+    private void ApplyThresholds(PersonalizedThresholds thresholds)
+    {
+        LastStaticThresholdsApplied = staticPolicy != null;
+        LastDynamicThresholdsApplied = dynamicPolicy != null;
+        if (staticPolicy != null)
+        {
+            staticPolicy.ApplyPersonalizedThresholds(
+                thresholds.StableOnThreshold,
+                thresholds.RapidOnThreshold,
+                thresholds.HandFullThreshold);
+        }
+
+        if (dynamicPolicy != null)
+        {
+            dynamicPolicy.ApplyPersonalizedThresholds(
+                thresholds.DynamicOnThreshold,
+                thresholds.DynamicOffThreshold);
+        }
+
+        LastThresholdsApplied = LastStaticThresholdsApplied
+            || LastDynamicThresholdsApplied;
+    }
+
+    private void RestorePolicyDefaults()
+    {
+        LastStaticThresholdsApplied = staticPolicy != null;
+        LastDynamicThresholdsApplied = dynamicPolicy != null;
+        staticPolicy?.RestoreDefaultThresholds();
+        dynamicPolicy?.RestoreDefaultThresholds();
+        LastThresholdsApplied = LastStaticThresholdsApplied
+            || LastDynamicThresholdsApplied;
+    }
+
     private void ResolveReferences()
     {
         if (staticPolicy == null)
         {
             staticPolicy =
                 FindAnyObjectByType<StaticPassthroughPolicyController>();
+        }
+
+        if (dynamicPolicy == null)
+        {
+            dynamicPolicy =
+                FindAnyObjectByType<DynamicPassthroughPolicyController>();
+        }
+
+        if (presentation == null)
+        {
+            presentation =
+                FindAnyObjectByType<SelectivePassthroughController>();
         }
 
         if (measurementProvider == null)
@@ -834,28 +1035,79 @@ public sealed class PersonalizationRuntimeController : MonoBehaviour
         }
     }
 
-    private void SubscribeToPolicy()
+    private void SubscribeToSources()
     {
-        if (subscribedPolicy == staticPolicy)
+        bool presentationSubscriptionCurrent =
+            usingPresentationSubscription
+            && presentation != null
+            && subscribedPresentation == presentation;
+        bool fallbackSubscriptionCurrent =
+            !usingPresentationSubscription
+            && presentation == null
+            && subscribedStaticPolicy == staticPolicy
+            && subscribedDynamicPolicy == dynamicPolicy;
+        if (presentationSubscriptionCurrent
+            || fallbackSubscriptionCurrent)
         {
             return;
         }
 
-        UnsubscribeFromPolicy();
-        subscribedPolicy = staticPolicy;
-        if (subscribedPolicy != null)
+        UnsubscribeFromSources();
+        subscribedPresentation = presentation;
+        if (subscribedPresentation != null)
         {
-            subscribedPolicy.StaticDecisionPublished += OnStaticDecision;
+            usingPresentationSubscription = true;
+            subscribedPresentation.VisibilityChanged +=
+                OnPresentationVisibilityChanged;
+            RecordPresentationVisibility(
+                subscribedPresentation.AnyWindowVisible,
+                subscribedPresentation.VisibleSource,
+                Time.realtimeSinceStartupAsDouble);
+            return;
+        }
+
+        subscribedStaticPolicy = staticPolicy;
+        subscribedDynamicPolicy = dynamicPolicy;
+        if (subscribedStaticPolicy != null)
+        {
+            subscribedStaticPolicy.StaticDecisionPublished += OnStaticDecision;
+            fallbackStaticVisible = subscribedStaticPolicy.LatestStatic != null
+                && subscribedStaticPolicy.LatestStatic.Enabled;
+        }
+
+        if (subscribedDynamicPolicy != null)
+        {
+            subscribedDynamicPolicy.DecisionPublished += OnDynamicDecision;
+            fallbackDynamicVisible = subscribedDynamicPolicy.Latest != null
+                && subscribedDynamicPolicy.Latest.Enabled;
         }
     }
 
-    private void UnsubscribeFromPolicy()
+    private void UnsubscribeFromSources()
     {
-        if (subscribedPolicy != null)
+        if (subscribedPresentation != null)
         {
-            subscribedPolicy.StaticDecisionPublished -= OnStaticDecision;
-            subscribedPolicy = null;
+            subscribedPresentation.VisibilityChanged -=
+                OnPresentationVisibilityChanged;
+            subscribedPresentation = null;
         }
+
+        usingPresentationSubscription = false;
+
+        if (subscribedStaticPolicy != null)
+        {
+            subscribedStaticPolicy.StaticDecisionPublished -= OnStaticDecision;
+            subscribedStaticPolicy = null;
+        }
+
+        if (subscribedDynamicPolicy != null)
+        {
+            subscribedDynamicPolicy.DecisionPublished -= OnDynamicDecision;
+            subscribedDynamicPolicy = null;
+        }
+
+        fallbackStaticVisible = false;
+        fallbackDynamicVisible = false;
     }
 
     private void CountSessionOnce()
@@ -912,6 +1164,8 @@ public sealed class PersonalizationRuntimeController : MonoBehaviour
 
         PassthroughSourceDecision staticDecision =
             staticPolicy == null ? null : staticPolicy.Latest;
+        PassthroughSourceDecision dynamicDecision =
+            dynamicPolicy == null ? null : dynamicPolicy.Latest;
         var record = new PersonalizationLogRecord
         {
             recordType = "personalizationSnapshot",
@@ -923,6 +1177,8 @@ public sealed class PersonalizationRuntimeController : MonoBehaviour
             shadowMode = shadowMode,
             applyEnabled = applyPersonalization,
             thresholdsApplied = LastThresholdsApplied,
+            staticThresholdsApplied = LastStaticThresholdsApplied,
+            dynamicThresholdsApplied = LastDynamicThresholdsApplied,
             manualFeatureOverride = manualFeatureOverride,
             probabilityOverride = negativeProbabilityOverride,
             inferenceSource = LastInferenceSource,
@@ -943,9 +1199,21 @@ public sealed class PersonalizationRuntimeController : MonoBehaviour
             stableOnThreshold = LastThresholds.StableOnThreshold,
             rapidOnThreshold = LastThresholds.RapidOnThreshold,
             handFullThreshold = LastThresholds.HandFullThreshold,
+            dynamicOnThreshold = LastThresholds.DynamicOnThreshold,
+            dynamicOffThreshold = LastThresholds.DynamicOffThreshold,
+            adjustmentDelta = LastThresholds.AdjustmentDelta,
+            activationSource = CurrentActivationSource,
+            combinedPassthroughVisible = presentation == null
+                ? activationActive
+                : presentation.AnyWindowVisible,
             staticRisk = staticDecision == null ? 0f : staticDecision.Risk,
             staticPassthroughEnabled =
-                staticDecision != null && staticDecision.Enabled
+                staticDecision != null && staticDecision.Enabled,
+            dynamicRisk = dynamicDecision == null ? 0f : dynamicDecision.Risk,
+            dynamicPassthroughEnabled =
+                dynamicDecision != null && dynamicDecision.Enabled,
+            dynamicForcePassthrough = dynamicPolicy != null
+                && dynamicPolicy.LatestForcePassthrough
         };
         writer.WriteLine(JsonUtility.ToJson(record));
         writer.Flush();

@@ -342,7 +342,7 @@ namespace TeamVR.AdaptivePassthrough.Tests
         public void UltraCloseBoundingBoxForcesDangerousPersonRisk()
         {
             DynamicObjectDetection detection =
-                Person(0.5f, 0.5f, 0.55f, 0.80f, 0.90f);
+                Person(0.5f, 0.5f, 0.96f, 0.96f, 0.80f);
             var tracked = new TrackedDynamicObject(11, detection, 0f);
             RelativeLocationEstimate location =
                 new RelativeLocationEstimator().Estimate(tracked);
@@ -363,6 +363,44 @@ namespace TeamVR.AdaptivePassthrough.Tests
 
             Assert.That(risk.Score, Is.GreaterThanOrEqualTo(0.90f));
             Assert.That(risk.Reasons, Does.Contain("ultra_close_force"));
+            Assert.That(risk.ForcePassthrough, Is.True);
+            var frame = new DynamicRiskFrame(0.0, new[] { risk });
+            Assert.That(frame.ForcePassthrough, Is.True);
+            Assert.That(frame.PolicyRisk, Is.EqualTo(1f));
+        }
+
+        [Test]
+        public void WeakUltraCloseBoundingBoxRequiresTwoConfirmations()
+        {
+            var estimator = new DynamicRiskEstimator();
+            var tracked = new TrackedDynamicObject(
+                21,
+                Person(0.5f, 0.5f, 0.70f, 0.93f, 0.65f),
+                0f);
+            RelativeLocationEstimate location =
+                new RelativeLocationEstimator().Estimate(tracked);
+            var steady = new MotionEstimate(
+                DynamicMotionState.Steady,
+                0f,
+                null,
+                0f,
+                4,
+                0.5,
+                1f);
+
+            DynamicRiskAssessment first = estimator.Estimate(
+                tracked,
+                location,
+                steady);
+            DynamicRiskAssessment second = estimator.Estimate(
+                tracked,
+                location,
+                steady);
+
+            Assert.That(first.ForcePassthrough, Is.False);
+            Assert.That(second.ForcePassthrough, Is.True);
+            Assert.That(second.Reasons,
+                Does.Contain("confirmed_bbox_close"));
         }
 
         [Test]
@@ -409,6 +447,9 @@ namespace TeamVR.AdaptivePassthrough.Tests
             Assert.That(first.Reasons, Does.Contain("ultra_close_force"));
             Assert.That(second.Reasons, Does.Contain("ultra_close_force"));
             Assert.That(third.Reasons, Does.Not.Contain("ultra_close_force"));
+            Assert.That(first.ForcePassthrough, Is.True);
+            Assert.That(second.ForcePassthrough, Is.True);
+            Assert.That(third.ForcePassthrough, Is.False);
         }
 
         [Test]

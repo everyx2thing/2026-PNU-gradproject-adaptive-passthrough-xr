@@ -28,6 +28,7 @@ namespace TeamVR.AdaptivePassthrough
         private sealed class CloseState
         {
             public bool Active;
+            public int WeakConfirmations;
             public int ReleaseConfirmations;
         }
 
@@ -114,9 +115,14 @@ namespace TeamVR.AdaptivePassthrough
                 && location.HasMetricDistance
                 && location.DistanceConfidence >= 0.45f
                 && location.FilteredDistanceMeters <= 0.60f;
-            bool bboxClose = person
-                && detection.confidence >= 0.55f
-                && (box.height >= 0.75f || box.Area >= 0.35f);
+            bool strongBboxClose = person
+                && detection.confidence >= 0.75f
+                && box.height >= 0.95f
+                && box.Area >= 0.65f;
+            bool weakBboxClose = person
+                && detection.confidence >= 0.60f
+                && box.height >= 0.92f
+                && box.Area >= 0.55f;
             CloseState closeState;
             if (!closeStates.TryGetValue(tracked.TrackId, out closeState))
             {
@@ -124,23 +130,38 @@ namespace TeamVR.AdaptivePassthrough
                 closeStates.Add(tracked.TrackId, closeState);
             }
 
-            if (metricClose || bboxClose)
+            if (metricClose || strongBboxClose)
             {
                 closeState.Active = true;
+                closeState.WeakConfirmations = 0;
                 closeState.ReleaseConfirmations = 0;
             }
-            else if (closeState.Active)
+            else if (weakBboxClose)
             {
-                bool releaseConfirmed = location.HasMetricDistance
-                    && location.FilteredDistanceMeters > 0.80f
-                    && box.height < 0.65f;
-                closeState.ReleaseConfirmations = releaseConfirmed
-                    ? closeState.ReleaseConfirmations + 1
-                    : 0;
-                if (closeState.ReleaseConfirmations >= 3)
+                closeState.WeakConfirmations++;
+                if (closeState.WeakConfirmations >= 2)
                 {
-                    closeState.Active = false;
+                    closeState.Active = true;
                     closeState.ReleaseConfirmations = 0;
+                }
+            }
+            else
+            {
+                closeState.WeakConfirmations = 0;
+                if (closeState.Active)
+                {
+                    bool releaseConfirmed = location.HasMetricDistance
+                        ? location.FilteredDistanceMeters > 0.80f
+                            && box.height < 0.65f
+                        : box.height < 0.65f && box.Area < 0.25f;
+                    closeState.ReleaseConfirmations = releaseConfirmed
+                        ? closeState.ReleaseConfirmations + 1
+                        : 0;
+                    if (closeState.ReleaseConfirmations >= 3)
+                    {
+                        closeState.Active = false;
+                        closeState.ReleaseConfirmations = 0;
+                    }
                 }
             }
 
@@ -178,6 +199,14 @@ namespace TeamVR.AdaptivePassthrough
             if (closeState.Active)
             {
                 reasons.Add("ultra_close_force");
+                if (strongBboxClose)
+                {
+                    reasons.Add("strong_bbox_close");
+                }
+                else if (weakBboxClose)
+                {
+                    reasons.Add("confirmed_bbox_close");
+                }
             }
 
             switch (motion.State)
@@ -244,7 +273,8 @@ namespace TeamVR.AdaptivePassthrough
                 tracked.Lifecycle,
                 tracked.ObservedThisFrame,
                 0f,
-                tracked.ReidentifiedThisFrame);
+                tracked.ReidentifiedThisFrame,
+                closeState.Active);
         }
 
         public DynamicRiskLevel LevelForScore(float score)

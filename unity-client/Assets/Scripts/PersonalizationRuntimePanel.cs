@@ -87,6 +87,7 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
     private StatusChip staticEmergencyChip;
     private StatusChip dynamicStateChip;
     private StatusChip inferenceChip;
+    private StatusChip scenarioChip;
     private RiskBar headRiskBar;
     private RiskBar handRiskBar;
     private RiskBar combinedRiskBar;
@@ -113,6 +114,7 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
     private MetricTile trackingDistanceTile;
     private MetricTile trackingInferenceTile;
     private MetricTile trackingFrameTile;
+    private MetricTile trackingThresholdTile;
     private CanvasGroup panelCanvasGroup;
     private TMP_Text featureHelpText;
     private TMP_Text thresholdHelpText;
@@ -476,6 +478,11 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
             "TrackingProfile",
             new Vector2(0.77f, 0.72f),
             new Vector2(0.98f, 0.96f));
+        scenarioChip = CreateStatusChip(
+            mlCard.transform,
+            "TrackingScenario",
+            new Vector2(0.56f, 0.81f),
+            new Vector2(0.76f, 0.96f));
         CreateActionButton(
             mlCard.transform, "BALANCED",
             new Vector2(0.02f, 0.54f), new Vector2(0.17f, 0.76f),
@@ -507,24 +514,57 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
             () => trackingQuality?.AddTestMarker("person_recede"),
             MutedColor);
 
+        CreateActionButton(
+            mlCard.transform, "3.0m",
+            new Vector2(0.02f, 0.39f), new Vector2(0.15f, 0.51f),
+            () => trackingQuality?.AddGroundTruthMarker(3.0f), MutedColor);
+        CreateActionButton(
+            mlCard.transform, "2.0m",
+            new Vector2(0.155f, 0.39f), new Vector2(0.285f, 0.51f),
+            () => trackingQuality?.AddGroundTruthMarker(2.0f), MutedColor);
+        CreateActionButton(
+            mlCard.transform, "1.5m",
+            new Vector2(0.29f, 0.39f), new Vector2(0.42f, 0.51f),
+            () => trackingQuality?.AddGroundTruthMarker(1.5f), MutedColor);
+        CreateActionButton(
+            mlCard.transform, "1.0m",
+            new Vector2(0.425f, 0.39f), new Vector2(0.555f, 0.51f),
+            () => trackingQuality?.AddGroundTruthMarker(1.0f), MutedColor);
+        CreateActionButton(
+            mlCard.transform, "0.6m",
+            new Vector2(0.56f, 0.39f), new Vector2(0.69f, 0.51f),
+            () => trackingQuality?.AddGroundTruthMarker(0.6f), WarningColor);
+        CreateActionButton(
+            mlCard.transform, "0.25m",
+            new Vector2(0.695f, 0.39f), new Vector2(0.825f, 0.51f),
+            () => trackingQuality?.AddGroundTruthMarker(0.25f), WarningColor);
+        CreateActionButton(
+            mlCard.transform, "END",
+            new Vector2(0.83f, 0.39f), new Vector2(0.98f, 0.51f),
+            () => trackingQuality?.EndTestScenario(), DisabledColor);
+
+        trackingThresholdTile = CreateMetricTile(
+            mlCard.transform, "TrackingThresholds", "ML RISK THRESHOLDS",
+            0.02f, 0.16f, 0.04f, 0.36f);
         trackingSpatialTile = CreateMetricTile(
             mlCard.transform, "TrackingSpatial", "SPATIAL HZ / MS",
-            0.02f, 0.17f, 0.04f, 0.48f);
+            0.17f, 0.30f, 0.04f, 0.36f);
         trackingSourceTile = CreateMetricTile(
             mlCard.transform, "TrackingSource", "SOURCE / DIST / CONF",
-            0.18f, 0.36f, 0.04f, 0.48f);
+            0.31f, 0.45f, 0.04f, 0.36f);
         trackingPersonTile = CreateMetricTile(
             mlCard.transform, "TrackingPerson", "PERSON ID / MOTION / MISS",
-            0.37f, 0.54f, 0.04f, 0.48f);
+            0.46f, 0.59f, 0.04f, 0.36f);
         trackingDistanceTile = CreateMetricTile(
             mlCard.transform, "TrackingDistance", "RAW / FILTERED",
-            0.55f, 0.69f, 0.04f, 0.48f);
+            0.60f, 0.72f, 0.04f, 0.36f);
         trackingInferenceTile = CreateMetricTile(
             mlCard.transform, "TrackingInference", "INFER HZ / MS",
-            0.70f, 0.84f, 0.04f, 0.48f);
+            0.73f, 0.85f, 0.04f, 0.36f);
         trackingFrameTile = CreateMetricTile(
             mlCard.transform, "TrackingFrame", "FPS / P95",
-            0.85f, 0.98f, 0.04f, 0.48f);
+            0.86f, 0.98f, 0.04f, 0.36f);
+        MakeCompact(trackingThresholdTile);
         MakeCompact(trackingSpatialTile);
         MakeCompact(trackingSourceTile);
         MakeCompact(trackingPersonTile);
@@ -960,8 +1000,7 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
                 ? AccentColor : MutedColor);
         SetChip(
             appliedChip,
-            "APPLIED  "
-                + (personalization.LastThresholdsApplied ? "YES" : "NO"),
+            "APPLIED  " + AppliedStatus(),
             personalization.LastThresholdsApplied
                 ? EnabledColor : MutedColor);
         headerStatusText.text = string.Format(
@@ -1056,9 +1095,11 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
 
     private void RefreshTrackingQualityCard()
     {
+        RefreshThresholdTile();
         if (trackingQuality == null)
         {
             SetChip(inferenceChip, "QUALITY MISSING", DisabledColor);
+            SetChip(scenarioChip, "NO SCENARIO", MutedColor);
             SetMetric(trackingSpatialTile, "--");
             SetMetric(trackingSourceTile, "--");
             SetMetric(trackingPersonTile, "--");
@@ -1076,6 +1117,14 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
                     ? " -" + snapshot.AdaptiveLevel
                     : string.Empty),
             snapshot.AdaptiveLevel > 0 ? WarningColor : EnabledColor);
+        SetChip(
+            scenarioChip,
+            string.IsNullOrEmpty(trackingQuality.ActiveScenario)
+                ? "NO SCENARIO"
+                : trackingQuality.ActiveScenario.ToUpperInvariant(),
+            string.IsNullOrEmpty(trackingQuality.ActiveScenario)
+                ? MutedColor
+                : AccentColor);
         SetMetric(
             trackingSpatialTile,
             snapshot.SpatialRateHz.ToString("F1") + " / "
@@ -1089,7 +1138,12 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
             trackingPersonTile,
             "#" + snapshot.PersonTrackId + "  "
                 + snapshot.PersonMotion + "  "
-                + snapshot.PersonMissingSeconds.ToString("F2") + "s");
+                + snapshot.PersonMissingSeconds.ToString("F2") + "s\n"
+                + (snapshot.PersonMetricReliable
+                    ? "DEPTH OK"
+                    : string.IsNullOrEmpty(snapshot.PersonDepthRejectedReason)
+                        ? "DEPTH --"
+                        : snapshot.PersonDepthRejectedReason));
         SetMetric(
             trackingDistanceTile,
             snapshot.PersonRawDistanceMeters.ToString("F2") + " / "
@@ -1097,12 +1151,68 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
                 + " m");
         SetMetric(
             trackingInferenceTile,
-            snapshot.InferenceRateHz.ToString("F1") + " / "
-                + snapshot.InferenceMilliseconds.ToString("F1"));
+            snapshot.InferenceRateHz.ToString("F1") + "Hz "
+                + snapshot.InferenceBackend + "\n"
+                + snapshot.InferenceActiveMilliseconds.ToString("F1")
+                + "/"
+                + snapshot.InferenceWallMilliseconds.ToString("F0")
+                + "ms");
         SetMetric(
             trackingFrameTile,
             snapshot.FramesPerSecond.ToString("F0") + " / "
                 + snapshot.FrameP95Milliseconds.ToString("F1") + "ms");
+    }
+
+    private void RefreshThresholdTile()
+    {
+        if (trackingThresholdTile == null)
+        {
+            return;
+        }
+
+        float stable = staticPolicy == null
+            ? PersonalizationMath.DefaultStableOnThreshold
+            : staticPolicy.StableOnThreshold;
+        float rapid = staticPolicy == null
+            ? PersonalizationMath.DefaultRapidOnThreshold
+            : staticPolicy.RapidOnThreshold;
+        float hand = staticPolicy == null
+            ? PersonalizationMath.DefaultHandFullThreshold
+            : staticPolicy.HandFullThreshold;
+        float dynamicOn = dynamicPolicy == null
+            ? PersonalizationMath.DefaultDynamicOnThreshold
+            : dynamicPolicy.OnThreshold;
+        float dynamicOff = dynamicPolicy == null
+            ? PersonalizationMath.DefaultDynamicOffThreshold
+            : dynamicPolicy.OffThreshold;
+        float delta = personalization == null
+            ? 0f
+            : personalization.LastThresholds.AdjustmentDelta;
+        SetMetric(
+            trackingThresholdTile,
+            string.Format(
+                "S .65>{0:F2} R .45>{1:F2} H .85>{2:F2}\n"
+                + "D .60/.45>{3:F2}/{4:F2}  d+{5:F2}",
+                stable,
+                rapid,
+                hand,
+                dynamicOn,
+                dynamicOff,
+                delta));
+    }
+
+    private string AppliedStatus()
+    {
+        if (personalization == null
+            || !personalization.LastThresholdsApplied)
+        {
+            return "NO";
+        }
+
+        return personalization.LastStaticThresholdsApplied
+            && personalization.LastDynamicThresholdsApplied
+                ? "FULL"
+                : "PARTIAL";
     }
 
     private void RefreshDynamicCard()
@@ -1181,7 +1291,7 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
             thresholdHelpText.text =
                 "<b>SAFETY GUARDRAILS</b>\n"
                 + "Emergency distance, hold/release timing, and the critical-person "
-                + "override stay locked. Sliders change only Static ON thresholds.";
+                + "override stay locked. ML changes only bounded risk thresholds.";
         }
     }
 

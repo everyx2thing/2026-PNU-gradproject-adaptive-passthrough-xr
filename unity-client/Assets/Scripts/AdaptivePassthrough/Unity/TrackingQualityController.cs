@@ -11,8 +11,10 @@ namespace TeamVR.AdaptivePassthrough
             "adaptive_passthrough.tracking_quality_profile.v1";
 
         private const float FrameBudgetMilliseconds = 13.9f;
+        private const float RecoveryBudgetMilliseconds = 12.5f;
         private const float SlowDurationSeconds = 2f;
         private const float RecoveryDurationSeconds = 5f;
+        private const float MaximumAcceptedFrameSeconds = 0.25f;
         private const int FrameWindowCapacity = 256;
 
         [SerializeField] private TrackingQualityProfile profile =
@@ -30,12 +32,19 @@ namespace TeamVR.AdaptivePassthrough
         private float measuredFps;
         private float frameP95;
         private double lastFrameMetricsAt;
+        private bool applicationPaused;
 
         private float spatialMilliseconds;
         private float measuredSpatialRateHz;
         private double previousSpatialAt;
         private SpatialObstacleMeasurement spatialMeasurement;
         private float inferenceMilliseconds;
+        private float inferenceActiveMilliseconds;
+        private float inferenceWallMilliseconds;
+        private float inferenceCaptureAgeMilliseconds;
+        private int inferenceScheduledLayerCount;
+        private string inferenceBackend = "Unavailable";
+        private bool inferenceActive;
         private float measuredInferenceRateHz;
         private double previousInferenceAt;
         private int personTrackId;
@@ -43,12 +52,21 @@ namespace TeamVR.AdaptivePassthrough
         private float personFilteredDistance;
         private string personMotion = "Unavailable";
         private float personMissingSeconds;
+        private bool personMetricReliable;
+        private string personDepthRejectedReason = string.Empty;
 
         public event Action<TrackingQualityProfile> ProfileChanged;
         public event Action<string, double> TestMarkerRequested;
+        public event Action<TrackingTestMarker> ScenarioMarkerRequested;
+
+        private string activeScenarioId = string.Empty;
+        private string activeScenario = string.Empty;
+        private int scenarioSequence;
 
         public TrackingQualityProfile Profile => profile;
         public int AdaptiveLevel => adaptiveLevel;
+        public string ActiveScenarioId => activeScenarioId;
+        public string ActiveScenario => activeScenario;
         public TrackingQualitySettings EffectiveSettings =>
             CalculateEffectiveSettings(profile, adaptiveLevel);
 
@@ -59,7 +77,18 @@ namespace TeamVR.AdaptivePassthrough
 
         private void Update()
         {
+            if (applicationPaused)
+            {
+                return;
+            }
+
             float deltaSeconds = Mathf.Max(0.00001f, Time.unscaledDeltaTime);
+            if (deltaSeconds > MaximumAcceptedFrameSeconds)
+            {
+                ResetFrameStatistics();
+                return;
+            }
+
             float milliseconds = deltaSeconds * 1000f;
             frameMilliseconds[frameSampleCursor] = milliseconds;
             frameSampleCursor = (frameSampleCursor + 1) % FrameWindowCapacity;
@@ -94,7 +123,7 @@ namespace TeamVR.AdaptivePassthrough
                     overBudgetSeconds = 0f;
                 }
             }
-            else
+            else if (frameP95 <= RecoveryBudgetMilliseconds)
             {
                 overBudgetSeconds = 0f;
                 stableSeconds += deltaSeconds;
@@ -104,6 +133,31 @@ namespace TeamVR.AdaptivePassthrough
                     adaptiveLevel--;
                     stableSeconds = 0f;
                 }
+            }
+            else
+            {
+                overBudgetSeconds = 0f;
+                stableSeconds = 0f;
+            }
+        }
+
+        private void OnApplicationPause(bool paused)
+        {
+            applicationPaused = paused;
+            ResetRuntimeMeasurements();
+        }
+
+        private void OnApplicationFocus(bool focused)
+        {
+            if (!focused)
+            {
+                applicationPaused = true;
+                ResetRuntimeMeasurements();
+            }
+            else
+            {
+                applicationPaused = false;
+                ResetRuntimeMeasurements();
             }
         }
 
@@ -145,12 +199,52 @@ namespace TeamVR.AdaptivePassthrough
             double captureTimestampSeconds,
             float elapsedMilliseconds)
         {
+            RecordInference(
+                captureTimestampSeconds,
+                elapsedMilliseconds,
+                elapsedMilliseconds,
+                0f,
+                0,
+                "Unavailable",
+                false);
+        }
+
+        public void RecordInference(
+            double captureTimestampSeconds,
+            float activeMilliseconds,
+            float wallMilliseconds,
+            float captureAgeMilliseconds,
+            int scheduledLayerCount,
+            string backendName,
+            bool isActive)
+        {
             measuredInferenceRateHz = SmoothedRate(
                 measuredInferenceRateHz,
                 previousInferenceAt,
                 captureTimestampSeconds);
             previousInferenceAt = captureTimestampSeconds;
-            inferenceMilliseconds = Mathf.Max(0f, elapsedMilliseconds);
+            inferenceMilliseconds = Mathf.Max(0f, activeMilliseconds);
+            inferenceActiveMilliseconds = Mathf.Max(0f, activeMilliseconds);
+            inferenceWallMilliseconds = Mathf.Max(0f, wallMilliseconds);
+            inferenceCaptureAgeMilliseconds = Mathf.Max(
+                0f,
+                captureAgeMilliseconds);
+            inferenceScheduledLayerCount = Mathf.Max(
+                0,
+                scheduledLayerCount);
+            inferenceBackend = string.IsNullOrWhiteSpace(backendName)
+                ? "Unavailable"
+                : backendName;
+            inferenceActive = isActive;
+        }
+
+        public void SetInferenceActive(bool value, string backendName)
+        {
+            inferenceActive = value;
+            if (!string.IsNullOrWhiteSpace(backendName))
+            {
+                inferenceBackend = backendName;
+            }
         }
 
         public void RecordPerson(
@@ -158,13 +252,19 @@ namespace TeamVR.AdaptivePassthrough
             float rawDistanceMeters,
             float filteredDistanceMeters,
             string motion,
-            float missingSeconds)
+            float missingSeconds,
+            bool metricReliable = false,
+            string depthRejectedReason = null)
         {
             personTrackId = Mathf.Max(0, trackId);
             personRawDistance = Mathf.Max(0f, rawDistanceMeters);
             personFilteredDistance = Mathf.Max(0f, filteredDistanceMeters);
             personMotion = motion ?? "Unavailable";
             personMissingSeconds = Mathf.Max(0f, missingSeconds);
+            personMetricReliable = metricReliable;
+            personDepthRejectedReason = metricReliable
+                ? string.Empty
+                : depthRejectedReason ?? string.Empty;
         }
 
         public void AddTestMarker(string marker)
@@ -177,6 +277,45 @@ namespace TeamVR.AdaptivePassthrough
             TestMarkerRequested?.Invoke(
                 marker.Trim(),
                 Time.realtimeSinceStartupAsDouble);
+            StartTestScenario(marker.Trim());
+        }
+
+        public void StartTestScenario(string scenario)
+        {
+            if (string.IsNullOrWhiteSpace(scenario))
+            {
+                return;
+            }
+
+            scenarioSequence++;
+            activeScenario = scenario.Trim();
+            activeScenarioId = string.Format(
+                "{0}-{1:D3}",
+                activeScenario,
+                scenarioSequence);
+            EmitScenarioMarker("START", -1f);
+        }
+
+        public void AddGroundTruthMarker(float distanceMeters)
+        {
+            if (string.IsNullOrEmpty(activeScenarioId))
+            {
+                StartTestScenario("unassigned");
+            }
+
+            EmitScenarioMarker("SAMPLE", Mathf.Max(0f, distanceMeters));
+        }
+
+        public void EndTestScenario()
+        {
+            if (string.IsNullOrEmpty(activeScenarioId))
+            {
+                return;
+            }
+
+            EmitScenarioMarker("END", -1f);
+            activeScenarioId = string.Empty;
+            activeScenario = string.Empty;
         }
 
         public TrackingDiagnosticsSnapshot GetSnapshot()
@@ -203,7 +342,16 @@ namespace TeamVR.AdaptivePassthrough
                 personMotion,
                 personMissingSeconds,
                 measuredFps,
-                frameP95);
+                frameP95,
+                inferenceActiveMilliseconds,
+                inferenceWallMilliseconds,
+                inferenceCaptureAgeMilliseconds,
+                inferenceScheduledLayerCount,
+                inferenceBackend,
+                inferenceActive,
+                applicationPaused,
+                personMetricReliable,
+                personDepthRejectedReason);
         }
 
         public static TrackingQualityProfile LoadProfile()
@@ -232,16 +380,58 @@ namespace TeamVR.AdaptivePassthrough
             {
                 return new TrackingQualitySettings(
                     selectedProfile,
-                    Mathf.Max(10f, Mathf.Min(selected.spatialRateHz, 20f)),
-                    Mathf.Max(6, Mathf.Min(selected.spatialRayCount, 12)),
-                    Mathf.Max(3f, Mathf.Min(selected.personInferenceRateHz, 5f)));
+                    selected.spatialRateHz,
+                    selected.spatialRayCount,
+                    Mathf.Min(selected.personInferenceRateHz, 2.5f),
+                    Mathf.Min(selected.inferenceSliceMilliseconds, 1f),
+                    1);
             }
 
             return new TrackingQualitySettings(
                 selectedProfile,
                 10f,
                 6,
-                3f);
+                2f,
+                0.75f,
+                1);
+        }
+
+        public void ResetRuntimeMeasurements()
+        {
+            ResetFrameStatistics();
+            measuredSpatialRateHz = 0f;
+            previousSpatialAt = 0.0;
+            measuredInferenceRateHz = 0f;
+            previousInferenceAt = 0.0;
+            inferenceMilliseconds = 0f;
+            inferenceActiveMilliseconds = 0f;
+            inferenceWallMilliseconds = 0f;
+            inferenceCaptureAgeMilliseconds = 0f;
+            inferenceScheduledLayerCount = 0;
+            inferenceActive = false;
+        }
+
+        private void ResetFrameStatistics()
+        {
+            Array.Clear(frameMilliseconds, 0, frameMilliseconds.Length);
+            frameSampleCount = 0;
+            frameSampleCursor = 0;
+            measuredFps = 0f;
+            frameP95 = 0f;
+            overBudgetSeconds = 0f;
+            stableSeconds = 0f;
+            lastFrameMetricsAt = Time.realtimeSinceStartupAsDouble;
+        }
+
+        private void EmitScenarioMarker(string phase, float distanceMeters)
+        {
+            ScenarioMarkerRequested?.Invoke(
+                new TrackingTestMarker(
+                    activeScenarioId,
+                    activeScenario,
+                    phase,
+                    distanceMeters,
+                    Time.realtimeSinceStartupAsDouble));
         }
 
         private float AverageFrameTime()

@@ -126,10 +126,11 @@ public static class AdaptivePassthroughSceneBuilder
         runnerObject.FindProperty("qualityController").objectReferenceValue =
             trackingQuality;
         runnerObject.FindProperty("modelAsset").objectReferenceValue = model;
+        runnerObject.FindProperty("benchmarkCpuGpuOnQuest").boolValue = false;
         runnerObject.FindProperty("confidenceThreshold").floatValue = 0.55f;
         runnerObject.FindProperty("trackingConfidenceThreshold").floatValue = 0.35f;
         runnerObject.FindProperty("iouThreshold").floatValue = 0.45f;
-        runnerObject.FindProperty("inferenceRateHz").floatValue = 5f;
+        runnerObject.FindProperty("inferenceRateHz").floatValue = 3f;
         runnerObject.FindProperty("personClassId").intValue = 0;
         runnerObject.FindProperty("boxesAreCenterFormat").boolValue = true;
         runnerObject.FindProperty("boxesAreNormalized").boolValue = false;
@@ -195,6 +196,8 @@ public static class AdaptivePassthroughSceneBuilder
                     PersonalizationSourceModelPath);
             personalization.Configure(
                 staticPolicy,
+                dynamicPolicy,
+                presentation,
                 experimentLogger,
                 personalizationModel,
                 personalizationSource);

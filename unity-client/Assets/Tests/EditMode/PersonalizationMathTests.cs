@@ -57,10 +57,16 @@ namespace TeamVR.AdaptivePassthrough.Tests
             Assert.That(
                 thresholds.HandFullThreshold,
                 Is.EqualTo(0.85f).Within(0.0001f));
+            Assert.That(
+                thresholds.DynamicOnThreshold,
+                Is.EqualTo(0.60f).Within(0.0001f));
+            Assert.That(
+                thresholds.DynamicOffThreshold,
+                Is.EqualTo(0.45f).Within(0.0001f));
         }
 
         [Test]
-        public void HighNegativeProbabilityRaisesAndCapsThresholds()
+        public void HighNegativeProbabilityIsSafetyBoundedToPointOne()
         {
             PersonalizedThresholds thresholds =
                 PersonalizationMath.FromNegativeProbability(
@@ -68,9 +74,73 @@ namespace TeamVR.AdaptivePassthrough.Tests
                     1f,
                     0.95f);
 
-            Assert.That(thresholds.StableOnThreshold, Is.EqualTo(0.95f));
-            Assert.That(thresholds.RapidOnThreshold, Is.EqualTo(0.95f));
-            Assert.That(thresholds.HandFullThreshold, Is.EqualTo(0.95f));
+            Assert.That(thresholds.StableOnThreshold, Is.EqualTo(0.75f).Within(0.0001f));
+            Assert.That(thresholds.RapidOnThreshold, Is.EqualTo(0.55f).Within(0.0001f));
+            Assert.That(thresholds.HandFullThreshold, Is.EqualTo(0.95f).Within(0.0001f));
+            Assert.That(thresholds.DynamicOnThreshold, Is.EqualTo(0.70f).Within(0.0001f));
+            Assert.That(thresholds.DynamicOffThreshold, Is.EqualTo(0.55f).Within(0.0001f));
+            Assert.That(thresholds.AdjustmentDelta, Is.EqualTo(0.10f).Within(0.0001f));
+        }
+
+        [TestCase(0f)]
+        [TestCase(0.5f)]
+        public void NeutralOrLowerProbabilityKeepsAllDefaults(float probability)
+        {
+            PersonalizedThresholds thresholds =
+                PersonalizationMath.FromNegativeProbability(probability);
+
+            Assert.That(thresholds.StableOnThreshold, Is.EqualTo(0.65f));
+            Assert.That(thresholds.RapidOnThreshold, Is.EqualTo(0.45f));
+            Assert.That(thresholds.HandFullThreshold, Is.EqualTo(0.85f));
+            Assert.That(thresholds.DynamicOnThreshold, Is.EqualTo(0.60f));
+            Assert.That(thresholds.DynamicOffThreshold, Is.EqualTo(0.45f));
+            Assert.That(thresholds.AdjustmentDelta, Is.Zero);
+        }
+
+        [Test]
+        public void PointSevenFiveProbabilityAddsPointZeroFiveEverywhere()
+        {
+            PersonalizedThresholds thresholds =
+                PersonalizationMath.FromNegativeProbability(0.75f);
+
+            Assert.That(thresholds.StableOnThreshold, Is.EqualTo(0.70f).Within(0.0001f));
+            Assert.That(thresholds.RapidOnThreshold, Is.EqualTo(0.50f).Within(0.0001f));
+            Assert.That(thresholds.HandFullThreshold, Is.EqualTo(0.90f).Within(0.0001f));
+            Assert.That(thresholds.DynamicOnThreshold, Is.EqualTo(0.65f).Within(0.0001f));
+            Assert.That(thresholds.DynamicOffThreshold, Is.EqualTo(0.50f).Within(0.0001f));
+            Assert.That(thresholds.AdjustmentDelta, Is.EqualTo(0.05f).Within(0.0001f));
+        }
+
+        [Test]
+        public void LowMaximumNeverLowersDefaultsAndKeepsDynamicHysteresis()
+        {
+            PersonalizedThresholds thresholds =
+                PersonalizationMath.FromNegativeProbability(1f, 0.20f, 0.65f);
+
+            Assert.That(thresholds.StableOnThreshold, Is.EqualTo(0.65f).Within(0.0001f));
+            Assert.That(thresholds.RapidOnThreshold, Is.EqualTo(0.55f).Within(0.0001f));
+            Assert.That(thresholds.HandFullThreshold, Is.EqualTo(0.85f).Within(0.0001f));
+            Assert.That(thresholds.DynamicOnThreshold, Is.EqualTo(0.65f).Within(0.0001f));
+            Assert.That(thresholds.DynamicOffThreshold, Is.EqualTo(0.50f).Within(0.0001f));
+            Assert.That(
+                thresholds.DynamicOnThreshold - thresholds.DynamicOffThreshold,
+                Is.EqualTo(0.15f).Within(0.0001f));
+        }
+
+        [Test]
+        public void NonFiniteInputsReturnSafeDefaults()
+        {
+            PersonalizedThresholds thresholds =
+                PersonalizationMath.FromNegativeProbability(
+                    float.NaN,
+                    float.PositiveInfinity,
+                    float.NaN);
+
+            Assert.That(thresholds.StableOnThreshold, Is.EqualTo(0.65f));
+            Assert.That(thresholds.RapidOnThreshold, Is.EqualTo(0.45f));
+            Assert.That(thresholds.HandFullThreshold, Is.EqualTo(0.85f));
+            Assert.That(thresholds.DynamicOnThreshold, Is.EqualTo(0.60f));
+            Assert.That(thresholds.DynamicOffThreshold, Is.EqualTo(0.45f));
         }
     }
 }

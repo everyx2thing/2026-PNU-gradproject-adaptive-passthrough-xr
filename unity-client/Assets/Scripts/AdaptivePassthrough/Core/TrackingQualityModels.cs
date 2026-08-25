@@ -31,17 +31,42 @@ namespace TeamVR.AdaptivePassthrough
         public float spatialRateHz;
         public int spatialRayCount;
         public float personInferenceRateHz;
+        public float inferenceSliceMilliseconds;
+        public int maximumLayersPerFrame;
 
         public TrackingQualitySettings(
             TrackingQualityProfile profile,
             float spatialRateHz,
             int spatialRayCount,
             float personInferenceRateHz)
+            : this(
+                profile,
+                spatialRateHz,
+                spatialRayCount,
+                personInferenceRateHz,
+                1.5f,
+                2)
+        {
+        }
+
+        public TrackingQualitySettings(
+            TrackingQualityProfile profile,
+            float spatialRateHz,
+            int spatialRayCount,
+            float personInferenceRateHz,
+            float inferenceSliceMilliseconds,
+            int maximumLayersPerFrame)
         {
             this.profile = profile;
             this.spatialRateHz = Mathf.Max(1f, spatialRateHz);
             this.spatialRayCount = Mathf.Max(1, spatialRayCount);
             this.personInferenceRateHz = Mathf.Max(1f, personInferenceRateHz);
+            this.inferenceSliceMilliseconds = Mathf.Max(
+                0.1f,
+                inferenceSliceMilliseconds);
+            this.maximumLayersPerFrame = Mathf.Max(
+                1,
+                maximumLayersPerFrame);
         }
 
         public static TrackingQualitySettings For(
@@ -50,15 +75,19 @@ namespace TeamVR.AdaptivePassthrough
             switch (profile)
             {
                 case TrackingQualityProfile.Accuracy:
-                    return new TrackingQualitySettings(profile, 30f, 24, 8f);
+                    return new TrackingQualitySettings(
+                        profile, 30f, 24, 3f, 2.5f, 4);
                 case TrackingQualityProfile.Performance:
-                    return new TrackingQualitySettings(profile, 10f, 6, 3f);
+                    return new TrackingQualitySettings(
+                        profile, 10f, 6, 2f, 0.75f, 1);
                 default:
                     return new TrackingQualitySettings(
                         TrackingQualityProfile.Balanced,
                         20f,
                         12,
-                        5f);
+                        3f,
+                        1.5f,
+                        2);
             }
         }
     }
@@ -103,6 +132,8 @@ namespace TeamVR.AdaptivePassthrough
         public readonly float SampleDispersionMeters;
         public readonly float AgeSeconds;
         public readonly bool SafetyVolumeOverlap;
+        public readonly bool RawSafetyVolumeOverlap;
+        public readonly int ValidRayHitCount;
 
         public SpatialObstacleMeasurement(
             SpatialObstacleSource source,
@@ -116,7 +147,9 @@ namespace TeamVR.AdaptivePassthrough
             int sampleCount,
             float sampleDispersionMeters,
             float ageSeconds,
-            bool safetyVolumeOverlap)
+            bool safetyVolumeOverlap,
+            bool rawSafetyVolumeOverlap = false,
+            int validRayHitCount = -1)
         {
             Source = source;
             TimestampSeconds = Math.Max(0.0, timestampSeconds);
@@ -135,6 +168,10 @@ namespace TeamVR.AdaptivePassthrough
             SampleDispersionMeters = Mathf.Max(0f, sampleDispersionMeters);
             AgeSeconds = Mathf.Max(0f, ageSeconds);
             SafetyVolumeOverlap = safetyVolumeOverlap;
+            RawSafetyVolumeOverlap = rawSafetyVolumeOverlap;
+            ValidRayHitCount = validRayHitCount < 0
+                ? SampleCount
+                : Mathf.Max(0, validRayHitCount);
         }
 
         public static SpatialObstacleMeasurement Unavailable(
@@ -198,11 +235,20 @@ namespace TeamVR.AdaptivePassthrough
         public readonly float SpatialConfidence;
         public readonly float InferenceRateHz;
         public readonly float InferenceMilliseconds;
+        public readonly float InferenceActiveMilliseconds;
+        public readonly float InferenceWallMilliseconds;
+        public readonly float CaptureAgeMilliseconds;
+        public readonly int ScheduledLayerCount;
+        public readonly string InferenceBackend;
+        public readonly bool InferenceActive;
+        public readonly bool ApplicationPaused;
         public readonly int PersonTrackId;
         public readonly float PersonRawDistanceMeters;
         public readonly float PersonFilteredDistanceMeters;
         public readonly string PersonMotion;
         public readonly float PersonMissingSeconds;
+        public readonly bool PersonMetricReliable;
+        public readonly string PersonDepthRejectedReason;
         public readonly float FramesPerSecond;
         public readonly float FrameP95Milliseconds;
 
@@ -223,7 +269,16 @@ namespace TeamVR.AdaptivePassthrough
             string personMotion,
             float personMissingSeconds,
             float framesPerSecond,
-            float frameP95Milliseconds)
+            float frameP95Milliseconds,
+            float inferenceActiveMilliseconds = 0f,
+            float inferenceWallMilliseconds = 0f,
+            float captureAgeMilliseconds = 0f,
+            int scheduledLayerCount = 0,
+            string inferenceBackend = "Unavailable",
+            bool inferenceActive = false,
+            bool applicationPaused = false,
+            bool personMetricReliable = false,
+            string personDepthRejectedReason = null)
         {
             Profile = profile;
             AdaptiveLevel = Mathf.Max(0, adaptiveLevel);
@@ -235,13 +290,53 @@ namespace TeamVR.AdaptivePassthrough
             SpatialConfidence = Mathf.Clamp01(spatialConfidence);
             InferenceRateHz = Mathf.Max(0f, inferenceRateHz);
             InferenceMilliseconds = Mathf.Max(0f, inferenceMilliseconds);
+            InferenceActiveMilliseconds = Mathf.Max(
+                0f,
+                inferenceActiveMilliseconds);
+            InferenceWallMilliseconds = Mathf.Max(
+                0f,
+                inferenceWallMilliseconds);
+            CaptureAgeMilliseconds = Mathf.Max(0f, captureAgeMilliseconds);
+            ScheduledLayerCount = Mathf.Max(0, scheduledLayerCount);
+            InferenceBackend = string.IsNullOrWhiteSpace(inferenceBackend)
+                ? "Unavailable"
+                : inferenceBackend;
+            InferenceActive = inferenceActive;
+            ApplicationPaused = applicationPaused;
             PersonTrackId = Mathf.Max(0, personTrackId);
             PersonRawDistanceMeters = Mathf.Max(0f, personRawDistanceMeters);
             PersonFilteredDistanceMeters = Mathf.Max(0f, personFilteredDistanceMeters);
             PersonMotion = personMotion ?? "Unavailable";
             PersonMissingSeconds = Mathf.Max(0f, personMissingSeconds);
+            PersonMetricReliable = personMetricReliable;
+            PersonDepthRejectedReason = personMetricReliable
+                ? string.Empty
+                : personDepthRejectedReason ?? string.Empty;
             FramesPerSecond = Mathf.Max(0f, framesPerSecond);
             FrameP95Milliseconds = Mathf.Max(0f, frameP95Milliseconds);
+        }
+    }
+
+    public readonly struct TrackingTestMarker
+    {
+        public readonly string ScenarioId;
+        public readonly string Scenario;
+        public readonly string Phase;
+        public readonly float GroundTruthDistanceMeters;
+        public readonly double TimestampSeconds;
+
+        public TrackingTestMarker(
+            string scenarioId,
+            string scenario,
+            string phase,
+            float groundTruthDistanceMeters,
+            double timestampSeconds)
+        {
+            ScenarioId = scenarioId ?? string.Empty;
+            Scenario = scenario ?? string.Empty;
+            Phase = phase ?? string.Empty;
+            GroundTruthDistanceMeters = groundTruthDistanceMeters;
+            TimestampSeconds = Math.Max(0.0, timestampSeconds);
         }
     }
 }

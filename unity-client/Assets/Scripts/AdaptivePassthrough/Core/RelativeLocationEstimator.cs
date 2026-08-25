@@ -45,7 +45,7 @@ namespace TeamVR.AdaptivePassthrough
                     : HorizontalZone.Center;
 
             bool hasMetricDistance =
-                distance != null && distance.HasMetricDistance;
+                distance != null && distance.HasReliableMetricDistance;
             DistanceBand distanceBand;
             if (hasMetricDistance)
             {
@@ -91,11 +91,17 @@ namespace TeamVR.AdaptivePassthrough
                 distance == null ? 0f : distance.RawDistanceMeters,
                 distance == null ? 0f : distance.FilteredDistanceMeters,
                 distance == null ? 0f : distance.Confidence,
-                distance != null && distance.HasWorldPoint,
+                distance != null
+                    && distance.IsMetricReliable
+                    && distance.HasWorldPoint,
                 distance == null
                     ? UnityEngine.Vector3.zero
                     : distance.WorldPoint,
-                distance == null ? 0f : distance.SampleDispersionMeters);
+                distance == null ? 0f : distance.SampleDispersionMeters,
+                distance != null && distance.IsMetricReliable,
+                distance == null
+                    ? "depth_unavailable"
+                    : distance.DepthRejectedReason);
         }
     }
 }

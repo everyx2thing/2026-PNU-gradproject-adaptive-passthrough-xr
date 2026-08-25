@@ -210,13 +210,25 @@ namespace TeamVR.AdaptivePassthrough
                     sampleDistances,
                     points.Length,
                     bboxArea,
-                    sampleWeights);
-            if (result.BoundingBoxDepthConflict
-                || (result.HasMetricDistance && result.Confidence < 0.45f))
+                    sampleWeights,
+                    PersonDepthReliability.MinimumConfidence,
+                    PersonDepthReliability.IsLargeBox(box)
+                        ? PersonDepthReliability.BackgroundDistanceMeters
+                        : float.PositiveInfinity,
+                    PersonDepthReliability.MaximumDispersionMeters);
+            string rejectedReason;
+            bool reliable = PersonDepthReliability.IsReliable(
+                result,
+                box,
+                out rejectedReason);
+            result = result.WithMetricReliability(
+                reliable,
+                rejectedReason);
+            if (!reliable)
             {
                 expandNextFrame.Add(tracked.TrackId);
             }
-            if (result.HasMetricDistance)
+            if (result.HasReliableMetricDistance)
             {
                 Vector2 centerViewport = new Vector2(
                     box.centerX,
@@ -232,8 +244,10 @@ namespace TeamVR.AdaptivePassthrough
                             * result.FilteredDistanceMeters,
                         frameTimestampSeconds));
             }
-            IsDepthReady = result.HasMetricDistance;
-            LastFailureReason = result.FailureReason;
+            IsDepthReady = result.HasReliableMetricDistance;
+            LastFailureReason = result.IsMetricReliable
+                ? result.FailureReason
+                : result.DepthRejectedReason;
             return result;
         }
 
@@ -330,6 +344,7 @@ namespace TeamVR.AdaptivePassthrough
             int hitCount = 0;
             float minimum = float.PositiveInfinity;
             float maximum = 0f;
+            float distanceSum = 0f;
             for (int i = 0; i < ObservationWorldSamplePoints.Length; i++)
             {
                 Vector2 relative = ObservationWorldSamplePoints[i];
@@ -358,10 +373,11 @@ namespace TeamVR.AdaptivePassthrough
                 pointSum += hit.point;
                 minimum = Mathf.Min(minimum, distance);
                 maximum = Mathf.Max(maximum, distance);
+                distanceSum += distance;
                 hitCount++;
             }
 
-            if (hitCount < 2)
+            if (hitCount < PersonDepthReliability.MinimumSamples)
             {
                 return false;
             }
@@ -372,11 +388,19 @@ namespace TeamVR.AdaptivePassthrough
                 return false;
             }
 
+            float averageDistance = distanceSum / hitCount;
+            if (PersonDepthReliability.IsBackgroundSuspected(
+                    box,
+                    averageDistance))
+            {
+                return false;
+            }
+
             worldPoint = pointSum / hitCount;
             confidence = Mathf.Clamp01(
                 hitCount / (float)ObservationWorldSamplePoints.Length
                 * Mathf.Exp(-dispersion / 0.30f));
-            return true;
+            return confidence >= PersonDepthReliability.MinimumConfidence;
         }
 
         private static float ExpandedWeight(Vector2 point)

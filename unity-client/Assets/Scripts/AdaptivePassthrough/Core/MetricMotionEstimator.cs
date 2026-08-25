@@ -73,7 +73,7 @@ namespace TeamVR.AdaptivePassthrough
                     0,
                     0.0,
                     0f);
-            if (distance == null || !distance.HasMetricDistance)
+            if (distance == null || !distance.HasReliableMetricDistance)
             {
                 return fallback.WithMetric(
                     distance == null
@@ -85,7 +85,9 @@ namespace TeamVR.AdaptivePassthrough
                     fallback.State,
                     fallback.Reliability,
                     fallback.SampleCount,
-                    fallback.ObservationSeconds);
+                    fallback.ObservationSeconds,
+                    distance != null
+                        && distance.BoundingBoxDepthConflict);
             }
 
             TrackState state = GetOrCreate(trackId);

@@ -81,12 +81,38 @@ namespace TeamVR.AdaptivePassthrough.Tests
                 Assert.That(
                     serializedRunner.FindProperty("boxesAreNormalized").boolValue,
                     Is.False);
+                Assert.That(
+                    serializedRunner
+                        .FindProperty("benchmarkCpuGpuOnQuest")
+                        .boolValue,
+                    Is.False);
+                Assert.That(
+                    serializedRunner.FindProperty("backend").intValue,
+                    Is.EqualTo((int)BackendType.CPU));
+                Assert.That(
+                    serializedRunner.FindProperty("inferenceRateHz").floatValue,
+                    Is.EqualTo(3f).Within(0.0001f));
                 Assert.That(environmentDepth.RemoveHands, Is.True);
             }
             finally
             {
                 EditorSceneManager.CloseScene(scene, true);
             }
+        }
+
+        [Test]
+        public void QuestInferenceUsesLayeredSchedulingAndPauseRecovery()
+        {
+            string source = File.ReadAllText(
+                Path.Combine(
+                    Application.dataPath,
+                    "Scripts/AdaptivePassthrough/Quest/QuestPersonDetectionRunner.cs"));
+
+            Assert.That(source, Does.Contain("ScheduleIterable(activeInput)"));
+            Assert.That(source, Does.Contain("AdvanceInferenceSchedule"));
+            Assert.That(source, Does.Contain("CancelInferenceAndWorker"));
+            Assert.That(source, Does.Contain("OnApplicationPause"));
+            Assert.That(source, Does.Not.Contain("worker.Schedule(input)"));
         }
 
         [Test]
@@ -356,9 +382,20 @@ namespace TeamVR.AdaptivePassthrough.Tests
                         .FindPropertyRelative("releaseDelaySeconds")
                         .floatValue,
                     Is.EqualTo(0.35f).Within(0.0001f));
+                var serializedDynamicPolicy =
+                    new SerializedObject(dynamicPolicy);
                 SerializedProperty dynamicSettings =
-                    new SerializedObject(dynamicPolicy)
-                        .FindProperty("decisionSettings");
+                    serializedDynamicPolicy.FindProperty("decisionSettings");
+                Assert.That(
+                    dynamicSettings
+                        .FindPropertyRelative("onThreshold")
+                        .floatValue,
+                    Is.EqualTo(0.60f).Within(0.0001f));
+                Assert.That(
+                    dynamicSettings
+                        .FindPropertyRelative("offThreshold")
+                        .floatValue,
+                    Is.EqualTo(0.45f).Within(0.0001f));
                 Assert.That(
                     dynamicSettings
                         .FindPropertyRelative("minimumHoldSeconds")
@@ -475,6 +512,16 @@ namespace TeamVR.AdaptivePassthrough.Tests
                     Is.SameAs(staticPolicy));
                 Assert.That(
                     serializedPersonalization
+                        .FindProperty("dynamicPolicy")
+                        .objectReferenceValue,
+                    Is.SameAs(dynamicPolicy));
+                Assert.That(
+                    serializedPersonalization
+                        .FindProperty("presentation")
+                        .objectReferenceValue,
+                    Is.SameAs(presentation));
+                Assert.That(
+                    serializedPersonalization
                         .FindProperty("sourceModelArtifact")
                         .objectReferenceValue,
                     Is.Not.Null);
@@ -524,6 +571,11 @@ namespace TeamVR.AdaptivePassthrough.Tests
                         .FindProperty("staticPolicy")
                         .objectReferenceValue,
                     Is.SameAs(staticPolicy));
+                Assert.That(
+                    serializedPersonalizationPanel
+                        .FindProperty("dynamicPolicy")
+                        .objectReferenceValue,
+                    Is.SameAs(dynamicPolicy));
 
                 personalization.GetType()
                     .GetMethod("SetBypassColdStartForTesting")
@@ -550,12 +602,29 @@ namespace TeamVR.AdaptivePassthrough.Tests
                         .GetField("StableOnThreshold")
                         .GetValue(inferredThresholds),
                     Is.EqualTo(0.75f).Within(0.0001f));
+                Assert.That(
+                    (float)inferredThresholds.GetType()
+                        .GetField("DynamicOnThreshold")
+                        .GetValue(inferredThresholds),
+                    Is.EqualTo(0.70f).Within(0.0001f));
+                Assert.That(
+                    (float)inferredThresholds.GetType()
+                        .GetField("DynamicOffThreshold")
+                        .GetValue(inferredThresholds),
+                    Is.EqualTo(0.55f).Within(0.0001f));
 
                 float emergencyBefore = staticSettings
                     .FindPropertyRelative("emergencyDistance")
                     .floatValue;
                 personalization.GetType()
-                    .GetMethod("SetThresholdPreview")
+                    .GetMethod(
+                        "SetThresholdPreview",
+                        new[]
+                        {
+                            typeof(float),
+                            typeof(float),
+                            typeof(float)
+                        })
                     .Invoke(
                         personalization,
                         new object[] { 0.70f, 0.50f, 0.90f });
@@ -563,6 +632,7 @@ namespace TeamVR.AdaptivePassthrough.Tests
                     .GetMethod("ApplyThresholdPreview")
                     .Invoke(personalization, null);
                 serializedStaticPolicy.Update();
+                serializedDynamicPolicy.Update();
                 Assert.That(
                     staticSettings
                         .FindPropertyRelative("stableOnThreshold")
@@ -583,9 +653,36 @@ namespace TeamVR.AdaptivePassthrough.Tests
                         .FindPropertyRelative("emergencyDistance")
                         .floatValue,
                     Is.EqualTo(emergencyBefore).Within(0.0001f));
+                Assert.That(
+                    dynamicSettings
+                        .FindPropertyRelative("onThreshold")
+                        .floatValue,
+                    Is.EqualTo(0.70f).Within(0.0001f));
+                Assert.That(
+                    dynamicSettings
+                        .FindPropertyRelative("offThreshold")
+                        .floatValue,
+                    Is.EqualTo(0.55f).Within(0.0001f));
                 personalization.GetType()
                     .GetMethod("RestoreSafeDefaults")
                     .Invoke(personalization, null);
+                serializedStaticPolicy.Update();
+                serializedDynamicPolicy.Update();
+                Assert.That(
+                    staticSettings
+                        .FindPropertyRelative("stableOnThreshold")
+                        .floatValue,
+                    Is.EqualTo(0.65f).Within(0.0001f));
+                Assert.That(
+                    dynamicSettings
+                        .FindPropertyRelative("onThreshold")
+                        .floatValue,
+                    Is.EqualTo(0.60f).Within(0.0001f));
+                Assert.That(
+                    dynamicSettings
+                        .FindPropertyRelative("offThreshold")
+                        .floatValue,
+                    Is.EqualTo(0.45f).Within(0.0001f));
                 Assert.That(
                     new SerializedObject(rightControllerHelper)
                         .FindProperty("RayHelper")

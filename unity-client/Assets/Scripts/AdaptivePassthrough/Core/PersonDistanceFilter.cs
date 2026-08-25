@@ -75,7 +75,10 @@ namespace TeamVR.AdaptivePassthrough
             IReadOnlyList<float> samples,
             int requestedSampleCount,
             float boundingBoxArea,
-            IReadOnlyList<float> sampleWeights = null)
+            IReadOnlyList<float> sampleWeights = null,
+            float minimumConfidenceToCommit = 0f,
+            float maximumAcceptedRawDistance = float.PositiveInfinity,
+            float maximumAcceptedDispersion = float.PositiveInfinity)
         {
             float rawDistance;
             int selectedSampleCount;
@@ -99,14 +102,47 @@ namespace TeamVR.AdaptivePassthrough
                     "insufficient_depth_samples");
             }
 
-            TrackState state = GetOrCreate(trackId);
-            state.RawWindow.Add(rawDistance);
-            while (state.RawWindow.Count > medianWindowSamples)
+            int acceptedRequestedSamples = Math.Max(
+                requestedSampleCount,
+                selectedSampleCount);
+            float sampleRatio = acceptedRequestedSamples <= 0
+                ? 0f
+                : selectedSampleCount / (float)acceptedRequestedSamples;
+            float consistency = (float)Math.Exp(
+                -Math.Max(0f, dispersion) / clusterGapMeters);
+            float rawConfidence = Clamp01(sampleRatio * consistency);
+            if (rawConfidence < Math.Max(0f, minimumConfidenceToCommit)
+                || rawDistance > maximumAcceptedRawDistance
+                || dispersion > maximumAcceptedDispersion)
             {
-                state.RawWindow.RemoveAt(0);
+                string rejectedReason = rawDistance
+                        > maximumAcceptedRawDistance
+                    ? "background_depth_suspected"
+                    : dispersion > maximumAcceptedDispersion
+                        ? "depth_dispersion"
+                        : "low_depth_confidence";
+                return new PersonDistanceMeasurement(
+                    trackId,
+                    timestampSeconds,
+                    PersonDistanceSource.EnvironmentDepth,
+                    true,
+                    rawDistance,
+                    rawDistance,
+                    rawConfidence,
+                    acceptedRequestedSamples,
+                    selectedSampleCount,
+                    0f,
+                    boundingBoxArea,
+                    rejectedReason,
+                    dispersion,
+                    false,
+                    false,
+                    default,
+                    false,
+                    rejectedReason);
             }
 
-            float candidate = MedianCopy(state);
+            TrackState state = GetOrCreate(trackId);
             string note = string.Empty;
             double jumpElapsed = state.HasFilteredDistance
                 ? Math.Max(0.0, timestampSeconds - state.LastUpdateSeconds)
@@ -118,6 +154,36 @@ namespace TeamVR.AdaptivePassthrough
             bool depthMovingAway = state.HasFilteredDistance
                 && rawDistance > state.FilteredDistance + 0.05f;
             bool bboxDepthConflict = bboxGrowing && depthMovingAway;
+            if (bboxDepthConflict)
+            {
+                return new PersonDistanceMeasurement(
+                    trackId,
+                    timestampSeconds,
+                    PersonDistanceSource.EnvironmentDepth,
+                    true,
+                    rawDistance,
+                    state.FilteredDistance,
+                    rawConfidence * 0.45f,
+                    acceptedRequestedSamples,
+                    selectedSampleCount,
+                    0f,
+                    boundingBoxArea,
+                    "bbox_depth_conflict",
+                    dispersion,
+                    true,
+                    false,
+                    default,
+                    false,
+                    "bbox_depth_conflict");
+            }
+
+            state.RawWindow.Add(rawDistance);
+            while (state.RawWindow.Count > medianWindowSamples)
+            {
+                state.RawWindow.RemoveAt(0);
+            }
+
+            float candidate = MedianCopy(state);
             if (state.HasFilteredDistance
                 && Math.Abs(rawDistance - state.FilteredDistance)
                     > dynamicJumpThreshold)
@@ -151,14 +217,6 @@ namespace TeamVR.AdaptivePassthrough
                 state.PendingJumpCount = 0;
             }
 
-            if (bboxDepthConflict)
-            {
-                candidate = state.FilteredDistance;
-                note = string.IsNullOrEmpty(note)
-                    ? "bbox_depth_conflict"
-                    : note + ";bbox_depth_conflict";
-            }
-
             double elapsed = state.HasFilteredDistance
                 ? Math.Max(0.0, timestampSeconds - state.LastUpdateSeconds)
                 : 0.0;
@@ -173,22 +231,11 @@ namespace TeamVR.AdaptivePassthrough
             state.LastRawDistance = rawDistance;
             state.LastUpdateSeconds = timestampSeconds;
             state.LastMetricSeconds = timestampSeconds;
-            state.LastRequestedSamples = Math.Max(
-                requestedSampleCount,
-                selectedSampleCount);
+            state.LastRequestedSamples = acceptedRequestedSamples;
             state.LastValidSamples = selectedSampleCount;
             state.LastBoundingBoxArea = boundingBoxArea;
 
-            float sampleRatio = state.LastRequestedSamples <= 0
-                ? 0f
-                : selectedSampleCount / (float)state.LastRequestedSamples;
-            float consistency = (float)Math.Exp(
-                -Math.Max(0f, dispersion) / clusterGapMeters);
-            state.LastConfidence = Clamp01(sampleRatio * consistency);
-            if (bboxDepthConflict)
-            {
-                state.LastConfidence *= 0.45f;
-            }
+            state.LastConfidence = rawConfidence;
 
             return new PersonDistanceMeasurement(
                 trackId,

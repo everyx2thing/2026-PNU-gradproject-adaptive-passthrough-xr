@@ -62,6 +62,8 @@ namespace TeamVR.AdaptivePassthrough
         public readonly bool HasWorldPoint;
         public readonly Vector3 WorldPoint;
         public readonly string FailureReason;
+        public readonly bool IsMetricReliable;
+        public readonly string DepthRejectedReason;
 
         public PersonDistanceMeasurement(
             int trackId,
@@ -79,7 +81,9 @@ namespace TeamVR.AdaptivePassthrough
             float sampleDispersionMeters = 0f,
             bool boundingBoxDepthConflict = false,
             bool hasWorldPoint = false,
-            Vector3 worldPoint = default)
+            Vector3 worldPoint = default,
+            bool? isMetricReliable = null,
+            string depthRejectedReason = null)
         {
             TrackId = Math.Max(0, trackId);
             TimestampSeconds = Math.Max(0.0, timestampSeconds);
@@ -95,9 +99,20 @@ namespace TeamVR.AdaptivePassthrough
             SampleDispersionMeters = NonNegativeFinite(
                 sampleDispersionMeters);
             BoundingBoxDepthConflict = boundingBoxDepthConflict;
-            HasWorldPoint = hasWorldPoint;
-            WorldPoint = hasWorldPoint ? worldPoint : Vector3.zero;
             FailureReason = failureReason ?? string.Empty;
+            bool defaultReliable = Available
+                && Source == PersonDistanceSource.EnvironmentDepth
+                && FilteredDistanceMeters >= 0.20f
+                && Confidence >= 0.45f
+                && ValidSampleCount >= 3
+                && SampleDispersionMeters <= 0.35f
+                && !BoundingBoxDepthConflict;
+            IsMetricReliable = isMetricReliable ?? defaultReliable;
+            DepthRejectedReason = IsMetricReliable
+                ? string.Empty
+                : depthRejectedReason ?? string.Empty;
+            HasWorldPoint = hasWorldPoint && IsMetricReliable;
+            WorldPoint = HasWorldPoint ? worldPoint : Vector3.zero;
         }
 
         public bool HasMetricDistance
@@ -108,6 +123,11 @@ namespace TeamVR.AdaptivePassthrough
                     && Source == PersonDistanceSource.EnvironmentDepth
                     && FilteredDistanceMeters >= 0.20f;
             }
+        }
+
+        public bool HasReliableMetricDistance
+        {
+            get { return HasMetricDistance && IsMetricReliable; }
         }
 
         public PersonDistanceMeasurement WithWorldPoint(Vector3 worldPoint)
@@ -128,7 +148,34 @@ namespace TeamVR.AdaptivePassthrough
                 SampleDispersionMeters,
                 BoundingBoxDepthConflict,
                 true,
-                worldPoint);
+                worldPoint,
+                IsMetricReliable,
+                DepthRejectedReason);
+        }
+
+        public PersonDistanceMeasurement WithMetricReliability(
+            bool reliable,
+            string rejectedReason = null)
+        {
+            return new PersonDistanceMeasurement(
+                TrackId,
+                TimestampSeconds,
+                Source,
+                Available,
+                RawDistanceMeters,
+                FilteredDistanceMeters,
+                Confidence,
+                RequestedSampleCount,
+                ValidSampleCount,
+                SourceAgeSeconds,
+                BoundingBoxArea,
+                FailureReason,
+                SampleDispersionMeters,
+                BoundingBoxDepthConflict,
+                reliable && HasWorldPoint,
+                WorldPoint,
+                reliable,
+                reliable ? string.Empty : rejectedReason);
         }
 
         public static PersonDistanceMeasurement BoundingBoxFallback(
@@ -188,6 +235,80 @@ namespace TeamVR.AdaptivePassthrough
         private static bool IsFinite(float value)
         {
             return !float.IsNaN(value) && !float.IsInfinity(value);
+        }
+    }
+
+    public static class PersonDepthReliability
+    {
+        public const float MinimumConfidence = 0.45f;
+        public const int MinimumSamples = 3;
+        public const float MaximumDispersionMeters = 0.35f;
+        public const float BackgroundDistanceMeters = 2.0f;
+        public const float LargeBoxHeight = 0.75f;
+        public const float LargeBoxArea = 0.35f;
+
+        public static bool IsBackgroundSuspected(
+            NormalizedBoundingBox box,
+            float distanceMeters)
+        {
+            return distanceMeters > BackgroundDistanceMeters
+                && IsLargeBox(box);
+        }
+
+        public static bool IsLargeBox(NormalizedBoundingBox box)
+        {
+            return box.height >= LargeBoxHeight
+                || box.Area >= LargeBoxArea;
+        }
+
+        public static bool IsReliable(
+            PersonDistanceMeasurement measurement,
+            NormalizedBoundingBox box,
+            out string rejectedReason)
+        {
+            if (measurement == null || !measurement.HasMetricDistance)
+            {
+                rejectedReason = measurement == null
+                    ? "depth_unavailable"
+                    : measurement.FailureReason;
+                return false;
+            }
+
+            if (IsBackgroundSuspected(
+                    box,
+                    measurement.FilteredDistanceMeters))
+            {
+                rejectedReason = "background_depth_suspected";
+                return false;
+            }
+
+            if (measurement.BoundingBoxDepthConflict)
+            {
+                rejectedReason = "bbox_depth_conflict";
+                return false;
+            }
+
+            if (measurement.Confidence < MinimumConfidence)
+            {
+                rejectedReason = "low_depth_confidence";
+                return false;
+            }
+
+            if (measurement.ValidSampleCount < MinimumSamples)
+            {
+                rejectedReason = "insufficient_depth_samples";
+                return false;
+            }
+
+            if (measurement.SampleDispersionMeters
+                > MaximumDispersionMeters)
+            {
+                rejectedReason = "depth_dispersion";
+                return false;
+            }
+
+            rejectedReason = string.Empty;
+            return true;
         }
     }
 }

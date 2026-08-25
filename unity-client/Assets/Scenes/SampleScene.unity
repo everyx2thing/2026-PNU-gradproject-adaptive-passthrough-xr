@@ -2511,10 +2511,12 @@ MonoBehaviour:
   qualityController: {fileID: 458888779}
   modelAsset: {fileID: 5022602860645237092, guid: 1d795a1c44f3121489a7c2cacdff3368, type: 3}
   backend: 512
+  benchmarkCpuGpuOnQuest: 0
+  backendBenchmarkSamples: 12
   confidenceThreshold: 0.55
   trackingConfidenceThreshold: 0.35
   iouThreshold: 0.45
-  inferenceRateHz: 5
+  inferenceRateHz: 3
   personClassId: 0
   flipVertical: 0
   boxesAreCenterFormat: 1
@@ -2705,6 +2707,8 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::PersonalizationRuntimeController
   staticPolicy: {fileID: 458888772}
+  dynamicPolicy: {fileID: 458888771}
+  presentation: {fileID: 458888770}
   measurementProvider: {fileID: 1676843309}
   modelAsset: {fileID: 5022602860645237092, guid: 9d168baf74a4f324abe98b25a990b50f, type: 3}
   sourceModelArtifact: {fileID: 102900000, guid: fc8b1a252568c1647942452ddf2c24ab, type: 3}
@@ -2736,6 +2740,9 @@ MonoBehaviour:
     StableOnThreshold: 0.65
     RapidOnThreshold: 0.45
     HandFullThreshold: 0.85
+    DynamicOnThreshold: 0.6
+    DynamicOffThreshold: 0.45
+    AdjustmentDelta: 0
   enableLogging: 1
   filePrefix: personalization
 --- !u!114 &458888778

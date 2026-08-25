@@ -154,5 +154,62 @@ namespace TeamVR.AdaptivePassthrough.Tests
                 Is.EqualTo(baseline.FilteredDistanceMeters).Within(0.001f));
             Assert.That(conflict.Confidence, Is.LessThan(0.45f));
         }
+
+        [Test]
+        public void BackgroundDepthIsLoggedButNotCommittedToFilter()
+        {
+            var filter = new PersonDistanceFilter();
+            PersonDistanceMeasurement rejected = filter.UpdateMetric(
+                8,
+                1.0,
+                new[] { 2.64f, 2.70f, 2.76f, 2.72f },
+                4,
+                0.70f,
+                null,
+                0.45f,
+                2.0f,
+                0.35f);
+            PersonDistanceMeasurement fallback =
+                filter.GetHeldOrBoundingBoxFallback(
+                    8,
+                    1.1,
+                    0.70f,
+                    "no_hit");
+
+            Assert.That(rejected.RawDistanceMeters,
+                Is.EqualTo(2.71f).Within(0.04f));
+            Assert.That(rejected.IsMetricReliable, Is.False);
+            Assert.That(rejected.DepthRejectedReason,
+                Is.EqualTo("background_depth_suspected"));
+            Assert.That(fallback.Source,
+                Is.EqualTo(PersonDistanceSource.BoundingBoxProxy));
+        }
+
+        [Test]
+        public void LargeBoundingBoxRejectsTwoPointSevenMeterDepth()
+        {
+            var measurement = new PersonDistanceMeasurement(
+                3,
+                1.0,
+                PersonDistanceSource.EnvironmentDepth,
+                true,
+                2.7f,
+                2.7f,
+                0.8f,
+                13,
+                10,
+                0f,
+                0.60f,
+                null,
+                0.10f);
+            string reason;
+            bool reliable = PersonDepthReliability.IsReliable(
+                measurement,
+                new NormalizedBoundingBox(0.5f, 0.5f, 0.75f, 0.90f),
+                out reason);
+
+            Assert.That(reliable, Is.False);
+            Assert.That(reason, Is.EqualTo("background_depth_suspected"));
+        }
     }
 }

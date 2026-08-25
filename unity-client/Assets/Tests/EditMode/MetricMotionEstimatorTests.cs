@@ -80,6 +80,53 @@ namespace TeamVR.AdaptivePassthrough.Tests
                 Is.Not.EqualTo(DynamicMotionState.Receding));
         }
 
+        [Test]
+        public void LowConfidenceIncreasingDepthUsesBoundingBoxApproach()
+        {
+            var estimator = new MetricMotionEstimator();
+            var bboxApproach = new MotionEstimate(
+                DynamicMotionState.Approaching,
+                0.20f,
+                4f,
+                0f,
+                4,
+                0.4,
+                0.8f);
+            MotionEstimate result = null;
+            for (int i = 0; i < 5; i++)
+            {
+                result = estimator.Estimate(
+                    i * 0.1,
+                    15,
+                    new PersonDistanceMeasurement(
+                        15,
+                        i * 0.1,
+                        PersonDistanceSource.EnvironmentDepth,
+                        true,
+                        2.64f + i * 0.06f,
+                        2.64f + i * 0.06f,
+                        0.15f,
+                        13,
+                        3,
+                        0f,
+                        0.4f,
+                        "low_depth_confidence",
+                        0.1f,
+                        false,
+                        false,
+                        default,
+                        false,
+                        "low_depth_confidence"),
+                    bboxApproach);
+            }
+
+            Assert.That(result.HasMetricMotion, Is.False);
+            Assert.That(result.State,
+                Is.EqualTo(DynamicMotionState.Approaching));
+            Assert.That(result.State,
+                Is.Not.EqualTo(DynamicMotionState.Receding));
+        }
+
         private static PersonDistanceMeasurement Metric(
             int trackId,
             double timestamp,

@@ -24,6 +24,10 @@ namespace TeamVR.AdaptivePassthrough
             public bool hasDistance;
             public float filteredDistance;
             public double lastMeasurementAt;
+            public bool rawSafetyOverlap;
+            public bool confirmedSafetyOverlap;
+            public int overlapConfirmations;
+            public int overlapReleaseConfirmations;
         }
 
         [SerializeField] private EnvironmentRaycastManager raycastManager;
@@ -156,29 +160,21 @@ namespace TeamVR.AdaptivePassthrough
                 return false;
             }
 
-            bool overlap = raycastManager.CheckBox(
-                probe.Origin,
-                Vector3.one * probe.SafetyRadius,
-                Quaternion.identity);
             EnvironmentRaycastHit hit;
             bool hasHit = raycastManager.Raycast(
                     new Ray(probe.Origin, probe.Direction),
                     out hit,
                     maximumDistanceMeters)
                 && hit.status == EnvironmentRaycastHitStatus.Hit;
-            if (!hasHit && !overlap)
+            if (!hasHit)
             {
                 measurement = SpatialObstacleMeasurement.Unavailable(now);
                 return false;
             }
 
-            float distance = hasHit
-                ? Vector3.Distance(probe.Origin, hit.point)
-                : 0f;
-            Vector3 hitPoint = hasHit
-                ? hit.point
-                : probe.Origin + probe.Direction * probe.SafetyRadius;
-            Vector3 normal = hasHit ? hit.normal : -probe.Direction;
+            float distance = Vector3.Distance(probe.Origin, hit.point);
+            Vector3 hitPoint = hit.point;
+            Vector3 normal = hit.normal;
             float closingSpeed = Mathf.Max(
                 0f,
                 Vector3.Dot(probe.Velocity, probe.Direction));
@@ -190,11 +186,13 @@ namespace TeamVR.AdaptivePassthrough
                 hitPoint,
                 normal,
                 closingSpeed,
-                overlap ? 1f : 0.75f,
+                0.75f,
                 1,
                 0f,
                 0f,
-                overlap);
+                false,
+                false,
+                1);
             return true;
         }
 
@@ -213,6 +211,18 @@ namespace TeamVR.AdaptivePassthrough
             UpdateVelocity(headState, head, deltaSeconds);
             UpdateVelocity(leftState, leftHand, deltaSeconds);
             UpdateVelocity(rightState, rightHand, deltaSeconds);
+            UpdateSafetyOverlap(
+                headState,
+                head,
+                headSafetyRadius);
+            UpdateSafetyOverlap(
+                leftState,
+                leftHand,
+                handSafetyRadius);
+            UpdateSafetyOverlap(
+                rightState,
+                rightHand,
+                handSafetyRadius);
 
             int probeCount = BuildProbes(requestedProbeCount);
             int hitCount = 0;
@@ -227,6 +237,37 @@ namespace TeamVR.AdaptivePassthrough
 
             if (hitCount <= 0)
             {
+                SpatialObstacleMeasurement overlapHead =
+                    CreateOverlapOnlyMeasurement(
+                        SpatialProbeOwner.Head,
+                        headState,
+                        now);
+                SpatialObstacleMeasurement overlapLeft =
+                    CreateOverlapOnlyMeasurement(
+                        SpatialProbeOwner.LeftHand,
+                        leftState,
+                        now);
+                SpatialObstacleMeasurement overlapRight =
+                    CreateOverlapOnlyMeasurement(
+                        SpatialProbeOwner.RightHand,
+                        rightState,
+                        now);
+                if (overlapHead.Available
+                    || overlapLeft.Available
+                    || overlapRight.Available)
+                {
+                    lastEnvironmentHitAt = now;
+                    LatestMeasurement = Closest(
+                        overlapHead,
+                        Closest(overlapLeft, overlapRight));
+                    CurrentStaticBoundaryFrame = BuildRiskFrame(
+                        now,
+                        overlapHead,
+                        overlapLeft,
+                        overlapRight);
+                    return;
+                }
+
                 float environmentAge = lastEnvironmentHitAt > 0.0
                     ? (float)Math.Max(0.0, now - lastEnvironmentHitAt)
                     : float.PositiveInfinity;
@@ -402,7 +443,6 @@ namespace TeamVR.AdaptivePassthrough
             double now)
         {
             int count = 0;
-            bool overlap = false;
             for (int i = 0; i < sourceCount; i++)
             {
                 if (measurementOwners[i] != owner || !source[i].Available)
@@ -411,12 +451,11 @@ namespace TeamVR.AdaptivePassthrough
                 }
 
                 sortedMeasurementIndices[count++] = i;
-                overlap |= source[i].SafetyVolumeOverlap;
             }
 
             if (count <= 0)
             {
-                return SpatialObstacleMeasurement.Unavailable(now);
+                return CreateOverlapOnlyMeasurement(owner, state, now);
             }
 
             for (int i = 1; i < count; i++)
@@ -453,7 +492,7 @@ namespace TeamVR.AdaptivePassthrough
             int medianPosition = clusterCount / 2;
             int selectedIndex = sortedMeasurementIndices[medianPosition];
             SpatialObstacleMeasurement selected = source[selectedIndex];
-            float rawDistance = overlap ? 0f : selected.DistanceMeters;
+            float rawDistance = selected.DistanceMeters;
             double elapsed = state.hasDistance
                 ? Math.Max(0.0, now - state.lastMeasurementAt)
                 : 0.0;
@@ -482,7 +521,8 @@ namespace TeamVR.AdaptivePassthrough
             float consistency = Mathf.Exp(
                 -dispersion / Mathf.Max(0.01f, clusterGapMeters));
             float sampleRatio = clusterCount / (float)Mathf.Max(1, count);
-            float confidence = overlap
+            bool confirmedOverlap = state.confirmedSafetyOverlap;
+            float confidence = confirmedOverlap
                 ? 1f
                 : Mathf.Clamp01(0.35f + 0.65f * sampleRatio * consistency);
             return new SpatialObstacleMeasurement(
@@ -498,7 +538,9 @@ namespace TeamVR.AdaptivePassthrough
                 clusterCount,
                 dispersion,
                 0f,
-                overlap);
+                confirmedOverlap,
+                state.rawSafetyOverlap,
+                clusterCount);
         }
 
         private StaticBoundaryRiskFrame BuildRiskFrame(
@@ -566,8 +608,7 @@ namespace TeamVR.AdaptivePassthrough
                 0.35f,
                 0f,
                 0.10f);
-            if (measurement.SafetyVolumeOverlap
-                || measurement.DistanceMeters <= 0.25f)
+            if (ShouldForceStaticEmergency(measurement))
             {
                 risk = 1f;
             }
@@ -620,8 +661,7 @@ namespace TeamVR.AdaptivePassthrough
                 ttcRisk,
                 0.55f,
                 0.45f);
-            if (measurement.SafetyVolumeOverlap
-                || measurement.DistanceMeters <= 0.25f)
+            if (ShouldForceStaticEmergency(measurement))
             {
                 risk = 1f;
             }
@@ -639,6 +679,176 @@ namespace TeamVR.AdaptivePassthrough
                 ttcRisk,
                 risk,
                 direction);
+        }
+
+        private void UpdateSafetyOverlap(
+            BodyState state,
+            Transform trackedTransform,
+            float safetyRadius)
+        {
+            bool rawOverlap = trackedTransform != null
+                && raycastManager != null
+                && EnvironmentRaycastManager.IsSupported
+                && CheckBoxHitOnly(
+                    trackedTransform.position,
+                    Vector3.one * Mathf.Max(0.01f, safetyRadius),
+                    trackedTransform.rotation);
+            state.rawSafetyOverlap = rawOverlap;
+            UpdateSafetyOverlapConfirmation(
+                rawOverlap,
+                ref state.confirmedSafetyOverlap,
+                ref state.overlapConfirmations,
+                ref state.overlapReleaseConfirmations);
+        }
+
+        public static void UpdateSafetyOverlapConfirmation(
+            bool rawOverlap,
+            ref bool confirmedOverlap,
+            ref int confirmationCount,
+            ref int releaseCount)
+        {
+            if (rawOverlap)
+            {
+                confirmationCount++;
+                releaseCount = 0;
+                if (confirmationCount >= 2)
+                {
+                    confirmedOverlap = true;
+                }
+
+                return;
+            }
+
+            confirmationCount = 0;
+            if (!confirmedOverlap)
+            {
+                releaseCount = 0;
+                return;
+            }
+
+            releaseCount++;
+            if (releaseCount >= 2)
+            {
+                confirmedOverlap = false;
+                releaseCount = 0;
+            }
+        }
+
+        private bool CheckBoxHitOnly(
+            Vector3 center,
+            Vector3 halfExtents,
+            Quaternion orientation)
+        {
+            for (int axis = 0; axis < 3; axis++)
+            {
+                int crossA = (axis + 1) % 3;
+                int crossB = (axis + 2) % 3;
+                for (int signA = -1; signA <= 1; signA += 2)
+                {
+                    for (int signB = -1; signB <= 1; signB += 2)
+                    {
+                        Vector3 localStart = Vector3.zero;
+                        Vector3 localEnd = Vector3.zero;
+                        localStart[axis] = -halfExtents[axis];
+                        localEnd[axis] = halfExtents[axis];
+                        localStart[crossA] = halfExtents[crossA] * signA;
+                        localEnd[crossA] = localStart[crossA];
+                        localStart[crossB] = halfExtents[crossB] * signB;
+                        localEnd[crossB] = localStart[crossB];
+                        Vector3 start = center + orientation * localStart;
+                        Vector3 end = center + orientation * localEnd;
+                        Vector3 direction = end - start;
+                        float distance = direction.magnitude;
+                        if (distance <= 0.01f)
+                        {
+                            continue;
+                        }
+
+                        EnvironmentRaycastHit hit;
+                        raycastManager.Raycast(
+                            new Ray(start, direction),
+                            out hit,
+                            distance);
+                        if (IsSafetyOverlapStatus(hit.status))
+                        {
+                            return true;
+                        }
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        public static bool IsSafetyOverlapStatus(
+            EnvironmentRaycastHitStatus status)
+        {
+            return status == EnvironmentRaycastHitStatus.Hit;
+        }
+
+        public static bool ShouldForceStaticEmergency(
+            SpatialObstacleMeasurement measurement)
+        {
+            return measurement.Available
+                && (measurement.SafetyVolumeOverlap
+                    || measurement.DistanceMeters <= 0.25f);
+        }
+
+        private SpatialObstacleMeasurement CreateOverlapOnlyMeasurement(
+            SpatialProbeOwner owner,
+            BodyState state,
+            double now)
+        {
+            if (!state.confirmedSafetyOverlap)
+            {
+                return SpatialObstacleMeasurement.Unavailable(now);
+            }
+
+            Transform trackedTransform;
+            float radius;
+            switch (owner)
+            {
+                case SpatialProbeOwner.LeftHand:
+                    trackedTransform = leftHand;
+                    radius = handSafetyRadius;
+                    break;
+                case SpatialProbeOwner.RightHand:
+                    trackedTransform = rightHand;
+                    radius = handSafetyRadius;
+                    break;
+                default:
+                    trackedTransform = head;
+                    radius = headSafetyRadius;
+                    break;
+            }
+
+            if (trackedTransform == null)
+            {
+                return SpatialObstacleMeasurement.Unavailable(now);
+            }
+
+            Vector3 direction = state.velocity.magnitude
+                    >= MovementDirectionSpeed
+                ? state.velocity.normalized
+                : trackedTransform.forward;
+            float closingSpeed = Mathf.Max(
+                0f,
+                Vector3.Dot(state.velocity, direction));
+            return new SpatialObstacleMeasurement(
+                SpatialObstacleSource.EnvironmentDepth,
+                now,
+                true,
+                0f,
+                trackedTransform.position + direction * radius,
+                -direction,
+                closingSpeed,
+                1f,
+                0,
+                0f,
+                0f,
+                true,
+                state.rawSafetyOverlap,
+                0);
         }
 
         private void PublishFallbackOrUnavailable(double now)
@@ -692,7 +902,9 @@ namespace TeamVR.AdaptivePassthrough
                 value.SampleCount,
                 value.SampleDispersionMeters,
                 ageSeconds,
-                value.SafetyVolumeOverlap);
+                value.SafetyVolumeOverlap,
+                value.RawSafetyVolumeOverlap,
+                value.ValidRayHitCount);
         }
 
         private void ResolveReferences()
@@ -745,6 +957,10 @@ namespace TeamVR.AdaptivePassthrough
             state.hasDistance = false;
             state.filteredDistance = 0f;
             state.lastMeasurementAt = 0.0;
+            state.rawSafetyOverlap = false;
+            state.confirmedSafetyOverlap = false;
+            state.overlapConfirmations = 0;
+            state.overlapReleaseConfirmations = 0;
         }
 
         private static Vector3 Rotate(
@@ -781,6 +997,11 @@ namespace TeamVR.AdaptivePassthrough
             if (!b.Available)
             {
                 return a;
+            }
+
+            if (a.SafetyVolumeOverlap != b.SafetyVolumeOverlap)
+            {
+                return a.SafetyVolumeOverlap ? a : b;
             }
 
             return a.DistanceMeters <= b.DistanceMeters ? a : b;
