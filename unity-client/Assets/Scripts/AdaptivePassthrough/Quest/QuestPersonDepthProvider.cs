@@ -17,6 +17,25 @@ namespace TeamVR.AdaptivePassthrough
             public Vector3 Velocity;
             public double TimestampSeconds;
         }
+        private readonly struct ObservationDepthSample
+        {
+            public readonly NormalizedBoundingBox Box;
+            public readonly float LeftDistance;
+            public readonly float CenterDistance;
+            public readonly float RightDistance;
+
+            public ObservationDepthSample(
+                NormalizedBoundingBox box,
+                float leftDistance,
+                float centerDistance,
+                float rightDistance)
+            {
+                Box = box;
+                LeftDistance = leftDistance;
+                CenterDistance = centerDistance;
+                RightDistance = rightDistance;
+            }
+        }
         private static readonly Vector2[] DefaultSamplePoints =
         {
             new Vector2(0.50f, 0.22f),
@@ -62,14 +81,15 @@ namespace TeamVR.AdaptivePassthrough
 
         private static readonly Vector2[] ObservationWorldSamplePoints =
         {
-            new Vector2(0.42f, 0.46f),
-            new Vector2(0.50f, 0.46f),
-            new Vector2(0.58f, 0.46f)
+            new Vector2(0.42f, 0.48f),
+            new Vector2(0.50f, 0.48f),
+            new Vector2(0.58f, 0.48f)
         };
 
         [SerializeField] private PassthroughCameraAccess cameraAccess;
         [SerializeField] private EnvironmentRaycastManager raycastManager;
         [SerializeField, Min(0.2f)] private float maximumDistanceMeters = 6f;
+        [SerializeField, Min(0.05f)] private float maximumCaptureAgeSeconds = 0.40f;
 
         private readonly List<float> sampleDistances =
             new List<float>(ExpandedSamplePoints.Length);
@@ -80,6 +100,8 @@ namespace TeamVR.AdaptivePassthrough
             new Dictionary<int, WorldTrackState>();
         private readonly HashSet<int> liveTrackScratch = new HashSet<int>();
         private readonly List<int> expiredWorldTracks = new List<int>();
+        private readonly List<ObservationDepthSample> observationDepthCache =
+            new List<ObservationDepthSample>(10);
         private readonly PersonDistanceFilter distanceFilter =
             new PersonDistanceFilter();
         private Pose cameraPoseAtCapture;
@@ -127,6 +149,7 @@ namespace TeamVR.AdaptivePassthrough
         {
             frameTimestampSeconds = Math.Max(0.0, timestampSeconds);
             cameraPoseAtCapture = capturePose;
+            observationDepthCache.Clear();
             hasFrameContext = true;
         }
 
@@ -163,6 +186,25 @@ namespace TeamVR.AdaptivePassthrough
                     "environment_depth_not_supported");
             }
 
+            float captureAgeSeconds = Mathf.Max(
+                0f,
+                (float)(Time.realtimeSinceStartupAsDouble
+                    - frameTimestampSeconds));
+            string preRaycastRejection = PreRaycastRejectionReason(
+                tracked.KinematicSampleCount,
+                captureAgeSeconds,
+                tracked.ViewportCenterVelocity,
+                tracked.ViewportSizeVelocity,
+                maximumCaptureAgeSeconds);
+            if (!string.IsNullOrEmpty(preRaycastRejection))
+            {
+                expandNextFrame.Remove(tracked.TrackId);
+                return Fallback(
+                    tracked,
+                    bboxArea,
+                    preRaycastRejection);
+            }
+
             sampleDistances.Clear();
             sampleWeights.Clear();
             NormalizedBoundingBox box =
@@ -171,8 +213,26 @@ namespace TeamVR.AdaptivePassthrough
             Vector2[] points = expanded
                 ? ExpandedSamplePoints
                 : DefaultSamplePoints;
+            int cachedSampleIndex = expanded
+                ? -1
+                : FindObservationDepthSample(box);
+            if (cachedSampleIndex >= 0)
+            {
+                ObservationDepthSample cached =
+                    observationDepthCache[cachedSampleIndex];
+                sampleDistances.Add(cached.LeftDistance);
+                sampleWeights.Add(DefaultSampleWeights[5]);
+                sampleDistances.Add(cached.CenterDistance);
+                sampleWeights.Add(DefaultSampleWeights[6]);
+                sampleDistances.Add(cached.RightDistance);
+                sampleWeights.Add(DefaultSampleWeights[7]);
+            }
             for (int i = 0; i < points.Length; i++)
             {
+                if (cachedSampleIndex >= 0 && i >= 5 && i <= 7)
+                {
+                    continue;
+                }
                 Vector2 relative = points[i];
                 float x = box.Left + box.width * relative.x;
                 float topDownY = box.Top + box.height * relative.y;
@@ -224,7 +284,9 @@ namespace TeamVR.AdaptivePassthrough
             result = result.WithMetricReliability(
                 reliable,
                 rejectedReason);
-            if (!reliable)
+            if (!reliable
+                && !expanded
+                && ShouldExpandNextSample(rejectedReason))
             {
                 expandNextFrame.Add(tracked.TrackId);
             }
@@ -236,13 +298,17 @@ namespace TeamVR.AdaptivePassthrough
                 Ray centerRay = cameraAccess.ViewportPointToRay(
                     centerViewport,
                     cameraPoseAtCapture);
+                Vector3 worldVelocity;
+                Vector3 worldPoint = FilterWorldPoint(
+                    tracked.TrackId,
+                    centerRay.origin
+                        + centerRay.direction
+                        * result.FilteredDistanceMeters,
+                    frameTimestampSeconds,
+                    out worldVelocity);
                 result = result.WithWorldPoint(
-                    FilterWorldPoint(
-                        tracked.TrackId,
-                        centerRay.origin
-                            + centerRay.direction
-                            * result.FilteredDistanceMeters,
-                        frameTimestampSeconds));
+                    worldPoint,
+                    worldVelocity);
             }
             IsDepthReady = result.HasReliableMetricDistance;
             LastFailureReason = result.IsMetricReliable
@@ -284,6 +350,7 @@ namespace TeamVR.AdaptivePassthrough
             distanceFilter.Reset();
             expandNextFrame.Clear();
             worldTrackStates.Clear();
+            observationDepthCache.Clear();
             hasFrameContext = false;
             IsDepthReady = false;
             LastFailureReason = string.Empty;
@@ -323,6 +390,50 @@ namespace TeamVR.AdaptivePassthrough
             return !float.IsNaN(value) && !float.IsInfinity(value);
         }
 
+        public static bool ShouldExpandNextSample(string rejectedReason)
+        {
+            return string.Equals(
+                    rejectedReason,
+                    "depth_dispersion",
+                    StringComparison.Ordinal)
+                || string.Equals(
+                    rejectedReason,
+                    "bbox_depth_conflict",
+                    StringComparison.Ordinal);
+        }
+
+        public static string PreRaycastRejectionReason(
+            int kinematicSampleCount,
+            float captureAgeSeconds,
+            Vector2 viewportCenterVelocity,
+            Vector2 viewportSizeVelocity,
+            float maximumAgeSeconds = 0.40f)
+        {
+            if (captureAgeSeconds > Mathf.Max(0f, maximumAgeSeconds))
+            {
+                return "depth_capture_stale";
+            }
+
+            if (kinematicSampleCount < 2)
+            {
+                return "depth_track_warming";
+            }
+
+            return viewportCenterVelocity.magnitude * captureAgeSeconds
+                    > 0.08f
+                || viewportSizeVelocity.magnitude * captureAgeSeconds
+                    > 0.10f
+                ? "depth_motion_mismatch"
+                : string.Empty;
+        }
+
+        private bool IsFrameContextStale()
+        {
+            return frameTimestampSeconds > 0.0
+                && Time.realtimeSinceStartupAsDouble - frameTimestampSeconds
+                    > maximumCaptureAgeSeconds;
+        }
+
         public bool TryMeasureObservationWorldPoint(
             NormalizedBoundingBox box,
             out Vector3 worldPoint,
@@ -340,11 +451,19 @@ namespace TeamVR.AdaptivePassthrough
                 return false;
             }
 
+            if (IsFrameContextStale())
+            {
+                return false;
+            }
+
             Vector3 pointSum = Vector3.zero;
             int hitCount = 0;
             float minimum = float.PositiveInfinity;
             float maximum = 0f;
             float distanceSum = 0f;
+            float leftDistance = 0f;
+            float centerDistance = 0f;
+            float rightDistance = 0f;
             for (int i = 0; i < ObservationWorldSamplePoints.Length; i++)
             {
                 Vector2 relative = ObservationWorldSamplePoints[i];
@@ -374,6 +493,18 @@ namespace TeamVR.AdaptivePassthrough
                 minimum = Mathf.Min(minimum, distance);
                 maximum = Mathf.Max(maximum, distance);
                 distanceSum += distance;
+                if (i == 0)
+                {
+                    leftDistance = distance;
+                }
+                else if (i == 1)
+                {
+                    centerDistance = distance;
+                }
+                else
+                {
+                    rightDistance = distance;
+                }
                 hitCount++;
             }
 
@@ -400,7 +531,42 @@ namespace TeamVR.AdaptivePassthrough
             confidence = Mathf.Clamp01(
                 hitCount / (float)ObservationWorldSamplePoints.Length
                 * Mathf.Exp(-dispersion / 0.30f));
-            return confidence >= PersonDepthReliability.MinimumConfidence;
+            if (confidence < PersonDepthReliability.MinimumConfidence)
+            {
+                return false;
+            }
+
+            observationDepthCache.Add(new ObservationDepthSample(
+                box,
+                leftDistance,
+                centerDistance,
+                rightDistance));
+            return true;
+        }
+
+        private int FindObservationDepthSample(NormalizedBoundingBox box)
+        {
+            int bestIndex = -1;
+            float bestOverlap = 0.50f;
+            for (int i = 0; i < observationDepthCache.Count; i++)
+            {
+                NormalizedBoundingBox cached = observationDepthCache[i].Box;
+                float left = Mathf.Max(box.Left, cached.Left);
+                float top = Mathf.Max(box.Top, cached.Top);
+                float right = Mathf.Min(box.Right, cached.Right);
+                float bottom = Mathf.Min(box.Bottom, cached.Bottom);
+                float intersection = Mathf.Max(0f, right - left)
+                    * Mathf.Max(0f, bottom - top);
+                float union = box.Area + cached.Area - intersection;
+                float overlap = union > 0f ? intersection / union : 0f;
+                if (overlap > bestOverlap)
+                {
+                    bestOverlap = overlap;
+                    bestIndex = i;
+                }
+            }
+
+            return bestIndex;
         }
 
         private static float ExpandedWeight(Vector2 point)
@@ -413,7 +579,8 @@ namespace TeamVR.AdaptivePassthrough
         private Vector3 FilterWorldPoint(
             int trackId,
             Vector3 observation,
-            double timestampSeconds)
+            double timestampSeconds,
+            out Vector3 worldVelocity)
         {
             WorldTrackState state;
             if (!worldTrackStates.TryGetValue(trackId, out state))
@@ -428,6 +595,7 @@ namespace TeamVR.AdaptivePassthrough
                 state.Position = observation;
                 state.Velocity = Vector3.zero;
                 state.TimestampSeconds = timestampSeconds;
+                worldVelocity = Vector3.zero;
                 return observation;
             }
 
@@ -441,6 +609,7 @@ namespace TeamVR.AdaptivePassthrough
             state.Position = prediction + alpha * residual;
             state.Velocity += beta * residual / elapsed;
             state.TimestampSeconds = timestampSeconds;
+            worldVelocity = state.Velocity;
             return state.Position;
         }
     }

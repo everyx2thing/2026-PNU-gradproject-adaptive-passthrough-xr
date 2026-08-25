@@ -14,10 +14,12 @@ namespace TeamVR.AdaptivePassthrough
         private DynamicRiskPipeline pipeline;
 
         public event Action<DynamicRiskFrame> FrameProcessed;
+        public event Action PipelineReset;
 
         public DynamicRiskFrame LatestFrame { get; private set; }
         public long LatestFrameSequence { get; private set; }
         public double LatestFrameProcessedRealtimeSeconds { get; private set; }
+        public double LatestFrameCaptureRealtimeSeconds { get; private set; }
 
         public float LatestMaximumRisk
         {
@@ -55,6 +57,20 @@ namespace TeamVR.AdaptivePassthrough
             Func<TrackedDynamicObject, PersonDistanceMeasurement>
                 distanceResolver)
         {
+            return SubmitDetections(
+                timestampSeconds,
+                detections,
+                distanceResolver,
+                Time.realtimeSinceStartupAsDouble);
+        }
+
+        public DynamicRiskFrame SubmitDetections(
+            double timestampSeconds,
+            IReadOnlyList<DynamicObjectDetection> detections,
+            Func<TrackedDynamicObject, PersonDistanceMeasurement>
+                distanceResolver,
+            double captureRealtimeSeconds)
+        {
             if (pipeline == null)
             {
                 RebuildPipeline();
@@ -67,6 +83,12 @@ namespace TeamVR.AdaptivePassthrough
             LatestFrameSequence++;
             LatestFrameProcessedRealtimeSeconds =
                 Time.realtimeSinceStartupAsDouble;
+            LatestFrameCaptureRealtimeSeconds =
+                captureRealtimeSeconds > 0.0
+                && captureRealtimeSeconds
+                    <= LatestFrameProcessedRealtimeSeconds
+                    ? captureRealtimeSeconds
+                    : LatestFrameProcessedRealtimeSeconds;
             FrameProcessed?.Invoke(LatestFrame);
             return LatestFrame;
         }
@@ -87,6 +109,7 @@ namespace TeamVR.AdaptivePassthrough
             LatestFrame = null;
             LatestFrameSequence = 0;
             LatestFrameProcessedRealtimeSeconds = 0.0;
+            LatestFrameCaptureRealtimeSeconds = 0.0;
         }
 
         private void RebuildPipeline()
@@ -95,6 +118,8 @@ namespace TeamVR.AdaptivePassthrough
             LatestFrame = null;
             LatestFrameSequence = 0;
             LatestFrameProcessedRealtimeSeconds = 0.0;
+            LatestFrameCaptureRealtimeSeconds = 0.0;
+            PipelineReset?.Invoke();
         }
     }
 }

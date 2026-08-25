@@ -63,6 +63,21 @@ namespace TeamVR.AdaptivePassthrough
             public float spatialRateHz;
             public float spatialMilliseconds;
             public float inferenceRateHz;
+            public float targetInferenceRateHz;
+            public float measuredInferenceRateHz;
+            public bool hasInferenceMeasurement;
+            public int liveTrackCount;
+            public string liveTrackIds;
+            public bool tentativeTrack;
+            public bool revealEligible;
+            public bool closePassthroughActive;
+            public string closeTransitionReason;
+            public int closeReleaseConfirmationCount;
+            public bool hasWorldVelocity;
+            public float worldVelocityX;
+            public float worldVelocityY;
+            public float worldVelocityZ;
+            public float worldPredictionAgeSeconds;
             public float inferenceMilliseconds;
             public float framesPerSecond;
             public float frameP95Milliseconds;
@@ -92,6 +107,38 @@ namespace TeamVR.AdaptivePassthrough
             public string scenario;
             public string markerPhase;
             public float groundTruthDistanceMeters = -1f;
+            public float headDepthDistanceMeters = -1f;
+            public float headRoomDistanceMeters = -1f;
+            public string headSelectedSource;
+            public bool headOverlap;
+            public int headRayHitCount;
+            public bool headSelfRejected;
+            public string headSelfRejectionReason;
+            public float headSpatialConfidence;
+            public float leftDepthDistanceMeters = -1f;
+            public float leftRoomDistanceMeters = -1f;
+            public string leftSelectedSource;
+            public bool leftOverlap;
+            public int leftRayHitCount;
+            public bool leftSelfRejected;
+            public string leftSelfRejectionReason;
+            public float leftSpatialConfidence;
+            public float rightDepthDistanceMeters = -1f;
+            public float rightRoomDistanceMeters = -1f;
+            public string rightSelectedSource;
+            public bool rightOverlap;
+            public int rightRayHitCount;
+            public bool rightSelfRejected;
+            public string rightSelfRejectionReason;
+            public float rightSpatialConfidence;
+            public bool cameraReady;
+            public int rawCandidateCount;
+            public int personCandidateCount;
+            public int confidenceRejectedCount;
+            public int boxRejectedCount;
+            public int classRejectedCount;
+            public string inferenceWatchdogState;
+            public float inferenceSliceBudgetMilliseconds;
         }
 
         [SerializeField] private DynamicRiskController controller;
@@ -239,6 +286,33 @@ namespace TeamVR.AdaptivePassthrough
                 record.riskLevel = assessment.Level.ToString();
                 record.reasons = string.Join(",", assessment.Reasons);
                 record.observedThisFrame = assessment.ObservedThisFrame;
+                record.liveTrackCount = frame.LiveTrackIds.Count;
+                record.liveTrackIds = string.Join(",", frame.LiveTrackIds);
+                record.tentativeTrack = assessment.Lifecycle
+                    == TrackLifecycle.Tentative;
+                record.revealEligible = assessment.ForcePassthrough
+                    || assessment.Score >= 0.50f;
+                record.closePassthroughActive =
+                    assessment.ClosePassthroughActive;
+                record.closeTransitionReason =
+                    assessment.CloseTransitionReason;
+                record.closeReleaseConfirmationCount =
+                    assessment.CloseReleaseConfirmationCount;
+                record.hasWorldVelocity =
+                    assessment.Location.HasWorldVelocity;
+                record.worldVelocityX = assessment.Location.WorldVelocity.x;
+                record.worldVelocityY = assessment.Location.WorldVelocity.y;
+                record.worldVelocityZ = assessment.Location.WorldVelocity.z;
+                record.worldPredictionAgeSeconds =
+                    assessment.Location.HasWorldVelocity && controller != null
+                        ? Mathf.Min(
+                            0.50f,
+                            (float)Math.Max(
+                                0.0,
+                                Time.realtimeSinceStartupAsDouble
+                                    - controller
+                                        .LatestFrameCaptureRealtimeSeconds))
+                        : 0f;
                 record.windowVisible = windowVisible;
                 record.windowX = windowVisible ? windowRect.x : 0f;
                 record.windowY = windowVisible ? windowRect.y : 0f;
@@ -281,6 +355,14 @@ namespace TeamVR.AdaptivePassthrough
                     ? 0L
                     : controller.LatestFrameSequence
             };
+            if (controller != null && controller.LatestFrame != null)
+            {
+                record.liveTrackCount =
+                    controller.LatestFrame.LiveTrackIds.Count;
+                record.liveTrackIds = string.Join(
+                    ",",
+                    controller.LatestFrame.LiveTrackIds);
+            }
             if (trackingQuality != null)
             {
                 TrackingDiagnosticsSnapshot snapshot =
@@ -293,6 +375,12 @@ namespace TeamVR.AdaptivePassthrough
                 record.spatialRateHz = snapshot.SpatialRateHz;
                 record.spatialMilliseconds = snapshot.SpatialMilliseconds;
                 record.inferenceRateHz = snapshot.InferenceRateHz;
+                record.targetInferenceRateHz =
+                    snapshot.TargetInferenceRateHz;
+                record.measuredInferenceRateHz =
+                    snapshot.MeasuredInferenceRateHz;
+                record.hasInferenceMeasurement =
+                    snapshot.HasInferenceMeasurement;
                 record.inferenceMilliseconds = snapshot.InferenceMilliseconds;
                 record.inferenceActiveMilliseconds =
                     snapshot.InferenceActiveMilliseconds;
@@ -307,6 +395,20 @@ namespace TeamVR.AdaptivePassthrough
                 record.applicationPaused = snapshot.ApplicationPaused;
                 record.framesPerSecond = snapshot.FramesPerSecond;
                 record.frameP95Milliseconds = snapshot.FrameP95Milliseconds;
+                ApplySpatialOwner(record, snapshot.HeadSpatial, 0);
+                ApplySpatialOwner(record, snapshot.LeftHandSpatial, 1);
+                ApplySpatialOwner(record, snapshot.RightHandSpatial, 2);
+                record.cameraReady = snapshot.CameraReady;
+                record.rawCandidateCount = snapshot.RawCandidateCount;
+                record.personCandidateCount = snapshot.PersonCandidateCount;
+                record.confidenceRejectedCount =
+                    snapshot.ConfidenceRejectedCount;
+                record.boxRejectedCount = snapshot.BoxRejectedCount;
+                record.classRejectedCount = snapshot.ClassRejectedCount;
+                record.inferenceWatchdogState =
+                    snapshot.InferenceWatchdogState;
+                record.inferenceSliceBudgetMilliseconds =
+                    snapshot.InferenceSliceBudgetMilliseconds;
             }
 #if ADAPTIVE_PASSTHROUGH_QUEST_CAMERA
             if (spatialProvider != null)
@@ -337,6 +439,50 @@ namespace TeamVR.AdaptivePassthrough
                     presentationSnapshot.HoldRemainingSeconds;
             }
             return record;
+        }
+
+        private static void ApplySpatialOwner(
+            LogRecord record,
+            SpatialOwnerDiagnostics value,
+            int slot)
+        {
+            if (slot == 0)
+            {
+                record.headDepthDistanceMeters =
+                    value.EnvironmentDistanceMeters;
+                record.headRoomDistanceMeters = value.RoomSceneDistanceMeters;
+                record.headSelectedSource = value.SelectedSource.ToString();
+                record.headOverlap = value.ConfirmedOverlap;
+                record.headRayHitCount = value.ValidRayHitCount;
+                record.headSelfRejected = value.SelfRejected;
+                record.headSelfRejectionReason = value.RejectionReason;
+                record.headSpatialConfidence = value.Confidence;
+                return;
+            }
+
+            if (slot == 1)
+            {
+                record.leftDepthDistanceMeters =
+                    value.EnvironmentDistanceMeters;
+                record.leftRoomDistanceMeters = value.RoomSceneDistanceMeters;
+                record.leftSelectedSource = value.SelectedSource.ToString();
+                record.leftOverlap = value.ConfirmedOverlap;
+                record.leftRayHitCount = value.ValidRayHitCount;
+                record.leftSelfRejected = value.SelfRejected;
+                record.leftSelfRejectionReason = value.RejectionReason;
+                record.leftSpatialConfidence = value.Confidence;
+                return;
+            }
+
+            record.rightDepthDistanceMeters =
+                value.EnvironmentDistanceMeters;
+            record.rightRoomDistanceMeters = value.RoomSceneDistanceMeters;
+            record.rightSelectedSource = value.SelectedSource.ToString();
+            record.rightOverlap = value.ConfirmedOverlap;
+            record.rightRayHitCount = value.ValidRayHitCount;
+            record.rightSelfRejected = value.SelfRejected;
+            record.rightSelfRejectionReason = value.RejectionReason;
+            record.rightSpatialConfidence = value.Confidence;
         }
 
         private void OnScenarioMarker(TrackingTestMarker marker)
@@ -495,10 +641,17 @@ namespace TeamVR.AdaptivePassthrough
                 Directory.CreateDirectory(directory);
                 CurrentLogPath = Path.Combine(
                     directory,
-                    string.Format("{0}-{1:yyyyMMdd-HHmmss}.jsonl", filePrefix, DateTime.Now));
+                    string.Format(
+                        "{0}-{1:yyyyMMdd-HHmmss-fff}-{2}.jsonl",
+                        filePrefix,
+                        DateTime.Now,
+                        Guid.NewGuid().ToString("N").Substring(0, 8)));
                 writer = new StreamWriter(
-                    CurrentLogPath,
-                    false,
+                    new FileStream(
+                        CurrentLogPath,
+                        FileMode.CreateNew,
+                        FileAccess.Write,
+                        FileShare.Read),
                     new UTF8Encoding(false));
                 Debug.Log("[DynamicRisk] Logging to " + CurrentLogPath);
             }

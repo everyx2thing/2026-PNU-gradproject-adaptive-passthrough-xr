@@ -27,6 +27,37 @@ namespace TeamVR.AdaptivePassthrough.Tests
         }
 
         [Test]
+        public void HandOnlyFrameRemainsAvailableAndCanActivatePolicy()
+        {
+            StaticHandRiskMeasurement hand = Hand(
+                0,
+                1f,
+                Vector3.forward);
+            var frame = new StaticBoundaryRiskFrame(
+                1L,
+                0.0,
+                true,
+                StaticRiskMeasurement.Unavailable,
+                0f,
+                true,
+                hand,
+                StaticHandRiskMeasurement.Unavailable,
+                Vector3.zero,
+                false,
+                -1,
+                0.7f);
+
+            StaticPassthroughDecision decision =
+                new StaticBoundaryPolicy().Evaluate(1L, 0.0, frame);
+
+            Assert.That(frame.Available, Is.True);
+            Assert.That(frame.Head.Available, Is.False);
+            Assert.That(frame.LeftHand.Available, Is.True);
+            Assert.That(decision.Enabled, Is.True);
+            Assert.That(decision.Cause, Is.EqualTo(StaticActivationCause.Hand));
+        }
+
+        [Test]
         public void HeadHysteresisHoldsUntilOffThreshold()
         {
             var policy = new StaticBoundaryPolicy();
@@ -108,6 +139,37 @@ namespace TeamVR.AdaptivePassthrough.Tests
             Assert.That(cleared.EmergencyHold, Is.False);
             Assert.That(cleared.Enabled, Is.True);
             Assert.That(released.Enabled, Is.False);
+        }
+
+        [Test]
+        public void ConfirmedHeadOverlapTriggersWithoutSyntheticDistance()
+        {
+            var policy = new StaticBoundaryPolicy();
+            var frame = new StaticBoundaryRiskFrame(
+                1L,
+                0.0,
+                true,
+                StaticRiskMeasurement.Unavailable,
+                0f,
+                true,
+                StaticHandRiskMeasurement.Unavailable,
+                StaticHandRiskMeasurement.Unavailable,
+                Vector3.zero,
+                false,
+                -1,
+                0f,
+                true);
+
+            StaticPassthroughDecision decision = policy.Evaluate(
+                1L,
+                0.0,
+                frame);
+
+            Assert.That(frame.Available, Is.True);
+            Assert.That(frame.Head.Available, Is.False);
+            Assert.That(frame.HeadSafetyOverlapEmergency, Is.True);
+            Assert.That(decision.Enabled, Is.True);
+            Assert.That(decision.EmergencyTrigger, Is.True);
         }
 
         [Test]

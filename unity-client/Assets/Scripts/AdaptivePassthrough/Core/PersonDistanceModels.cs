@@ -61,6 +61,8 @@ namespace TeamVR.AdaptivePassthrough
         public readonly bool BoundingBoxDepthConflict;
         public readonly bool HasWorldPoint;
         public readonly Vector3 WorldPoint;
+        public readonly bool HasWorldVelocity;
+        public readonly Vector3 WorldVelocity;
         public readonly string FailureReason;
         public readonly bool IsMetricReliable;
         public readonly string DepthRejectedReason;
@@ -83,7 +85,9 @@ namespace TeamVR.AdaptivePassthrough
             bool hasWorldPoint = false,
             Vector3 worldPoint = default,
             bool? isMetricReliable = null,
-            string depthRejectedReason = null)
+            string depthRejectedReason = null,
+            bool hasWorldVelocity = false,
+            Vector3 worldVelocity = default)
         {
             TrackId = Math.Max(0, trackId);
             TimestampSeconds = Math.Max(0.0, timestampSeconds);
@@ -113,6 +117,10 @@ namespace TeamVR.AdaptivePassthrough
                 : depthRejectedReason ?? string.Empty;
             HasWorldPoint = hasWorldPoint && IsMetricReliable;
             WorldPoint = HasWorldPoint ? worldPoint : Vector3.zero;
+            HasWorldVelocity = HasWorldPoint && hasWorldVelocity;
+            WorldVelocity = HasWorldVelocity
+                ? worldVelocity
+                : Vector3.zero;
         }
 
         public bool HasMetricDistance
@@ -132,6 +140,21 @@ namespace TeamVR.AdaptivePassthrough
 
         public PersonDistanceMeasurement WithWorldPoint(Vector3 worldPoint)
         {
+            return WithWorldPoint(worldPoint, Vector3.zero, false);
+        }
+
+        public PersonDistanceMeasurement WithWorldPoint(
+            Vector3 worldPoint,
+            Vector3 worldVelocity)
+        {
+            return WithWorldPoint(worldPoint, worldVelocity, true);
+        }
+
+        private PersonDistanceMeasurement WithWorldPoint(
+            Vector3 worldPoint,
+            Vector3 worldVelocity,
+            bool hasWorldVelocity)
+        {
             return new PersonDistanceMeasurement(
                 TrackId,
                 TimestampSeconds,
@@ -150,7 +173,9 @@ namespace TeamVR.AdaptivePassthrough
                 true,
                 worldPoint,
                 IsMetricReliable,
-                DepthRejectedReason);
+                DepthRejectedReason,
+                hasWorldVelocity,
+                worldVelocity);
         }
 
         public PersonDistanceMeasurement WithMetricReliability(
@@ -175,7 +200,9 @@ namespace TeamVR.AdaptivePassthrough
                 reliable && HasWorldPoint,
                 WorldPoint,
                 reliable,
-                reliable ? string.Empty : rejectedReason);
+                reliable ? string.Empty : rejectedReason,
+                reliable && HasWorldVelocity,
+                WorldVelocity);
         }
 
         public static PersonDistanceMeasurement BoundingBoxFallback(

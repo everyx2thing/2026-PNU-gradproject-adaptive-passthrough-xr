@@ -102,5 +102,125 @@ namespace TeamVR.AdaptivePassthrough.Tests
             Assert.That(stillCapped.PredictionAgeSeconds,
                 Is.EqualTo(0.5f).Within(0.0001f));
         }
+
+        [Test]
+        public void WorldPointReprojectionMovesCenterWithoutRefreshingHold()
+        {
+            var tracker = new PersonWindowTracker(
+                lostHoldSeconds: 1.5f);
+            tracker.BeginFrame();
+            tracker.Observe(
+                8,
+                new Rect(0.20f, 0.30f, 0.20f, 0.30f),
+                0.8f,
+                0.0);
+            tracker.Update(0.0, 0.2f);
+
+            tracker.BeginFrame();
+            Assert.That(
+                tracker.ReprojectCenter(
+                    8,
+                    new Vector2(0.70f, 0.50f),
+                    new Rect(0f, 0f, 1f, 1f)),
+                Is.True);
+            tracker.Update(1.0, 0.2f);
+            PersonWindowSnapshot snapshot = tracker.GetSnapshots(1)[0];
+
+            Assert.That(snapshot.Rect.center.x, Is.GreaterThan(0.30f));
+            Assert.That(snapshot.ObservedThisFrame, Is.False);
+            Assert.That(snapshot.HoldRemainingSeconds,
+                Is.EqualTo(0.5f).Within(0.001f));
+        }
+
+        [Test]
+        public void CaptureTimePredictionDoesNotConsumePresentationHold()
+        {
+            var tracker = new PersonWindowTracker(lostHoldSeconds: 1.5f);
+            tracker.BeginFrame();
+            tracker.Observe(
+                3,
+                new Rect(0.10f, 0.30f, 0.20f, 0.30f),
+                0.8f,
+                0.0,
+                0.0);
+            tracker.Update(0.0, 0.2f);
+
+            tracker.BeginFrame();
+            tracker.Observe(
+                3,
+                new Rect(0.20f, 0.30f, 0.20f, 0.30f),
+                0.8f,
+                0.10,
+                0.40);
+            tracker.Update(0.40, 0.10f);
+            PersonWindowSnapshot snapshot = tracker.GetSnapshots(1)[0];
+
+            Assert.That(snapshot.PredictionAgeSeconds,
+                Is.EqualTo(0.30f).Within(0.001f));
+            Assert.That(snapshot.Rect.x, Is.GreaterThan(0.20f));
+            Assert.That(snapshot.HoldRemainingSeconds,
+                Is.EqualTo(1.50f).Within(0.001f));
+        }
+
+        [Test]
+        public void LowRiskObservationWarmsTrackingWithoutOpeningWindow()
+        {
+            var tracker = new PersonWindowTracker(lostHoldSeconds: 1.5f);
+            tracker.BeginFrame();
+            tracker.Observe(
+                10,
+                new Rect(0.2f, 0.3f, 0.2f, 0.3f),
+                0.2f,
+                0.0,
+                0.0,
+                false);
+            tracker.Update(0.0, 0.2f);
+
+            Assert.That(tracker.GetSnapshots(3), Is.Empty);
+
+            tracker.BeginFrame();
+            tracker.Observe(
+                10,
+                new Rect(0.3f, 0.3f, 0.2f, 0.3f),
+                0.8f,
+                0.3,
+                0.3,
+                true);
+            tracker.Update(0.3, 0.2f);
+            PersonWindowSnapshot shown = tracker.GetSnapshots(3)[0];
+
+            Assert.That(shown.TrackId, Is.EqualTo(10));
+            Assert.That(shown.Rect.center.x, Is.GreaterThan(0.3f));
+        }
+
+        [Test]
+        public void LowRiskObservationDoesNotExtendQualifiedHold()
+        {
+            var tracker = new PersonWindowTracker(lostHoldSeconds: 1.5f);
+            tracker.BeginFrame();
+            tracker.Observe(
+                11,
+                new Rect(0.2f, 0.3f, 0.2f, 0.3f),
+                0.8f,
+                0.0,
+                0.0,
+                true);
+            tracker.Update(0.0, 0.2f);
+
+            tracker.BeginFrame();
+            tracker.Observe(
+                11,
+                new Rect(0.3f, 0.3f, 0.2f, 0.3f),
+                0.2f,
+                1.0,
+                1.0,
+                false);
+            tracker.Update(1.0, 0.1f);
+            PersonWindowSnapshot held = tracker.GetSnapshots(1)[0];
+
+            Assert.That(held.HoldRemainingSeconds,
+                Is.EqualTo(0.5f).Within(0.001f));
+            Assert.That(held.Risk, Is.EqualTo(0.8f));
+        }
     }
 }

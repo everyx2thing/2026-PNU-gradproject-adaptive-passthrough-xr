@@ -31,7 +31,7 @@ namespace TeamVR.AdaptivePassthrough
         private readonly float smoothingTimeConstantSeconds;
 
         public MetricMotionEstimator(
-            double historyWindowSeconds = 0.80,
+            double historyWindowSeconds = 1.25,
             int minimumSamples = 3,
             double minimumObservationSeconds = 0.20,
             float approachEnterMetersPerSecond = 0.15f,

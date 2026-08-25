@@ -51,7 +51,7 @@ namespace TeamVR.AdaptivePassthrough
         }
     }
 
-    public sealed class PersonWindowSnapshot
+    public readonly struct PersonWindowSnapshot
     {
         public readonly int TrackId;
         public readonly Rect Rect;
@@ -89,11 +89,16 @@ namespace TeamVR.AdaptivePassthrough
             public Rect TargetRect;
             public float Opacity;
             public float Risk;
-            public double LastObservedSeconds;
+            public double LastKinematicSampleSeconds;
+            public double LastQualifiedPresentedSeconds;
             public bool ObservedThisFrame;
+            public bool RevealEligibleThisFrame;
+            public bool HasQualifiedObservation;
             public Vector2 CenterVelocity;
             public Vector2 SizeVelocity;
             public float PredictionAgeSeconds;
+            public bool HasReprojectedCenter;
+            public Vector2 ReprojectedCenter;
         }
 
         private readonly Dictionary<int, State> states =
@@ -141,7 +146,34 @@ namespace TeamVR.AdaptivePassthrough
             foreach (State state in states.Values)
             {
                 state.ObservedThisFrame = false;
+                state.RevealEligibleThisFrame = false;
+                state.HasReprojectedCenter = false;
             }
+        }
+
+        public bool ReprojectCenter(
+            int trackId,
+            Vector2 viewportCenter,
+            Rect viewportBounds)
+        {
+            State state;
+            if (!states.TryGetValue(trackId, out state))
+            {
+                return false;
+            }
+
+            Vector2 size = state.TargetRect.size;
+            state.ReprojectedCenter = new Vector2(
+                Mathf.Clamp(
+                    viewportCenter.x,
+                    viewportBounds.xMin + size.x * 0.5f,
+                    viewportBounds.xMax - size.x * 0.5f),
+                Mathf.Clamp(
+                    viewportCenter.y,
+                    viewportBounds.yMin + size.y * 0.5f,
+                    viewportBounds.yMax - size.y * 0.5f));
+            state.HasReprojectedCenter = true;
+            return true;
         }
 
         public void Observe(
@@ -149,6 +181,39 @@ namespace TeamVR.AdaptivePassthrough
             Rect targetRect,
             float risk,
             double timestampSeconds)
+        {
+            Observe(
+                trackId,
+                targetRect,
+                risk,
+                timestampSeconds,
+                timestampSeconds,
+                true);
+        }
+
+        public void Observe(
+            int trackId,
+            Rect targetRect,
+            float risk,
+            double captureTimestampSeconds,
+            double presentedTimestampSeconds)
+        {
+            Observe(
+                trackId,
+                targetRect,
+                risk,
+                captureTimestampSeconds,
+                presentedTimestampSeconds,
+                true);
+        }
+
+        public void Observe(
+            int trackId,
+            Rect targetRect,
+            float risk,
+            double captureTimestampSeconds,
+            double presentedTimestampSeconds,
+            bool revealEligible)
         {
             State state;
             if (!states.TryGetValue(trackId, out state))
@@ -158,7 +223,8 @@ namespace TeamVR.AdaptivePassthrough
                     TrackId = trackId,
                     CurrentRect = targetRect,
                     TargetRect = targetRect,
-                    Opacity = 0f
+                    Opacity = 0f,
+                    LastKinematicSampleSeconds = captureTimestampSeconds
                 };
                 states.Add(trackId, state);
             }
@@ -166,7 +232,8 @@ namespace TeamVR.AdaptivePassthrough
             {
                 float elapsed = (float)Math.Max(
                     0.0,
-                    timestampSeconds - state.LastObservedSeconds);
+                    captureTimestampSeconds
+                        - state.LastKinematicSampleSeconds);
                 if (elapsed > 0.001f && elapsed <= 1.2f)
                 {
                     Vector2 predictedCenter = state.TargetRect.center
@@ -198,9 +265,16 @@ namespace TeamVR.AdaptivePassthrough
             }
 
             state.TargetRect = targetRect;
-            state.Risk = Mathf.Clamp01(risk);
-            state.LastObservedSeconds = timestampSeconds;
+            state.LastKinematicSampleSeconds = captureTimestampSeconds;
             state.ObservedThisFrame = true;
+            state.RevealEligibleThisFrame = revealEligible;
+            if (revealEligible)
+            {
+                state.HasQualifiedObservation = true;
+                state.LastQualifiedPresentedSeconds =
+                    presentedTimestampSeconds;
+                state.Risk = Mathf.Clamp01(risk);
+            }
         }
 
         public void Update(double timestampSeconds, float deltaTime)
@@ -215,23 +289,37 @@ namespace TeamVR.AdaptivePassthrough
 
             foreach (State state in states.Values)
             {
-                double age = Math.Max(
+                double kinematicAge = Math.Max(
                     0.0,
-                    timestampSeconds - state.LastObservedSeconds);
+                    timestampSeconds - state.LastKinematicSampleSeconds);
+                double presentationAge = Math.Max(
+                    0.0,
+                    timestampSeconds
+                        - state.LastQualifiedPresentedSeconds);
                 float predictionAge = Mathf.Min(
                     maximumPredictionSeconds,
-                    (float)age);
+                    (float)kinematicAge);
                 state.PredictionAgeSeconds = predictionAge;
                 Rect predictedRect = state.TargetRect;
-                if (!state.ObservedThisFrame && predictionAge > 0f)
+                if (state.HasReprojectedCenter)
+                {
+                    predictedRect.position = state.ReprojectedCenter
+                        - predictedRect.size * 0.5f;
+                }
+
+                if (predictionAge > 0f)
                 {
                     Vector2 size = state.TargetRect.size
                         + state.SizeVelocity * predictionAge;
                     size = new Vector2(
                         Mathf.Clamp(size.x, 0.01f, 1f),
                         Mathf.Clamp(size.y, 0.01f, 1f));
-                    Vector2 center = state.TargetRect.center
-                        + state.CenterVelocity * predictionAge;
+                    Vector2 center = (state.HasReprojectedCenter
+                            ? state.ReprojectedCenter
+                            : state.TargetRect.center)
+                        + (state.HasReprojectedCenter
+                            ? Vector2.zero
+                            : state.CenterVelocity * predictionAge);
                     center = new Vector2(
                         Mathf.Clamp(center.x, size.x * 0.5f, 1f - size.x * 0.5f),
                         Mathf.Clamp(center.y, size.y * 0.5f, 1f - size.y * 0.5f));
@@ -243,7 +331,7 @@ namespace TeamVR.AdaptivePassthrough
                     predictedRect,
                     positionAlpha,
                     sizeAlpha);
-                if (state.ObservedThisFrame)
+                if (state.RevealEligibleThisFrame)
                 {
                     state.Opacity = Mathf.MoveTowards(
                         state.Opacity,
@@ -252,7 +340,8 @@ namespace TeamVR.AdaptivePassthrough
                     continue;
                 }
 
-                if (age <= lostHoldSeconds)
+                if (state.HasQualifiedObservation
+                    && presentationAge <= lostHoldSeconds)
                 {
                     state.Opacity = Mathf.MoveTowards(
                         state.Opacity,
@@ -267,7 +356,13 @@ namespace TeamVR.AdaptivePassthrough
                     safeDelta / fadeOutSeconds);
                 if (state.Opacity <= 0f)
                 {
-                    removalBuffer.Add(state.TrackId);
+                    // Keep non-presented observations long enough to warm the
+                    // 2D kinematic filter across the next 3 Hz inference.
+                    if (state.HasQualifiedObservation
+                        || kinematicAge > Math.Max(1.2, lostHoldSeconds))
+                    {
+                        removalBuffer.Add(state.TrackId);
+                    }
                 }
             }
 
@@ -329,7 +424,7 @@ namespace TeamVR.AdaptivePassthrough
                 return true;
             }
 
-            snapshot = null;
+            snapshot = default;
             return false;
         }
 
@@ -353,8 +448,11 @@ namespace TeamVR.AdaptivePassthrough
         {
             double age = Math.Max(
                 0.0,
-                timestampSeconds - state.LastObservedSeconds);
-            return Mathf.Max(0f, lostHoldSeconds - (float)age);
+                timestampSeconds
+                    - state.LastQualifiedPresentedSeconds);
+            return state.HasQualifiedObservation
+                ? Mathf.Max(0f, lostHoldSeconds - (float)age)
+                : 0f;
         }
 
         public void Reset()

@@ -3,6 +3,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Text;
+using Stopwatch = System.Diagnostics.Stopwatch;
 using Meta.XR;
 using Unity.InferenceEngine;
 using UnityEngine;
@@ -60,10 +61,15 @@ namespace TeamVR.AdaptivePassthrough
         private IEnumerator inferenceSchedule;
         private Tensor<float> activeInput;
         private double activeCaptureTimestampSeconds;
+        private double activeCaptureRealtimeSeconds;
         private DateTime activeCaptureTimestamp;
-        private float activeInferenceStartedRealtime;
+        private long activeInferenceStartedTimestamp;
         private float activeInferenceMilliseconds;
         private int activeScheduledLayerCount;
+        private int expectedScheduledLayerCount = 864;
+        private float activeSliceBudgetMilliseconds;
+        private string watchdogState = "idle";
+        private bool watchdogWarningLogged;
         private int inferenceGeneration;
         private bool applicationPaused;
         private bool shuttingDown;
@@ -135,8 +141,30 @@ namespace TeamVR.AdaptivePassthrough
 
         private void Update()
         {
+            UpdateInferenceDiagnostics();
             if (inferenceInProgress)
             {
+                float wallMilliseconds = ActiveInferenceWallMilliseconds();
+                InferenceWatchdogState state =
+                    InferenceSchedulerPolicy.GetWatchdogState(
+                        true,
+                        wallMilliseconds);
+                watchdogState = state.ToString().ToLowerInvariant();
+                if (state == InferenceWatchdogState.Reset)
+                {
+                    AbortStalledInference(wallMilliseconds);
+                    return;
+                }
+
+                if (state == InferenceWatchdogState.Recovery
+                    && !watchdogWarningLogged)
+                {
+                    watchdogWarningLogged = true;
+                    Debug.LogWarning(
+                        "[PersonDetection] Inference exceeded 0.75s; "
+                        + "temporarily increasing the CPU slice budget.");
+                }
+
                 if (inferenceSchedule != null)
                 {
                     AdvanceInferenceSchedule();
@@ -182,6 +210,8 @@ namespace TeamVR.AdaptivePassthrough
         {
             applicationPaused = paused;
             CancelInferenceAndWorker(paused);
+            depthProvider?.ResetProvider();
+            controller?.ResetPipeline();
             qualityController?.ResetRuntimeMeasurements();
             if (!paused && isActiveAndEnabled)
             {
@@ -268,9 +298,18 @@ namespace TeamVR.AdaptivePassthrough
         {
             inferenceInProgress = true;
             activeCaptureTimestampSeconds = scheduledTimestampSeconds;
-            activeInferenceStartedRealtime = Time.realtimeSinceStartup;
+            activeCaptureRealtimeSeconds = scheduledTimestampSeconds;
+            activeInferenceStartedTimestamp = Stopwatch.GetTimestamp();
             activeInferenceMilliseconds = 0f;
             activeScheduledLayerCount = 0;
+            activeSliceBudgetMilliseconds = qualityController == null
+                ? TrackingQualitySettings.For(
+                    TrackingQualityProfile.Balanced)
+                    .inferenceSliceMilliseconds
+                : qualityController.EffectiveSettings
+                    .inferenceSliceMilliseconds;
+            watchdogState = "normal";
+            watchdogWarningLogged = false;
             inferenceGeneration++;
             try
             {
@@ -292,13 +331,14 @@ namespace TeamVR.AdaptivePassthrough
                 }
 
                 Pose cameraPoseAtCapture = cameraAccess.GetCameraPose();
+                activeCaptureRealtimeSeconds =
+                    Time.realtimeSinceStartupAsDouble;
+                // All runtime frames, markers and visibility events share the
+                // same monotonic clock. Keep the camera DateTime separately for
+                // capture-age diagnostics only.
+                activeCaptureTimestampSeconds = activeCaptureRealtimeSeconds;
                 DateTime captureTimestamp = cameraAccess.Timestamp;
                 activeCaptureTimestamp = captureTimestamp;
-                if (captureTimestamp != default)
-                {
-                    activeCaptureTimestampSeconds = captureTimestamp.Ticks
-                        / (double)TimeSpan.TicksPerSecond;
-                }
                 if (depthProvider != null)
                 {
                     depthProvider.BeginFrame(
@@ -341,7 +381,25 @@ namespace TeamVR.AdaptivePassthrough
             int maximumLayers = Mathf.Max(
                 1,
                 settings.maximumLayersPerFrame);
-            float sliceStartedAt = Time.realtimeSinceStartup;
+            float wallMilliseconds = ActiveInferenceWallMilliseconds();
+            float projectedMilliseconds =
+                InferenceSchedulerPolicy.EstimateCompletionMilliseconds(
+                    wallMilliseconds,
+                    activeScheduledLayerCount,
+                    expectedScheduledLayerCount);
+            float frameP95 = qualityController == null
+                ? 0f
+                : qualityController.GetSnapshot().FrameP95Milliseconds;
+            activeSliceBudgetMilliseconds =
+                InferenceSchedulerPolicy.UpdateSliceBudget(
+                    settings.profile,
+                    sliceMilliseconds,
+                    activeSliceBudgetMilliseconds,
+                    frameP95,
+                    projectedMilliseconds,
+                    wallMilliseconds);
+            sliceMilliseconds = activeSliceBudgetMilliseconds;
+            long sliceStartedAt = Stopwatch.GetTimestamp();
             bool hasMore = true;
             int layers = 0;
             try
@@ -355,7 +413,7 @@ namespace TeamVR.AdaptivePassthrough
                     }
 
                     layers++;
-                    if ((Time.realtimeSinceStartup - sliceStartedAt) * 1000f
+                    if (ElapsedMilliseconds(sliceStartedAt)
                         >= sliceMilliseconds)
                     {
                         break;
@@ -363,10 +421,13 @@ namespace TeamVR.AdaptivePassthrough
                 }
 
                 activeScheduledLayerCount += layers;
-                activeInferenceMilliseconds +=
-                    (Time.realtimeSinceStartup - sliceStartedAt) * 1000f;
+                activeInferenceMilliseconds += ElapsedMilliseconds(
+                    sliceStartedAt);
                 if (!hasMore)
                 {
+                    expectedScheduledLayerCount = Mathf.Max(
+                        1,
+                        activeScheduledLayerCount);
                     (inferenceSchedule as IDisposable)?.Dispose();
                     inferenceSchedule = null;
                     CompleteInferenceAsync(inferenceGeneration);
@@ -387,6 +448,7 @@ namespace TeamVR.AdaptivePassthrough
 
         private async void CompleteInferenceAsync(int generation)
         {
+            bool completedSuccessfully = false;
             try
             {
 
@@ -437,67 +499,61 @@ namespace TeamVR.AdaptivePassthrough
                         inputWidth,
                         inputHeight);
                     LastPostProcessResult = result;
+                    qualityController?.RecordInferenceDiagnostics(
+                        IsCameraReady,
+                        result.RawCandidateCount,
+                        result.PersonCandidateCount,
+                        result.BelowConfidenceCount,
+                        result.InvalidBoxCount,
+                        Mathf.Max(
+                            0,
+                            result.RawCandidateCount
+                                - result.PersonCandidateCount),
+                        watchdogState,
+                        activeSliceBudgetMilliseconds);
                     IReadOnlyList<DynamicObjectDetection> submittedDetections =
                         result.Detections;
-                    if (depthProvider != null)
-                    {
-                        enrichedDetections.Clear();
-                        for (int i = 0; i < result.Detections.Count; i++)
-                        {
-                            DynamicObjectDetection detection =
-                                result.Detections[i];
-                            Vector3 worldPoint;
-                            float worldConfidence;
-                            bool hasWorldPoint =
-                                depthProvider.TryMeasureObservationWorldPoint(
-                                    detection.boundingBox,
-                                    out worldPoint,
-                                    out worldConfidence);
-                            enrichedDetections.Add(
-                                new DynamicObjectDetection(
-                                    detection.label,
-                                    detection.confidence,
-                                    detection.boundingBox,
-                                    detection.classId,
-                                    hasWorldPoint,
-                                    worldPoint,
-                                    worldConfidence));
-                        }
-
-                        submittedDetections = enrichedDetections;
-                    }
                     DynamicRiskFrame frame = depthProvider == null
                         ? controller.SubmitDetections(
                             activeCaptureTimestampSeconds,
-                            submittedDetections)
+                            submittedDetections,
+                            null,
+                            activeCaptureRealtimeSeconds)
                         : controller.SubmitDetections(
                             activeCaptureTimestampSeconds,
                             submittedDetections,
-                            depthProvider.Measure);
+                            depthProvider.Measure,
+                            activeCaptureRealtimeSeconds);
                     if (depthProvider != null)
                     {
                         liveDepthTrackIds.Clear();
-                        for (int i = 0; i < frame.Assessments.Count; i++)
+                        for (int i = 0; i < frame.LiveTrackIds.Count; i++)
                         {
-                            liveDepthTrackIds.Add(
-                                frame.Assessments[i].TrackId);
+                            liveDepthTrackIds.Add(frame.LiveTrackIds[i]);
                         }
 
                         depthProvider.PruneExcept(liveDepthTrackIds);
                     }
 
-                    if (qualityController != null
-                        && frame.Assessments.Count > 0)
+                    if (qualityController != null)
                     {
-                        DynamicRiskAssessment primary = frame.Assessments[0];
-                        qualityController.RecordPerson(
-                            primary.TrackId,
-                            primary.Location.RawDistanceMeters,
-                            primary.Location.FilteredDistanceMeters,
-                            primary.Motion.State.ToString(),
-                            primary.MissingSeconds,
-                            primary.Location.IsMetricReliable,
-                            primary.Location.DepthRejectedReason);
+                        DynamicRiskAssessment primary =
+                            SelectPrimaryAssessment(frame.Assessments);
+                        if (primary == null)
+                        {
+                            qualityController.ClearPerson();
+                        }
+                        else
+                        {
+                            qualityController.RecordPerson(
+                                primary.TrackId,
+                                primary.Location.RawDistanceMeters,
+                                primary.Location.FilteredDistanceMeters,
+                                primary.Motion.State.ToString(),
+                                primary.MissingSeconds,
+                                primary.Location.IsMetricReliable,
+                                primary.Location.DepthRejectedReason);
+                        }
                     }
 
                     PostProcessCompleted?.Invoke(result);
@@ -514,6 +570,7 @@ namespace TeamVR.AdaptivePassthrough
                     }
 
                     completedInferenceCount++;
+                    completedSuccessfully = true;
                 }
             }
             catch (Exception exception)
@@ -527,7 +584,7 @@ namespace TeamVR.AdaptivePassthrough
             }
             finally
             {
-                FinishInference(generation, true);
+                FinishInference(generation, completedSuccessfully);
             }
         }
 
@@ -538,10 +595,7 @@ namespace TeamVR.AdaptivePassthrough
                 return;
             }
 
-            float wallMilliseconds = Mathf.Max(
-                0f,
-                (Time.realtimeSinceStartup - activeInferenceStartedRealtime)
-                    * 1000f);
+            float wallMilliseconds = ActiveInferenceWallMilliseconds();
             float captureAgeMilliseconds = Mathf.Max(
                 0f,
                 wallMilliseconds);
@@ -563,6 +617,8 @@ namespace TeamVR.AdaptivePassthrough
             activeInput = null;
             inferenceInProgress = false;
             activeCaptureTimestamp = default;
+            activeCaptureRealtimeSeconds = 0.0;
+            watchdogState = "idle";
             qualityController?.SetInferenceActive(
                 false,
                 activeBackend.ToString());
@@ -582,6 +638,43 @@ namespace TeamVR.AdaptivePassthrough
             RecordBackendBenchmark(wallMilliseconds);
         }
 
+        private static DynamicRiskAssessment SelectPrimaryAssessment(
+            IReadOnlyList<DynamicRiskAssessment> assessments)
+        {
+            DynamicRiskAssessment selected = null;
+            if (assessments == null)
+            {
+                return null;
+            }
+
+            for (int i = 0; i < assessments.Count; i++)
+            {
+                DynamicRiskAssessment candidate = assessments[i];
+                if (candidate == null)
+                {
+                    continue;
+                }
+
+                if (selected == null
+                    || candidate.ObservedThisFrame
+                        && !selected.ObservedThisFrame
+                    || candidate.ObservedThisFrame
+                        == selected.ObservedThisFrame
+                        && candidate.ForcePassthrough
+                        && !selected.ForcePassthrough
+                    || candidate.ObservedThisFrame
+                        == selected.ObservedThisFrame
+                        && candidate.ForcePassthrough
+                        == selected.ForcePassthrough
+                        && candidate.Score > selected.Score)
+                {
+                    selected = candidate;
+                }
+            }
+
+            return selected;
+        }
+
         private void CancelInferenceAndWorker(bool recreateAfterResume)
         {
             inferenceGeneration++;
@@ -591,6 +684,8 @@ namespace TeamVR.AdaptivePassthrough
             activeInput = null;
             inferenceInProgress = false;
             activeCaptureTimestamp = default;
+            activeCaptureRealtimeSeconds = 0.0;
+            watchdogState = "idle";
             qualityController?.SetInferenceActive(
                 false,
                 activeBackend.ToString());
@@ -600,6 +695,59 @@ namespace TeamVR.AdaptivePassthrough
             {
                 runtimeModel = null;
             }
+        }
+
+        private void AbortStalledInference(float wallMilliseconds)
+        {
+            watchdogState = "reset";
+            Debug.LogError(
+                string.Format(
+                    "[PersonDetection] Inference watchdog reset after {0:F0}ms "
+                    + "({1} scheduled layers).",
+                    wallMilliseconds,
+                    activeScheduledLayerCount));
+            UpdateInferenceDiagnostics();
+            CancelInferenceAndWorker(true);
+            if (!applicationPaused && !shuttingDown && isActiveAndEnabled)
+            {
+                TryCreateWorker();
+                nextInferenceAt = 0.0;
+            }
+        }
+
+        private void UpdateInferenceDiagnostics()
+        {
+            PersonDetectionPostProcessResult result = LastPostProcessResult;
+            int raw = result == null ? 0 : result.RawCandidateCount;
+            int persons = result == null ? 0 : result.PersonCandidateCount;
+            int confidenceRejected = result == null
+                ? 0
+                : result.BelowConfidenceCount;
+            int boxRejected = result == null ? 0 : result.InvalidBoxCount;
+            qualityController?.RecordInferenceDiagnostics(
+                IsCameraReady,
+                raw,
+                persons,
+                confidenceRejected,
+                boxRejected,
+                Mathf.Max(0, raw - persons),
+                watchdogState,
+                activeSliceBudgetMilliseconds);
+        }
+
+        private float ActiveInferenceWallMilliseconds()
+        {
+            return activeInferenceStartedTimestamp <= 0
+                ? 0f
+                : ElapsedMilliseconds(activeInferenceStartedTimestamp);
+        }
+
+        private static float ElapsedMilliseconds(long startedTimestamp)
+        {
+            long elapsed = Stopwatch.GetTimestamp() - startedTimestamp;
+            return Mathf.Max(
+                0f,
+                (float)(elapsed * 1000.0 / Stopwatch.Frequency));
         }
 
         private void RecordBackendBenchmark(float elapsedMilliseconds)

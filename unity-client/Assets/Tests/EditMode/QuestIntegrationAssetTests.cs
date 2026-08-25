@@ -110,6 +110,9 @@ namespace TeamVR.AdaptivePassthrough.Tests
 
             Assert.That(source, Does.Contain("ScheduleIterable(activeInput)"));
             Assert.That(source, Does.Contain("AdvanceInferenceSchedule"));
+            Assert.That(source, Does.Contain("Stopwatch.GetTimestamp()"));
+            Assert.That(source, Does.Contain("InferenceSchedulerPolicy"));
+            Assert.That(source, Does.Contain("AbortStalledInference"));
             Assert.That(source, Does.Contain("CancelInferenceAndWorker"));
             Assert.That(source, Does.Contain("OnApplicationPause"));
             Assert.That(source, Does.Not.Contain("worker.Schedule(input)"));
@@ -202,6 +205,7 @@ namespace TeamVR.AdaptivePassthrough.Tests
                 MonoBehaviour personalizationPanel = null;
                 MonoBehaviour spatialProvider = null;
                 MonoBehaviour trackingQuality = null;
+                MonoBehaviour panelPlacement = null;
                 int legacySnapshotCount = 0;
                 int passthroughLayerCount = 0;
                 int controllerLaserCount = 0;
@@ -248,6 +252,9 @@ namespace TeamVR.AdaptivePassthrough.Tests
                                 break;
                             case "TrackingQualityController":
                                 trackingQuality = behaviour;
+                                break;
+                            case "WorldSpacePanelPlacementController":
+                                panelPlacement = behaviour;
                                 break;
                             case "OVRPassthroughLayer":
                                 passthroughLayer = behaviour;
@@ -310,6 +317,7 @@ namespace TeamVR.AdaptivePassthrough.Tests
                 Assert.That(experimentLogger, Is.Not.Null);
                 Assert.That(spatialProvider, Is.Not.Null);
                 Assert.That(trackingQuality, Is.Not.Null);
+                Assert.That(panelPlacement, Is.Not.Null);
                 Transform labelRoot = new SerializedObject(experimentLogger)
                     .FindProperty("labelRoot")
                     .objectReferenceValue as Transform;
@@ -320,6 +328,7 @@ namespace TeamVR.AdaptivePassthrough.Tests
                 Assert.That(
                     labelRoot.localScale.y,
                     Is.EqualTo(0.00075f).Within(0.000001f));
+                Assert.That(panelPlacement.transform, Is.SameAs(labelRoot));
                 CanvasGroup panelCanvasGroup = personalizationPanel
                     .transform.parent.GetComponent<CanvasGroup>();
                 Assert.That(panelCanvasGroup, Is.Not.Null);
@@ -440,12 +449,12 @@ namespace TeamVR.AdaptivePassthrough.Tests
                     new SerializedObject(presentation)
                         .FindProperty("personMaximumWidth")
                         .floatValue,
-                    Is.EqualTo(0.32f).Within(0.0001f));
+                    Is.EqualTo(0.42f).Within(0.0001f));
                 Assert.That(
                     new SerializedObject(presentation)
                         .FindProperty("personMaximumHeight")
                         .floatValue,
-                    Is.EqualTo(0.48f).Within(0.0001f));
+                    Is.EqualTo(0.62f).Within(0.0001f));
                 Assert.That(
                     new SerializedObject(presentation)
                         .FindProperty("personLostHoldSeconds")
@@ -743,6 +752,34 @@ namespace TeamVR.AdaptivePassthrough.Tests
             {
                 EditorSceneManager.CloseScene(scene, true);
             }
+        }
+
+        [Test]
+        public void SpatialFusionRemovesHandOverlapAndRoomSceneIsConcurrent()
+        {
+            string providerSource = File.ReadAllText(
+                Path.Combine(
+                    Application.dataPath,
+                    "Scripts/AdaptivePassthrough/Quest/QuestSpatialObstacleProvider.cs"));
+            string roomSource = File.ReadAllText(
+                Path.Combine(
+                    Application.dataPath,
+                    "Scripts/QuestRiskExperimentLogger.cs"));
+            string legacySceneSource = File.ReadAllText(
+                Path.Combine(
+                    Application.dataPath,
+                    "Scripts/QuestSceneDistanceLogger.cs"));
+
+            Assert.That(providerSource, Does.Contain("fusionFilter.Fuse"));
+            Assert.That(providerSource, Does.Contain("HandRayOriginOffsetMeters"));
+            Assert.That(providerSource, Does.Contain("ClearSafetyOverlap(leftState)"));
+            Assert.That(providerSource, Does.Contain("ClearSafetyOverlap(rightState)"));
+            Assert.That(providerSource, Does.Not.Contain(
+                "UpdateSafetyOverlap(\r\n                leftState"));
+            Assert.That(roomSource, Does.Contain("ISpatialObstacleProvider"));
+            Assert.That(roomSource, Does.Not.Contain("UpdatePanelPose();"));
+            Assert.That(legacySceneSource, Does.Not.Contain(
+                "labelRoot.position = cam.position"));
         }
 
         [Test]

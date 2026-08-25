@@ -47,6 +47,7 @@ namespace TeamVR.AdaptivePassthrough
         private bool inferenceActive;
         private float measuredInferenceRateHz;
         private double previousInferenceAt;
+        private bool hasInferenceMeasurement;
         private int personTrackId;
         private float personRawDistance;
         private float personFilteredDistance;
@@ -54,6 +55,17 @@ namespace TeamVR.AdaptivePassthrough
         private float personMissingSeconds;
         private bool personMetricReliable;
         private string personDepthRejectedReason = string.Empty;
+        private SpatialOwnerDiagnostics headSpatial;
+        private SpatialOwnerDiagnostics leftHandSpatial;
+        private SpatialOwnerDiagnostics rightHandSpatial;
+        private bool cameraReady;
+        private int rawCandidateCount;
+        private int personCandidateCount;
+        private int confidenceRejectedCount;
+        private int boxRejectedCount;
+        private int classRejectedCount;
+        private string inferenceWatchdogState = "idle";
+        private float inferenceSliceBudgetMilliseconds;
 
         public event Action<TrackingQualityProfile> ProfileChanged;
         public event Action<string, double> TestMarkerRequested;
@@ -195,6 +207,22 @@ namespace TeamVR.AdaptivePassthrough
             spatialMeasurement = measurement;
         }
 
+        public void RecordSpatialOwners(
+            SpatialObstacleMeasurement headMeasurement,
+            SpatialObstacleMeasurement leftHandMeasurement,
+            SpatialObstacleMeasurement rightHandMeasurement)
+        {
+            headSpatial = new SpatialOwnerDiagnostics(
+                SpatialProbeOwner.Head,
+                headMeasurement);
+            leftHandSpatial = new SpatialOwnerDiagnostics(
+                SpatialProbeOwner.LeftHand,
+                leftHandMeasurement);
+            rightHandSpatial = new SpatialOwnerDiagnostics(
+                SpatialProbeOwner.RightHand,
+                rightHandMeasurement);
+        }
+
         public void RecordInference(
             double captureTimestampSeconds,
             float elapsedMilliseconds)
@@ -223,6 +251,7 @@ namespace TeamVR.AdaptivePassthrough
                 previousInferenceAt,
                 captureTimestampSeconds);
             previousInferenceAt = captureTimestampSeconds;
+            hasInferenceMeasurement = true;
             inferenceMilliseconds = Mathf.Max(0f, activeMilliseconds);
             inferenceActiveMilliseconds = Mathf.Max(0f, activeMilliseconds);
             inferenceWallMilliseconds = Mathf.Max(0f, wallMilliseconds);
@@ -247,6 +276,30 @@ namespace TeamVR.AdaptivePassthrough
             }
         }
 
+        public void RecordInferenceDiagnostics(
+            bool isCameraReady,
+            int rawCandidates,
+            int personCandidates,
+            int confidenceRejected,
+            int boxRejected,
+            int classRejected,
+            string watchdogState,
+            float sliceBudgetMilliseconds)
+        {
+            cameraReady = isCameraReady;
+            rawCandidateCount = Mathf.Max(0, rawCandidates);
+            personCandidateCount = Mathf.Max(0, personCandidates);
+            confidenceRejectedCount = Mathf.Max(0, confidenceRejected);
+            boxRejectedCount = Mathf.Max(0, boxRejected);
+            classRejectedCount = Mathf.Max(0, classRejected);
+            inferenceWatchdogState = string.IsNullOrWhiteSpace(watchdogState)
+                ? "idle"
+                : watchdogState;
+            inferenceSliceBudgetMilliseconds = Mathf.Max(
+                0f,
+                sliceBudgetMilliseconds);
+        }
+
         public void RecordPerson(
             int trackId,
             float rawDistanceMeters,
@@ -265,6 +318,17 @@ namespace TeamVR.AdaptivePassthrough
             personDepthRejectedReason = metricReliable
                 ? string.Empty
                 : depthRejectedReason ?? string.Empty;
+        }
+
+        public void ClearPerson()
+        {
+            personTrackId = 0;
+            personRawDistance = 0f;
+            personFilteredDistance = 0f;
+            personMotion = "Unavailable";
+            personMissingSeconds = 0f;
+            personMetricReliable = false;
+            personDepthRejectedReason = string.Empty;
         }
 
         public void AddTestMarker(string marker)
@@ -332,9 +396,7 @@ namespace TeamVR.AdaptivePassthrough
                 spatialMeasurement.Source,
                 spatialMeasurement.DistanceMeters,
                 spatialMeasurement.Confidence,
-                measuredInferenceRateHz > 0f
-                    ? measuredInferenceRateHz
-                    : settings.personInferenceRateHz,
+                measuredInferenceRateHz,
                 inferenceMilliseconds,
                 personTrackId,
                 personRawDistance,
@@ -351,7 +413,21 @@ namespace TeamVR.AdaptivePassthrough
                 inferenceActive,
                 applicationPaused,
                 personMetricReliable,
-                personDepthRejectedReason);
+                personDepthRejectedReason,
+                headSpatial,
+                leftHandSpatial,
+                rightHandSpatial,
+                cameraReady,
+                rawCandidateCount,
+                personCandidateCount,
+                confidenceRejectedCount,
+                boxRejectedCount,
+                classRejectedCount,
+                inferenceWatchdogState,
+                inferenceSliceBudgetMilliseconds,
+                settings.personInferenceRateHz,
+                measuredInferenceRateHz,
+                hasInferenceMeasurement);
         }
 
         public static TrackingQualityProfile LoadProfile()
@@ -382,18 +458,18 @@ namespace TeamVR.AdaptivePassthrough
                     selectedProfile,
                     selected.spatialRateHz,
                     selected.spatialRayCount,
-                    Mathf.Min(selected.personInferenceRateHz, 2.5f),
+                    Mathf.Max(3f, selected.personInferenceRateHz),
                     Mathf.Min(selected.inferenceSliceMilliseconds, 1f),
-                    1);
+                    Mathf.Min(selected.maximumLayersPerFrame, 64));
             }
 
             return new TrackingQualitySettings(
                 selectedProfile,
                 10f,
-                6,
-                2f,
+                12,
+                3f,
                 0.75f,
-                1);
+                48);
         }
 
         public void ResetRuntimeMeasurements()
@@ -403,12 +479,21 @@ namespace TeamVR.AdaptivePassthrough
             previousSpatialAt = 0.0;
             measuredInferenceRateHz = 0f;
             previousInferenceAt = 0.0;
+            hasInferenceMeasurement = false;
             inferenceMilliseconds = 0f;
             inferenceActiveMilliseconds = 0f;
             inferenceWallMilliseconds = 0f;
             inferenceCaptureAgeMilliseconds = 0f;
             inferenceScheduledLayerCount = 0;
             inferenceActive = false;
+            cameraReady = false;
+            rawCandidateCount = 0;
+            personCandidateCount = 0;
+            confidenceRejectedCount = 0;
+            boxRejectedCount = 0;
+            classRejectedCount = 0;
+            inferenceWatchdogState = "idle";
+            inferenceSliceBudgetMilliseconds = 0f;
         }
 
         private void ResetFrameStatistics()

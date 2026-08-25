@@ -111,9 +111,10 @@ namespace TeamVR.AdaptivePassthrough
                 detection.label,
                 "person",
                 StringComparison.OrdinalIgnoreCase);
+            bool hasReliableMetricDistance = location.HasMetricDistance
+                && location.DistanceConfidence >= 0.45f;
             bool metricClose = person
-                && location.HasMetricDistance
-                && location.DistanceConfidence >= 0.45f
+                && hasReliableMetricDistance
                 && location.FilteredDistanceMeters <= 0.60f;
             bool strongBboxClose = person
                 && detection.confidence >= 0.75f
@@ -129,12 +130,21 @@ namespace TeamVR.AdaptivePassthrough
                 closeState = new CloseState();
                 closeStates.Add(tracked.TrackId, closeState);
             }
+            bool wasCloseActive = closeState.Active;
+            string closeTransitionReason = closeState.Active
+                ? "latched"
+                : "inactive";
 
             if (metricClose || strongBboxClose)
             {
                 closeState.Active = true;
                 closeState.WeakConfirmations = 0;
                 closeState.ReleaseConfirmations = 0;
+                closeTransitionReason = wasCloseActive
+                    ? "latched"
+                    : metricClose
+                        ? "metric_close_enter"
+                        : "strong_bbox_close_enter";
             }
             else if (weakBboxClose)
             {
@@ -143,6 +153,9 @@ namespace TeamVR.AdaptivePassthrough
                 {
                     closeState.Active = true;
                     closeState.ReleaseConfirmations = 0;
+                    closeTransitionReason = wasCloseActive
+                        ? "latched"
+                        : "weak_bbox_close_enter_2x";
                 }
             }
             else
@@ -150,17 +163,28 @@ namespace TeamVR.AdaptivePassthrough
                 closeState.WeakConfirmations = 0;
                 if (closeState.Active)
                 {
-                    bool releaseConfirmed = location.HasMetricDistance
+                    bool releaseConfirmed = hasReliableMetricDistance
                         ? location.FilteredDistanceMeters > 0.80f
                             && box.height < 0.65f
-                        : box.height < 0.65f && box.Area < 0.25f;
+                        : box.height < 0.85f
+                            && box.Area < 0.45f
+                            && detection.confidence >= 0.40f
+                            && IsUnclipped(box, 0.02f);
                     closeState.ReleaseConfirmations = releaseConfirmed
                         ? closeState.ReleaseConfirmations + 1
                         : 0;
+                    closeTransitionReason = releaseConfirmed
+                        ? hasReliableMetricDistance
+                            ? "metric_release_pending"
+                            : "bbox_release_pending"
+                        : "release_blocked";
                     if (closeState.ReleaseConfirmations >= 3)
                     {
                         closeState.Active = false;
                         closeState.ReleaseConfirmations = 0;
+                        closeTransitionReason = hasReliableMetricDistance
+                            ? "metric_release_3x"
+                            : "bbox_release_3x";
                     }
                 }
             }
@@ -274,7 +298,56 @@ namespace TeamVR.AdaptivePassthrough
                 tracked.ObservedThisFrame,
                 0f,
                 tracked.ReidentifiedThisFrame,
-                closeState.Active);
+                closeState.Active,
+                closeState.Active,
+                closeTransitionReason,
+                closeState.ReleaseConfirmations);
+        }
+
+        public void MarkUnobserved(int trackId)
+        {
+            CloseState state;
+            if (closeStates.TryGetValue(trackId, out state))
+            {
+                state.WeakConfirmations = 0;
+                state.ReleaseConfirmations = 0;
+            }
+        }
+
+        public static bool IsUnclipped(
+            NormalizedBoundingBox box,
+            float edgeMargin)
+        {
+            float margin = Math.Max(0f, Math.Min(0.49f, edgeMargin));
+            return box.Left >= margin
+                && box.Top >= margin
+                && box.Right <= 1f - margin
+                && box.Bottom <= 1f - margin;
+        }
+
+        public void PruneExcept(IEnumerable<int> liveTrackIds)
+        {
+            var live = liveTrackIds == null
+                ? new HashSet<int>()
+                : new HashSet<int>(liveTrackIds);
+            var expired = new List<int>();
+            foreach (int trackId in closeStates.Keys)
+            {
+                if (!live.Contains(trackId))
+                {
+                    expired.Add(trackId);
+                }
+            }
+
+            for (int i = 0; i < expired.Count; i++)
+            {
+                closeStates.Remove(expired[i]);
+            }
+        }
+
+        public void Reset()
+        {
+            closeStates.Clear();
         }
 
         public DynamicRiskLevel LevelForScore(float score)

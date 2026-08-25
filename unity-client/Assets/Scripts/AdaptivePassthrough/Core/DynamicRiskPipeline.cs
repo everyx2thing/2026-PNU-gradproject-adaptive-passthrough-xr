@@ -59,22 +59,21 @@ namespace TeamVR.AdaptivePassthrough
 
             IReadOnlyList<TrackedDynamicObject> tracked =
                 tracker.Update(timestampSeconds, filtered);
-            motionEstimator.PruneExcept(tracker.ConfirmedTrackIds);
-            metricMotionEstimator.PruneExcept(tracker.ConfirmedTrackIds);
-            PruneAssessments(tracker.LiveTrackIds);
+            var liveTrackIds = new List<int>(tracker.LiveTrackIds);
+            motionEstimator.PruneExcept(liveTrackIds);
+            metricMotionEstimator.PruneExcept(liveTrackIds);
+            riskEstimator.PruneExcept(liveTrackIds);
+            PruneAssessments(liveTrackIds);
             var assessments = new List<DynamicRiskAssessment>(tracked.Count);
             for (int i = 0; i < tracked.Count; i++)
             {
                 TrackedDynamicObject item = tracked[i];
-                if (!item.IsConfirmed)
-                {
-                    continue;
-                }
-
                 if (!item.ObservedThisFrame)
                 {
+                    riskEstimator.MarkUnobserved(item.TrackId);
                     DynamicRiskAssessment held;
-                    if (lastObservedAssessments.TryGetValue(
+                    if (item.IsConfirmed
+                        && lastObservedAssessments.TryGetValue(
                             item.TrackId,
                             out held))
                     {
@@ -106,6 +105,17 @@ namespace TeamVR.AdaptivePassthrough
                     locationEstimator.Estimate(item, distance);
                 DynamicRiskAssessment assessment =
                     riskEstimator.Estimate(item, location, motion);
+                if (!item.IsConfirmed)
+                {
+                    // Normal tentative detections remain hidden, but fixed
+                    // ultra-close safety conditions must not wait for tracker
+                    // confirmation at a 3 Hz inference rate.
+                    if (assessment.ForcePassthrough)
+                    {
+                        assessments.Add(assessment);
+                    }
+                    continue;
+                }
                 assessments.Add(assessment);
                 lastObservedAssessments[item.TrackId] = assessment;
             }
@@ -113,7 +123,8 @@ namespace TeamVR.AdaptivePassthrough
             return new DynamicRiskFrame(
                 timestampSeconds,
                 assessments,
-                tracker.ConfirmedTrackCount);
+                tracker.ConfirmedTrackCount,
+                liveTrackIds);
         }
 
         public void Reset()
@@ -121,6 +132,7 @@ namespace TeamVR.AdaptivePassthrough
             tracker.Reset();
             motionEstimator.Reset();
             metricMotionEstimator.Reset();
+            riskEstimator.Reset();
             lastObservedAssessments.Clear();
         }
 
@@ -150,7 +162,12 @@ namespace TeamVR.AdaptivePassthrough
                 previous.Breakdown,
                 TrackLifecycle.Lost,
                 false,
-                (float)tracked.UnobservedSeconds);
+                (float)tracked.UnobservedSeconds,
+                false,
+                previous.ForcePassthrough,
+                previous.ClosePassthroughActive,
+                "unobserved_hold",
+                previous.CloseReleaseConfirmationCount);
         }
 
         private void PruneAssessments(IEnumerable<int> liveTrackIds)

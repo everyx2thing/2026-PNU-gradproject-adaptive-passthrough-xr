@@ -21,7 +21,8 @@ namespace TeamVR.AdaptivePassthrough
     {
         Unavailable,
         EnvironmentDepth,
-        RoomScene
+        RoomScene,
+        Fused
     }
 
     [Serializable]
@@ -45,7 +46,7 @@ namespace TeamVR.AdaptivePassthrough
                 spatialRayCount,
                 personInferenceRateHz,
                 1.5f,
-                2)
+                64)
         {
         }
 
@@ -76,10 +77,10 @@ namespace TeamVR.AdaptivePassthrough
             {
                 case TrackingQualityProfile.Accuracy:
                     return new TrackingQualitySettings(
-                        profile, 30f, 24, 3f, 2.5f, 4);
+                        profile, 30f, 24, 3f, 2.5f, 96);
                 case TrackingQualityProfile.Performance:
                     return new TrackingQualitySettings(
-                        profile, 10f, 6, 2f, 0.75f, 1);
+                        profile, 10f, 12, 3f, 0.75f, 48);
                 default:
                     return new TrackingQualitySettings(
                         TrackingQualityProfile.Balanced,
@@ -87,7 +88,7 @@ namespace TeamVR.AdaptivePassthrough
                         12,
                         3f,
                         1.5f,
-                        2);
+                        64);
             }
         }
     }
@@ -134,6 +135,12 @@ namespace TeamVR.AdaptivePassthrough
         public readonly bool SafetyVolumeOverlap;
         public readonly bool RawSafetyVolumeOverlap;
         public readonly int ValidRayHitCount;
+        public readonly SpatialProbeOwner Owner;
+        public readonly SpatialObstacleSource SelectedSource;
+        public readonly float EnvironmentDistanceMeters;
+        public readonly float RoomSceneDistanceMeters;
+        public readonly bool SelfRejected;
+        public readonly string RejectionReason;
 
         public SpatialObstacleMeasurement(
             SpatialObstacleSource source,
@@ -149,7 +156,14 @@ namespace TeamVR.AdaptivePassthrough
             float ageSeconds,
             bool safetyVolumeOverlap,
             bool rawSafetyVolumeOverlap = false,
-            int validRayHitCount = -1)
+            int validRayHitCount = -1,
+            SpatialProbeOwner owner = SpatialProbeOwner.Head,
+            SpatialObstacleSource selectedSource =
+                SpatialObstacleSource.Unavailable,
+            float environmentDistanceMeters = -1f,
+            float roomSceneDistanceMeters = -1f,
+            bool selfRejected = false,
+            string rejectionReason = null)
         {
             Source = source;
             TimestampSeconds = Math.Max(0.0, timestampSeconds);
@@ -172,6 +186,14 @@ namespace TeamVR.AdaptivePassthrough
             ValidRayHitCount = validRayHitCount < 0
                 ? SampleCount
                 : Mathf.Max(0, validRayHitCount);
+            Owner = owner;
+            SelectedSource = selectedSource == SpatialObstacleSource.Unavailable
+                ? source
+                : selectedSource;
+            EnvironmentDistanceMeters = environmentDistanceMeters;
+            RoomSceneDistanceMeters = roomSceneDistanceMeters;
+            SelfRejected = selfRejected;
+            RejectionReason = rejectionReason ?? string.Empty;
         }
 
         public static SpatialObstacleMeasurement Unavailable(
@@ -190,6 +212,41 @@ namespace TeamVR.AdaptivePassthrough
                 0f,
                 0f,
                 false);
+        }
+    }
+
+    public readonly struct SpatialOwnerDiagnostics
+    {
+        public readonly SpatialProbeOwner Owner;
+        public readonly bool Available;
+        public readonly float EnvironmentDistanceMeters;
+        public readonly float RoomSceneDistanceMeters;
+        public readonly SpatialObstacleSource SelectedSource;
+        public readonly float SelectedDistanceMeters;
+        public readonly float Confidence;
+        public readonly bool RawOverlap;
+        public readonly bool ConfirmedOverlap;
+        public readonly int ValidRayHitCount;
+        public readonly bool SelfRejected;
+        public readonly string RejectionReason;
+
+        public SpatialOwnerDiagnostics(
+            SpatialProbeOwner owner,
+            SpatialObstacleMeasurement measurement)
+        {
+            Owner = owner;
+            Available = measurement.Available;
+            EnvironmentDistanceMeters =
+                measurement.EnvironmentDistanceMeters;
+            RoomSceneDistanceMeters = measurement.RoomSceneDistanceMeters;
+            SelectedSource = measurement.SelectedSource;
+            SelectedDistanceMeters = measurement.DistanceMeters;
+            Confidence = measurement.Confidence;
+            RawOverlap = measurement.RawSafetyVolumeOverlap;
+            ConfirmedOverlap = measurement.SafetyVolumeOverlap;
+            ValidRayHitCount = measurement.ValidRayHitCount;
+            SelfRejected = measurement.SelfRejected;
+            RejectionReason = measurement.RejectionReason ?? string.Empty;
         }
     }
 
@@ -234,6 +291,9 @@ namespace TeamVR.AdaptivePassthrough
         public readonly float SpatialDistanceMeters;
         public readonly float SpatialConfidence;
         public readonly float InferenceRateHz;
+        public readonly float TargetInferenceRateHz;
+        public readonly float MeasuredInferenceRateHz;
+        public readonly bool HasInferenceMeasurement;
         public readonly float InferenceMilliseconds;
         public readonly float InferenceActiveMilliseconds;
         public readonly float InferenceWallMilliseconds;
@@ -251,6 +311,17 @@ namespace TeamVR.AdaptivePassthrough
         public readonly string PersonDepthRejectedReason;
         public readonly float FramesPerSecond;
         public readonly float FrameP95Milliseconds;
+        public readonly SpatialOwnerDiagnostics HeadSpatial;
+        public readonly SpatialOwnerDiagnostics LeftHandSpatial;
+        public readonly SpatialOwnerDiagnostics RightHandSpatial;
+        public readonly bool CameraReady;
+        public readonly int RawCandidateCount;
+        public readonly int PersonCandidateCount;
+        public readonly int ConfidenceRejectedCount;
+        public readonly int BoxRejectedCount;
+        public readonly int ClassRejectedCount;
+        public readonly string InferenceWatchdogState;
+        public readonly float InferenceSliceBudgetMilliseconds;
 
         public TrackingDiagnosticsSnapshot(
             TrackingQualityProfile profile,
@@ -278,7 +349,21 @@ namespace TeamVR.AdaptivePassthrough
             bool inferenceActive = false,
             bool applicationPaused = false,
             bool personMetricReliable = false,
-            string personDepthRejectedReason = null)
+            string personDepthRejectedReason = null,
+            SpatialOwnerDiagnostics headSpatial = default,
+            SpatialOwnerDiagnostics leftHandSpatial = default,
+            SpatialOwnerDiagnostics rightHandSpatial = default,
+            bool cameraReady = false,
+            int rawCandidateCount = 0,
+            int personCandidateCount = 0,
+            int confidenceRejectedCount = 0,
+            int boxRejectedCount = 0,
+            int classRejectedCount = 0,
+            string inferenceWatchdogState = "idle",
+            float inferenceSliceBudgetMilliseconds = 0f,
+            float targetInferenceRateHz = 0f,
+            float measuredInferenceRateHz = 0f,
+            bool hasInferenceMeasurement = false)
         {
             Profile = profile;
             AdaptiveLevel = Mathf.Max(0, adaptiveLevel);
@@ -289,6 +374,11 @@ namespace TeamVR.AdaptivePassthrough
             SpatialDistanceMeters = Mathf.Max(0f, spatialDistanceMeters);
             SpatialConfidence = Mathf.Clamp01(spatialConfidence);
             InferenceRateHz = Mathf.Max(0f, inferenceRateHz);
+            TargetInferenceRateHz = Mathf.Max(0f, targetInferenceRateHz);
+            MeasuredInferenceRateHz = Mathf.Max(
+                0f,
+                measuredInferenceRateHz);
+            HasInferenceMeasurement = hasInferenceMeasurement;
             InferenceMilliseconds = Mathf.Max(0f, inferenceMilliseconds);
             InferenceActiveMilliseconds = Mathf.Max(
                 0f,
@@ -314,6 +404,22 @@ namespace TeamVR.AdaptivePassthrough
                 : personDepthRejectedReason ?? string.Empty;
             FramesPerSecond = Mathf.Max(0f, framesPerSecond);
             FrameP95Milliseconds = Mathf.Max(0f, frameP95Milliseconds);
+            HeadSpatial = headSpatial;
+            LeftHandSpatial = leftHandSpatial;
+            RightHandSpatial = rightHandSpatial;
+            CameraReady = cameraReady;
+            RawCandidateCount = Mathf.Max(0, rawCandidateCount);
+            PersonCandidateCount = Mathf.Max(0, personCandidateCount);
+            ConfidenceRejectedCount = Mathf.Max(0, confidenceRejectedCount);
+            BoxRejectedCount = Mathf.Max(0, boxRejectedCount);
+            ClassRejectedCount = Mathf.Max(0, classRejectedCount);
+            InferenceWatchdogState = string.IsNullOrWhiteSpace(
+                    inferenceWatchdogState)
+                ? "idle"
+                : inferenceWatchdogState;
+            InferenceSliceBudgetMilliseconds = Mathf.Max(
+                0f,
+                inferenceSliceBudgetMilliseconds);
         }
     }
 

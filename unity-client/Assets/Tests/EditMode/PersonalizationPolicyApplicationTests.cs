@@ -80,6 +80,56 @@ namespace TeamVR.AdaptivePassthrough.Tests
         }
 
         [Test]
+        public void StaticControllerThresholdUpdatePreservesActiveHoldState()
+        {
+            GameObject owner = new GameObject("Static Policy Hold Test");
+            try
+            {
+                MonoBehaviour controller = AddBehaviour(
+                    owner,
+                    "StaticPassthroughPolicyController");
+                MethodInfo rebuild = controller.GetType().GetMethod(
+                    "RebuildPolicy",
+                    BindingFlags.Instance | BindingFlags.NonPublic);
+                Assert.That(rebuild, Is.Not.Null);
+                rebuild.Invoke(controller, null);
+                FieldInfo policyField = controller.GetType().GetField(
+                    "policy",
+                    BindingFlags.Instance | BindingFlags.NonPublic);
+                Assert.That(policyField, Is.Not.Null);
+                var policy = policyField.GetValue(controller)
+                    as StaticBoundaryPolicy;
+                Assert.That(policy, Is.Not.Null);
+
+                StaticPassthroughDecision entered = policy.Evaluate(
+                    1L,
+                    0.0,
+                    StaticFrame(0.80f));
+                Assert.That(entered.Enabled, Is.True);
+
+                Invoke(
+                    controller,
+                    "ApplyPersonalizedThresholds",
+                    0.75f,
+                    0.55f,
+                    0.95f);
+                StaticPassthroughDecision held = policy.Evaluate(
+                    2L,
+                    0.50,
+                    StaticFrame(0f));
+
+                Assert.That(held.Enabled, Is.True);
+                Assert.That(
+                    held.SourceDecision.FilterDecision.Reason,
+                    Is.EqualTo(PassthroughDecisionReason.MinimumHoldActive));
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(owner);
+            }
+        }
+
+        [Test]
         public void ApplyNowUpdatesBothPoliciesAndDisableRestoresDefaults()
         {
             GameObject owner = new GameObject("Personalization Apply Test");
@@ -260,6 +310,35 @@ namespace TeamVR.AdaptivePassthrough.Tests
             Type type = FindType(typeName);
             Assert.That(type, Is.Not.Null, typeName + " must compile.");
             return owner.AddComponent(type) as MonoBehaviour;
+        }
+
+        private static StaticBoundaryRiskFrame StaticFrame(float risk)
+        {
+            var head = new StaticRiskMeasurement(
+                true,
+                1f,
+                0f,
+                false,
+                0f,
+                0f,
+                risk,
+                0f,
+                0f,
+                0f,
+                risk);
+            return new StaticBoundaryRiskFrame(
+                1L,
+                0.0,
+                true,
+                head,
+                0f,
+                true,
+                StaticHandRiskMeasurement.Unavailable,
+                StaticHandRiskMeasurement.Unavailable,
+                Vector3.forward,
+                true,
+                0,
+                0.7f);
         }
 
         private static Type FindType(string typeName)

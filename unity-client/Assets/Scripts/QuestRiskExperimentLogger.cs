@@ -6,7 +6,8 @@ using UnityEngine.Android;
 using UnityEngine.UI;
 
 public class QuestRiskExperimentLogger : MonoBehaviour,
-    IStaticBoundaryFrameProvider
+    IStaticBoundaryFrameProvider,
+    ISpatialObstacleProvider
 {
     private struct WallSurface
     {
@@ -83,8 +84,6 @@ public class QuestRiskExperimentLogger : MonoBehaviour,
     [Header("UI Refresh")]
     [SerializeField, Min(MinimumPositiveValue)]
     private float uiRefreshInterval = 0.15f;
-    [SerializeField, Min(0.5f)] private float panelDistanceMeters = 1.00f;
-    [SerializeField] private float panelVerticalOffsetMeters = -0.05f;
 
     private readonly List<WallSurface> wallSurfaces = new();
     private readonly Queue<StateSample> stateSamples = new();
@@ -148,11 +147,13 @@ public class QuestRiskExperimentLogger : MonoBehaviour,
     private float leftMinimumWallDistance = float.PositiveInfinity;
     private float rightMinimumWallDistance = float.PositiveInfinity;
     private long staticSequence;
+    private IStaticBoundaryFrameProvider fusedStaticProvider;
 
     private void Start()
     {
         motionStateFilter = new UserMotionStateFilter(userMotionSettings);
         ResolveTrackedTransforms();
+        ResolveFusedStaticProvider();
 
         if (!Permission.HasUserAuthorizedPermission(ScenePermission))
         {
@@ -198,6 +199,31 @@ public class QuestRiskExperimentLogger : MonoBehaviour,
         }
     }
 
+    private void ResolveFusedStaticProvider()
+    {
+        MonoBehaviour[] behaviours = FindObjectsByType<MonoBehaviour>(
+            FindObjectsSortMode.None);
+        for (int i = 0; i < behaviours.Length; i++)
+        {
+            MonoBehaviour behaviour = behaviours[i];
+            if (behaviour == null
+                || ReferenceEquals(behaviour, this)
+                || !string.Equals(
+                    behaviour.GetType().Name,
+                    "QuestSpatialObstacleProvider",
+                    System.StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            fusedStaticProvider = behaviour as IStaticBoundaryFrameProvider;
+            if (fusedStaticProvider != null)
+            {
+                return;
+            }
+        }
+    }
+
     private async void LoadScene()
     {
         riskDisplayText = displayText =
@@ -236,7 +262,11 @@ public class QuestRiskExperimentLogger : MonoBehaviour,
                 continue;
             }
 
-            await container.FetchChildrenAsync(childAnchors);
+            // Meta clears the destination list for each fetch. Aggregate each
+            // room through a temporary list so earlier rooms are not lost.
+            var roomChildren = new List<OVRAnchor>();
+            await container.FetchChildrenAsync(roomChildren);
+            childAnchors.AddRange(roomChildren);
         }
 
         Debug.Log(
@@ -338,6 +368,24 @@ public class QuestRiskExperimentLogger : MonoBehaviour,
             return;
         }
 
+        // QuestSpatialObstacleProvider already executes the Room Scene query at
+        // the configured spatial rate. When present, mirror its result instead
+        // of repeating three full anchor scans every render frame.
+        if (fusedStaticProvider != null)
+        {
+            StaticBoundaryRiskFrame fused =
+                fusedStaticProvider.CurrentStaticBoundaryFrame;
+            CurrentStaticBoundaryFrame = fused
+                ?? StaticBoundaryRiskFrame.Unavailable;
+            CurrentStaticMeasurement = CurrentStaticBoundaryFrame.Head;
+            CurrentWallDirectionWorld =
+                CurrentStaticBoundaryFrame.HeadHazardDirectionWorld;
+            CurrentWallDirectionAvailable =
+                CurrentStaticBoundaryFrame.HeadHazardDirectionAvailable;
+            CurrentClosestWallIndex = CurrentStaticBoundaryFrame.HeadWallIndex;
+            return;
+        }
+
         Vector3 hmdPosition = hmdTransform.position;
         Vector3 neckPosition = GetNeckPoint();
         if (motionStateFilter == null)
@@ -368,7 +416,6 @@ public class QuestRiskExperimentLogger : MonoBehaviour,
                 thresholdHeadSpeedScale)
             : 0f;
 
-        UpdatePanelPose();
         if (!SceneDataAvailable)
         {
             PublishUnavailable(now, userState01, motionWindowWarmedUp);
@@ -733,6 +780,49 @@ public class QuestRiskExperimentLogger : MonoBehaviour,
         return wallIndex >= 0;
     }
 
+    public bool TryMeasure(
+        SpatialProbe probe,
+        out SpatialObstacleMeasurement measurement)
+    {
+        double now = Time.realtimeSinceStartupAsDouble;
+        if (!SceneDataAvailable
+            || !TryGetClosestWall(
+                probe.Origin,
+                out float distance,
+                out Vector3 direction,
+                out int wallIndex))
+        {
+            measurement = SpatialObstacleMeasurement.Unavailable(now);
+            return false;
+        }
+
+        float closingSpeed = Mathf.Max(
+            0f,
+            Vector3.Dot(probe.Velocity, direction));
+        measurement = new SpatialObstacleMeasurement(
+            SpatialObstacleSource.RoomScene,
+            now,
+            true,
+            distance,
+            probe.Origin + direction * distance,
+            -direction,
+            closingSpeed,
+            0.70f,
+            1,
+            0f,
+            0f,
+            false,
+            false,
+            0,
+            probe.Owner,
+            SpatialObstacleSource.RoomScene,
+            -1f,
+            distance,
+            false,
+            wallIndex >= 0 ? "" : "room-scene-unavailable");
+        return true;
+    }
+
     private Vector3 GetNeckPoint()
     {
         return hmdTransform.position
@@ -763,20 +853,6 @@ public class QuestRiskExperimentLogger : MonoBehaviour,
             false,
             -1,
             Mathf.Max(personalReachLength, observedMaxReach));
-    }
-
-    private void UpdatePanelPose()
-    {
-        if (labelRoot == null)
-        {
-            return;
-        }
-
-        labelRoot.position =
-            hmdTransform.position
-            + hmdTransform.forward * Mathf.Max(0.5f, panelDistanceMeters)
-            + hmdTransform.up * panelVerticalOffsetMeters;
-        labelRoot.rotation = hmdTransform.rotation;
     }
 
     private void BuildUnavailableUi(float userState01)

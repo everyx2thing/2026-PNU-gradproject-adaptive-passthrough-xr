@@ -154,7 +154,8 @@ public sealed class StaticPassthroughPolicyController : MonoBehaviour
         policySettings.stableOnThreshold = Mathf.Clamp01(stableOn);
         policySettings.rapidOnThreshold = Mathf.Clamp01(rapidOn);
         policySettings.handFullThreshold = Mathf.Clamp01(handFull);
-        policy?.Reset();
+        // The policy reads this mutable settings instance. Resetting here used
+        // to drop an active emergency/minimum-hold state whenever ML applied.
     }
 
     public void RestoreDefaultThresholds()

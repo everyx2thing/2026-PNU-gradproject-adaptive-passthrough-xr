@@ -105,9 +105,13 @@ namespace TeamVR.AdaptivePassthrough
             int acceptedRequestedSamples = Math.Max(
                 requestedSampleCount,
                 selectedSampleCount);
-            float sampleRatio = acceptedRequestedSamples <= 0
-                ? 0f
-                : selectedSampleCount / (float)acceptedRequestedSamples;
+            // Reliability is based on foreground support, not on how many
+            // sampling rays were requested. Otherwise a one-shot 25-point
+            // recovery pass makes a valid 3-5 point body cluster less reliable
+            // than the same cluster in the 13-point pass.
+            float sampleRatio = Math.Min(
+                1f,
+                selectedSampleCount / 5f);
             float consistency = (float)Math.Exp(
                 -Math.Max(0f, dispersion) / clusterGapMeters);
             float rawConfidence = Clamp01(sampleRatio * consistency);

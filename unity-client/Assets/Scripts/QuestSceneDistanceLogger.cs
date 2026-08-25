@@ -15,7 +15,6 @@ public class QuestSceneDistanceLogger : MonoBehaviour
     }
 
     [SerializeField] private Text labelText;
-    [SerializeField] private Transform labelRoot;
 
     private const string ScenePermission = "com.oculus.permission.USE_SCENE";
     private readonly List<Surface> _surfaces = new();
@@ -190,15 +189,6 @@ public class QuestSceneDistanceLogger : MonoBehaviour
 
         float avgHandSpeed = (leftSpeed + rightSpeed) * 0.5f;
         float handHeadRatio = Safe(avgHandSpeed / (hmdSpeed + 0.001f));
-
-        // UI panel fixed 2m ahead of camera
-        Transform cam = _hmdTransform != null ? _hmdTransform
-            : Camera.main != null ? Camera.main.transform : null;
-        if (cam != null && labelRoot != null)
-        {
-            labelRoot.position = cam.position + cam.forward * 2f - cam.up * 0.15f;
-            labelRoot.rotation = cam.rotation;
-        }
 
         // Distance measurement (WallFace / InvisibleWallFace only)
         if (_loaded && _surfaces.Count > 0)

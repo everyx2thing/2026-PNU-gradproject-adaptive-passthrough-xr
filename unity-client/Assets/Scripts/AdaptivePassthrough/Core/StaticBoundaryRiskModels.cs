@@ -141,6 +141,7 @@ namespace TeamVR.AdaptivePassthrough
         public readonly bool HeadHazardDirectionAvailable;
         public readonly int HeadWallIndex;
         public readonly float ObservedReachMeters;
+        public readonly bool HeadSafetyOverlapEmergency;
 
         public StaticBoundaryRiskFrame(
             long sequence,
@@ -154,29 +155,37 @@ namespace TeamVR.AdaptivePassthrough
             Vector3 headHazardDirectionWorld,
             bool headHazardDirectionAvailable,
             int headWallIndex,
-            float observedReachMeters)
+            float observedReachMeters,
+            bool headSafetyOverlapEmergency = false)
         {
             SchemaVersion = CurrentSchemaVersion;
             Sequence = Math.Max(0L, sequence);
             TimestampSeconds = Math.Max(0.0, Safe(timestampSeconds));
-            Available = available && head.Available;
-            Head = Available ? head : StaticRiskMeasurement.Unavailable;
+            HeadSafetyOverlapEmergency = headSafetyOverlapEmergency;
+            Available = available
+                && (head.Available
+                    || leftHand.Available
+                    || rightHand.Available
+                    || HeadSafetyOverlapEmergency);
+            Head = Available && head.Available
+                ? head
+                : StaticRiskMeasurement.Unavailable;
             UserState01 = Clamp01(userState01);
             MotionWindowWarmedUp = motionWindowWarmedUp;
-            LeftHand = Available
+            LeftHand = Available && leftHand.Available
                 ? leftHand
                 : StaticHandRiskMeasurement.Unavailable;
-            RightHand = Available
+            RightHand = Available && rightHand.Available
                 ? rightHand
                 : StaticHandRiskMeasurement.Unavailable;
-            HeadHazardDirectionWorld = Available
+            HeadHazardDirectionWorld = Available && head.Available
                 ? SafeDirection(headHazardDirectionWorld)
                 : Vector3.zero;
             HeadHazardDirectionAvailable =
                 Available
                 && headHazardDirectionAvailable
                 && HeadHazardDirectionWorld.sqrMagnitude > 0.0001f;
-            HeadWallIndex = Available ? headWallIndex : -1;
+            HeadWallIndex = Available && head.Available ? headWallIndex : -1;
             ObservedReachMeters = Mathf.Max(0f, Safe(observedReachMeters));
         }
 

@@ -8,6 +8,7 @@ namespace TeamVR.AdaptivePassthrough
         private const float InvalidMatchCost = 1000f;
         private const float UnmatchedTrackCost = 2.25f;
         private const float NewDetectionCost = 1.75f;
+        private const double WorldPointMaximumAgeSeconds = 0.75;
 
         private sealed class TrackState
         {
@@ -29,6 +30,7 @@ namespace TeamVR.AdaptivePassthrough
             public UnityEngine.Vector3 WorldPoint;
             public UnityEngine.Vector3 WorldVelocity;
             public float WorldPointConfidence;
+            public double LastWorldPointTimestampSeconds;
             public bool ObservedThisUpdate;
             public bool ReidentifiedThisUpdate;
             public readonly Queue<bool> RecentObservations = new Queue<bool>();
@@ -99,13 +101,13 @@ namespace TeamVR.AdaptivePassthrough
 
         public SimpleObjectTracker(
             float minimumIou = 0.15f,
-            float maximumCenterDistance = 0.22f,
+            float maximumCenterDistance = 0.28f,
             int maximumMissedFrames = 8,
             int confirmationHits = 3,
             int confirmationWindowFrames = 5,
             int fastConfirmationHits = 2,
             float fastConfirmationConfidence = 0.85f,
-            double maximumUnobservedSeconds = 1.20,
+            double maximumUnobservedSeconds = 1.50,
             float newTrackConfidence = 0.55f,
             float maximumSizeRatio = 2.50f)
         {
@@ -131,9 +133,31 @@ namespace TeamVR.AdaptivePassthrough
             IReadOnlyList<DynamicObjectDetection> detections)
         {
             detections = detections ?? Array.Empty<DynamicObjectDetection>();
+            // Never let an already-expired track participate in assignment.
+            // Otherwise a late detection can resurrect the old ID before the
+            // cleanup that historically happened at the end of this method.
+            expiredTrackIds.Clear();
+            foreach (TrackState state in tracks.Values)
+            {
+                double unobservedSeconds = Math.Max(
+                    0.0,
+                    timestampSeconds - state.TimestampSeconds);
+                if (state.MissedFrames > maximumMissedFrames
+                    || unobservedSeconds > maximumUnobservedSeconds)
+                {
+                    expiredTrackIds.Add(state.Id);
+                }
+            }
+
+            for (int i = 0; i < expiredTrackIds.Count; i++)
+            {
+                tracks.Remove(expiredTrackIds[i]);
+            }
+
             orderedTracks.Clear();
             foreach (TrackState state in tracks.Values)
             {
+                ExpireStaleWorldPoint(state, timestampSeconds);
                 state.ObservedThisUpdate = false;
                 state.ReidentifiedThisUpdate = false;
                 orderedTracks.Add(state);
@@ -175,7 +199,10 @@ namespace TeamVR.AdaptivePassthrough
                     ObservedThisUpdate = true,
                     HasWorldPoint = detection.hasWorldPoint,
                     WorldPoint = detection.worldPoint,
-                    WorldPointConfidence = detection.worldPointConfidence
+                    WorldPointConfidence = detection.worldPointConfidence,
+                    LastWorldPointTimestampSeconds = detection.hasWorldPoint
+                        ? timestampSeconds
+                        : 0.0
                 };
                 tracks.Add(state.Id, state);
             }
@@ -263,7 +290,14 @@ namespace TeamVR.AdaptivePassthrough
                     state.ObservedThisUpdate,
                     state.MissedFrames,
                     missingSeconds,
-                    state.ReidentifiedThisUpdate));
+                    state.ReidentifiedThisUpdate,
+                    new UnityEngine.Vector2(
+                        state.CenterVelocityX,
+                        state.CenterVelocityY),
+                    new UnityEngine.Vector2(
+                        state.WidthVelocity,
+                        state.HeightVelocity),
+                    state.TotalHits));
             }
 
             return output;
@@ -357,7 +391,7 @@ namespace TeamVR.AdaptivePassthrough
                 detection.boundingBox);
             float sizeRatio = SizeRatio(predicted, detection.boundingBox);
             float allowedCenterDistance = maximumCenterDistance
-                + (float)Math.Min(0.20, predictionSeconds * 0.10);
+                + (float)Math.Min(0.30, predictionSeconds * 0.20);
             if ((iou < minimumIou && centerDistance > allowedCenterDistance)
                 || sizeRatio > maximumSizeRatio)
             {
@@ -528,9 +562,10 @@ namespace TeamVR.AdaptivePassthrough
             double timestampSeconds)
         {
             bool reidentified = state.Lifecycle == TrackLifecycle.Lost;
-            double elapsedSeconds = Math.Max(
-                0.0001,
-                timestampSeconds - state.TimestampSeconds);
+            double rawElapsedSeconds =
+                timestampSeconds - state.TimestampSeconds;
+            bool forwardTime = rawElapsedSeconds > 0.0001;
+            double elapsedSeconds = Math.Max(0.0001, rawElapsedSeconds);
             float elapsed = (float)elapsedSeconds;
             NormalizedBoundingBox previous = state.Detection.boundingBox;
             NormalizedBoundingBox predicted = PredictedBox(
@@ -547,10 +582,13 @@ namespace TeamVR.AdaptivePassthrough
                 predicted.centerY + alpha * residualY,
                 predicted.width + alpha * residualWidth,
                 predicted.height + alpha * residualHeight);
-            state.CenterVelocityX += beta * residualX / elapsed;
-            state.CenterVelocityY += beta * residualY / elapsed;
-            state.WidthVelocity += beta * residualWidth / elapsed;
-            state.HeightVelocity += beta * residualHeight / elapsed;
+            if (forwardTime)
+            {
+                state.CenterVelocityX += beta * residualX / elapsed;
+                state.CenterVelocityY += beta * residualY / elapsed;
+                state.WidthVelocity += beta * residualWidth / elapsed;
+                state.HeightVelocity += beta * residualHeight / elapsed;
+            }
             if (detection.hasWorldPoint)
             {
                 UnityEngine.Vector3 worldPrediction = state.HasWorldPoint
@@ -559,18 +597,21 @@ namespace TeamVR.AdaptivePassthrough
                 UnityEngine.Vector3 worldResidual =
                     detection.worldPoint - worldPrediction;
                 state.WorldPoint = worldPrediction + 0.65f * worldResidual;
-                if (state.HasWorldPoint)
+                if (state.HasWorldPoint && forwardTime)
                 {
                     state.WorldVelocity += 0.12f * worldResidual / elapsed;
                 }
 
                 state.HasWorldPoint = true;
                 state.WorldPointConfidence = detection.worldPointConfidence;
+                state.LastWorldPointTimestampSeconds = timestampSeconds;
             }
             float previousArea = Math.Max(0.000001f, previous.Area);
-            state.LastGrowthRate = (detection.boundingBox.Area - previousArea)
-                / previousArea
-                / elapsed;
+            state.LastGrowthRate = forwardTime
+                ? (detection.boundingBox.Area - previousArea)
+                    / previousArea
+                    / elapsed
+                : 0f;
             state.Detection = new DynamicObjectDetection(
                 detection.label,
                 detection.confidence,
@@ -579,10 +620,29 @@ namespace TeamVR.AdaptivePassthrough
                 state.HasWorldPoint,
                 state.WorldPoint,
                 state.WorldPointConfidence);
-            state.TimestampSeconds = timestampSeconds;
+            state.TimestampSeconds = Math.Max(
+                state.TimestampSeconds,
+                timestampSeconds);
             state.MissedFrames = 0;
             state.ObservedThisUpdate = true;
             state.ReidentifiedThisUpdate = reidentified;
+        }
+
+        private static void ExpireStaleWorldPoint(
+            TrackState state,
+            double timestampSeconds)
+        {
+            if (!state.HasWorldPoint
+                || timestampSeconds - state.LastWorldPointTimestampSeconds
+                    <= WorldPointMaximumAgeSeconds)
+            {
+                return;
+            }
+
+            state.HasWorldPoint = false;
+            state.WorldPoint = UnityEngine.Vector3.zero;
+            state.WorldVelocity = UnityEngine.Vector3.zero;
+            state.WorldPointConfidence = 0f;
         }
 
         private void RecordObservation(TrackState state, bool observed)

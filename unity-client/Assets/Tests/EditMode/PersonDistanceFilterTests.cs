@@ -186,6 +186,26 @@ namespace TeamVR.AdaptivePassthrough.Tests
         }
 
         [Test]
+        public void ExpandedSamplingDoesNotPenalizeSupportedForegroundCluster()
+        {
+            var filter = new PersonDistanceFilter();
+            PersonDistanceMeasurement result = filter.UpdateMetric(
+                9,
+                1.0,
+                new[] { 1.00f, 1.02f, 0.98f },
+                25,
+                0.20f,
+                null,
+                0.45f,
+                float.PositiveInfinity,
+                0.35f);
+
+            Assert.That(result.HasReliableMetricDistance, Is.True);
+            Assert.That(result.ValidSampleCount, Is.EqualTo(3));
+            Assert.That(result.Confidence, Is.GreaterThanOrEqualTo(0.45f));
+        }
+
+        [Test]
         public void LargeBoundingBoxRejectsTwoPointSevenMeterDepth()
         {
             var measurement = new PersonDistanceMeasurement(

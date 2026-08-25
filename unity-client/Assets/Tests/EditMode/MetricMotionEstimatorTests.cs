@@ -127,6 +127,26 @@ namespace TeamVR.AdaptivePassthrough.Tests
                 Is.Not.EqualTo(DynamicMotionState.Receding));
         }
 
+        [Test]
+        public void ThreeHertzCadenceStillProducesMetricApproach()
+        {
+            var estimator = new MetricMotionEstimator();
+            MotionEstimate result = null;
+            for (int i = 0; i < 4; i++)
+            {
+                double timestamp = i / 3.0;
+                result = estimator.Estimate(
+                    timestamp,
+                    31,
+                    Metric(31, timestamp, 2.0f - i * 0.20f),
+                    BBoxFallback());
+            }
+
+            Assert.That(result.HasMetricMotion, Is.True);
+            Assert.That(result.State,
+                Is.EqualTo(DynamicMotionState.Approaching));
+        }
+
         private static PersonDistanceMeasurement Metric(
             int trackId,
             double timestamp,

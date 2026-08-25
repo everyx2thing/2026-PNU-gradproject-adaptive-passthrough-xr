@@ -23,6 +23,7 @@ public sealed class DynamicPassthroughPolicyController : MonoBehaviour
     private PassthroughDecisionFilter filter;
     private double nextEvaluationAt;
     private long sequence;
+    private DynamicRiskController subscribedDynamicRiskController;
 
     public event Action<PassthroughSourceDecision> DecisionPublished;
 
@@ -74,6 +75,12 @@ public sealed class DynamicPassthroughPolicyController : MonoBehaviour
     private void OnEnable()
     {
         nextEvaluationAt = 0.0;
+        RefreshPipelineResetSubscription();
+    }
+
+    private void OnDisable()
+    {
+        UnsubscribePipelineReset();
     }
 
     private void LateUpdate()
@@ -183,6 +190,8 @@ public sealed class DynamicPassthroughPolicyController : MonoBehaviour
             detectionRunner =
                 FindAnyObjectByType<QuestPersonDetectionRunner>();
         }
+
+        RefreshPipelineResetSubscription();
     }
 
     private void RebuildFilter()
@@ -193,6 +202,48 @@ public sealed class DynamicPassthroughPolicyController : MonoBehaviour
         sequence = 0;
         Latest = null;
         LatestForcePassthrough = false;
+    }
+
+    public void ResetRuntimeState()
+    {
+        filter?.Reset();
+        nextEvaluationAt = 0.0;
+        sequence = 0;
+        Latest = null;
+        LatestForcePassthrough = false;
+    }
+
+    private void RefreshPipelineResetSubscription()
+    {
+        if (ReferenceEquals(
+                subscribedDynamicRiskController,
+                dynamicRiskController))
+        {
+            return;
+        }
+
+        UnsubscribePipelineReset();
+        subscribedDynamicRiskController = dynamicRiskController;
+        if (subscribedDynamicRiskController != null)
+        {
+            subscribedDynamicRiskController.PipelineReset +=
+                HandlePipelineReset;
+        }
+    }
+
+    private void UnsubscribePipelineReset()
+    {
+        if (subscribedDynamicRiskController != null)
+        {
+            subscribedDynamicRiskController.PipelineReset -=
+                HandlePipelineReset;
+            subscribedDynamicRiskController = null;
+        }
+    }
+
+    private void HandlePipelineReset()
+    {
+        ResetRuntimeState();
     }
 
     private void EnsureDecisionSettings()

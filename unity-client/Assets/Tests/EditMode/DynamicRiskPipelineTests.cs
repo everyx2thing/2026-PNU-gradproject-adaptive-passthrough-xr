@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using NUnit.Framework;
+using UnityEngine;
 
 namespace TeamVR.AdaptivePassthrough.Tests
 {
@@ -75,7 +76,7 @@ namespace TeamVR.AdaptivePassthrough.Tests
             tracker.Update(0.9, Array.Empty<DynamicObjectDetection>());
             Assert.That(tracker.ConfirmedTrackCount, Is.EqualTo(1));
 
-            tracker.Update(1.31, Array.Empty<DynamicObjectDetection>());
+            tracker.Update(1.61, Array.Empty<DynamicObjectDetection>());
             Assert.That(tracker.ConfirmedTrackCount, Is.EqualTo(0));
         }
 
@@ -339,6 +340,68 @@ namespace TeamVR.AdaptivePassthrough.Tests
         }
 
         [Test]
+        public void TrackerExpiresWorldPointWhenDepthStopsUpdating()
+        {
+            var tracker = new SimpleObjectTracker();
+            var box = new NormalizedBoundingBox(0.5f, 0.5f, 0.3f, 0.6f);
+            var withWorld = new DynamicObjectDetection(
+                "person",
+                0.9f,
+                box,
+                0,
+                true,
+                new Vector3(0f, 1f, 2f),
+                0.8f);
+            tracker.Update(0.0, new[] { withWorld });
+            tracker.Update(0.1, new[] { withWorld });
+
+            IReadOnlyList<TrackedDynamicObject> updated = tracker.Update(
+                1.0,
+                new[] { Person(0.5f, 0.5f, 0.3f, 0.6f, 0.9f) });
+
+            Assert.That(updated.Count, Is.EqualTo(1));
+            Assert.That(updated[0].Detection.hasWorldPoint, Is.False);
+        }
+
+        [Test]
+        public void TrackerDoesNotCreateVelocityFromDuplicateTimestamp()
+        {
+            var tracker = new SimpleObjectTracker();
+            tracker.Update(
+                0.0,
+                new[] { Person(0.50f, 0.5f, 0.3f, 0.6f, 0.9f) });
+            tracker.Update(
+                0.0,
+                new[] { Person(0.51f, 0.5f, 0.3f, 0.6f, 0.9f) });
+
+            IReadOnlyList<TrackedDynamicObject> predicted = tracker.Update(
+                0.1,
+                Array.Empty<DynamicObjectDetection>());
+
+            Assert.That(predicted.Count, Is.EqualTo(1));
+            Assert.That(
+                predicted[0].Detection.boundingBox.centerX,
+                Is.LessThan(0.60f));
+        }
+
+        [Test]
+        public void DynamicRiskPipelineAllowsTentativeUltraCloseEmergency()
+        {
+            var pipeline = new DynamicRiskPipeline();
+
+            DynamicRiskFrame first = pipeline.Process(
+                0.0,
+                new[] { Person(0.5f, 0.5f, 0.75f, 0.96f, 0.80f) });
+
+            Assert.That(first.Assessments.Count, Is.EqualTo(1));
+            Assert.That(
+                first.Assessments[0].Lifecycle,
+                Is.EqualTo(TrackLifecycle.Tentative));
+            Assert.That(first.Assessments[0].ForcePassthrough, Is.True);
+            Assert.That(first.ForcePassthrough, Is.True);
+        }
+
+        [Test]
         public void UltraCloseBoundingBoxForcesDangerousPersonRisk()
         {
             DynamicObjectDetection detection =
@@ -367,6 +430,33 @@ namespace TeamVR.AdaptivePassthrough.Tests
             var frame = new DynamicRiskFrame(0.0, new[] { risk });
             Assert.That(frame.ForcePassthrough, Is.True);
             Assert.That(frame.PolicyRisk, Is.EqualTo(1f));
+        }
+
+        [Test]
+        public void PortraitCloseBoundingBoxDoesNotForceWithoutRequiredArea()
+        {
+            DynamicObjectDetection detection =
+                Person(0.5f, 0.5f, 0.30f, 0.96f, 0.80f);
+            var tracked = new TrackedDynamicObject(41, detection, 0f);
+            RelativeLocationEstimate location =
+                new RelativeLocationEstimator().Estimate(tracked);
+            var steady = new MotionEstimate(
+                DynamicMotionState.Steady,
+                0f,
+                null,
+                0f,
+                4,
+                0.5,
+                1f);
+
+            DynamicRiskAssessment risk =
+                new DynamicRiskEstimator().Estimate(
+                    tracked,
+                    location,
+                    steady);
+
+            Assert.That(risk.ForcePassthrough, Is.False);
+            Assert.That(risk.Reasons, Does.Not.Contain("ultra_close_force"));
         }
 
         [Test]
@@ -450,6 +540,128 @@ namespace TeamVR.AdaptivePassthrough.Tests
             Assert.That(first.ForcePassthrough, Is.True);
             Assert.That(second.ForcePassthrough, Is.True);
             Assert.That(third.ForcePassthrough, Is.False);
+        }
+
+        [Test]
+        public void UltraCloseRiskReleasesFromQuestSizedBoxWithoutMetricDepth()
+        {
+            var estimator = new DynamicRiskEstimator();
+            var relative = new RelativeLocationEstimator();
+            var steady = new MotionEstimate(
+                DynamicMotionState.Steady,
+                0f,
+                null,
+                0f,
+                4,
+                0.5,
+                1f);
+            var closeTracked = new TrackedDynamicObject(
+                31,
+                Person(0.455f, 0.498f, 0.671f, 0.995f, 0.774f),
+                0f);
+
+            DynamicRiskAssessment close = estimator.Estimate(
+                closeTracked,
+                relative.Estimate(closeTracked),
+                steady);
+            Assert.That(close.ForcePassthrough, Is.True);
+
+            // Reproduces the latest Quest log: height had fallen to about
+            // 0.80 and area to 0.25, but the old 0.65/0.25 conjunction kept
+            // risk pinned to 0.9 for roughly 50 seconds.
+            var backedAway = new TrackedDynamicObject(
+                31,
+                Person(0.5f, 0.5f, 0.3125f, 0.80f, 0.47f),
+                1f);
+            RelativeLocationEstimate noMetric = relative.Estimate(backedAway);
+            DynamicRiskAssessment first = estimator.Estimate(
+                backedAway,
+                noMetric,
+                steady);
+            DynamicRiskAssessment second = estimator.Estimate(
+                backedAway,
+                noMetric,
+                steady);
+            DynamicRiskAssessment third = estimator.Estimate(
+                backedAway,
+                noMetric,
+                steady);
+
+            Assert.That(first.ForcePassthrough, Is.True);
+            Assert.That(second.ForcePassthrough, Is.True);
+            Assert.That(third.ForcePassthrough, Is.False);
+            Assert.That(third.Reasons, Does.Not.Contain("ultra_close_force"));
+        }
+
+        [Test]
+        public void NoDepthReleaseRequiresUnclippedConfidentSmallBox()
+        {
+            var estimator = new DynamicRiskEstimator();
+            var relative = new RelativeLocationEstimator();
+            var steady = new MotionEstimate(
+                DynamicMotionState.Steady, 0f, null, 0f, 4, 0.5, 1f);
+            var close = new TrackedDynamicObject(
+                71,
+                Person(0.5f, 0.5f, 0.96f, 0.96f, 0.90f),
+                0f);
+            estimator.Estimate(close, relative.Estimate(close), steady);
+
+            var tall = new TrackedDynamicObject(
+                71,
+                Person(0.5f, 0.5f, 0.458f, 0.96f, 0.80f),
+                0f);
+            for (int i = 0; i < 3; i++)
+            {
+                DynamicRiskAssessment assessment = estimator.Estimate(
+                    tall,
+                    relative.Estimate(tall),
+                    steady);
+                Assert.That(assessment.ForcePassthrough, Is.True);
+            }
+
+            var clipped = new TrackedDynamicObject(
+                71,
+                Person(0.15f, 0.5f, 0.30f, 0.80f, 0.80f),
+                0f);
+            for (int i = 0; i < 3; i++)
+            {
+                DynamicRiskAssessment assessment = estimator.Estimate(
+                    clipped,
+                    relative.Estimate(clipped),
+                    steady);
+                Assert.That(assessment.ForcePassthrough, Is.True);
+            }
+        }
+
+        [Test]
+        public void TrackerExpiresBeforeMatchingAndCreatesNewId()
+        {
+            var tracker = new SimpleObjectTracker(
+                maximumMissedFrames: 100,
+                maximumUnobservedSeconds: 0.5);
+            IReadOnlyList<TrackedDynamicObject> first = tracker.Update(
+                0.0,
+                new[] { Person(0.5f, 0.5f, 0.3f, 0.6f, 0.9f) });
+            int firstId = first[0].TrackId;
+
+            IReadOnlyList<TrackedDynamicObject> returned = tracker.Update(
+                0.6,
+                new[] { Person(0.5f, 0.5f, 0.3f, 0.6f, 0.9f) });
+
+            Assert.That(returned.Count, Is.EqualTo(1));
+            Assert.That(returned[0].TrackId, Is.Not.EqualTo(firstId));
+        }
+
+        [Test]
+        public void DynamicFrameIncludesTentativeLiveTrackIds()
+        {
+            var pipeline = new DynamicRiskPipeline();
+            DynamicRiskFrame frame = pipeline.Process(
+                0.0,
+                new[] { Person(0.5f, 0.5f, 0.3f, 0.6f, 0.8f) });
+
+            Assert.That(frame.LiveTrackIds.Count, Is.EqualTo(1));
+            Assert.That(frame.LiveTrackIds[0], Is.GreaterThan(0));
         }
 
         [Test]

@@ -13,6 +13,12 @@ namespace TeamVR.AdaptivePassthrough
     {
         private const int MaximumProbeCount = 24;
         private const float MovementDirectionSpeed = 0.15f;
+        // Keep the origin just ahead of controller geometry without creating a
+        // 12 cm blind zone in front of the user's hand.
+        private const float HandRayOriginOffsetMeters = 0.03f;
+        private const float MaximumClosingSpeedMetersPerSecond = 2f;
+        private const float MaximumDistanceHistoryJumpMeters = 0.75f;
+        private const float MinimumSameDirectionDot = 0.65f;
         private static readonly float[] ExtraProbeAngles =
             { -20f, 20f, -30f, 30f };
 
@@ -28,6 +34,10 @@ namespace TeamVR.AdaptivePassthrough
             public bool confirmedSafetyOverlap;
             public int overlapConfirmations;
             public int overlapReleaseConfirmations;
+            public bool selfRejectedThisFrame;
+            public string selfRejectionReason;
+            public bool hasHazardDirection;
+            public Vector3 previousHazardDirection;
         }
 
         [SerializeField] private EnvironmentRaycastManager raycastManager;
@@ -51,14 +61,16 @@ namespace TeamVR.AdaptivePassthrough
         private readonly BodyState headState = new BodyState();
         private readonly BodyState leftState = new BodyState();
         private readonly BodyState rightState = new BodyState();
+        private readonly SpatialObstacleFusionFilter fusionFilter =
+            new SpatialObstacleFusionFilter();
 
         private IStaticBoundaryFrameProvider roomSceneProvider;
+        private ISpatialObstacleProvider roomSceneSpatialProvider;
         [SerializeField] private Transform head;
         [SerializeField] private Transform leftHand;
         [SerializeField] private Transform rightHand;
         private double nextMeasurementAt;
         private double previousUpdateAt;
-        private double lastEnvironmentHitAt;
         private long sequence;
 
         public StaticBoundaryRiskFrame CurrentStaticBoundaryFrame
@@ -68,6 +80,24 @@ namespace TeamVR.AdaptivePassthrough
         } = StaticBoundaryRiskFrame.Unavailable;
 
         public SpatialObstacleMeasurement LatestMeasurement
+        {
+            get;
+            private set;
+        }
+
+        public SpatialObstacleMeasurement LatestHeadMeasurement
+        {
+            get;
+            private set;
+        }
+
+        public SpatialObstacleMeasurement LatestLeftHandMeasurement
+        {
+            get;
+            private set;
+        }
+
+        public SpatialObstacleMeasurement LatestRightHandMeasurement
         {
             get;
             private set;
@@ -85,13 +115,16 @@ namespace TeamVR.AdaptivePassthrough
         {
             nextMeasurementAt = 0.0;
             previousUpdateAt = 0.0;
-            lastEnvironmentHitAt = 0.0;
         }
 
         private void OnDisable()
         {
             CurrentStaticBoundaryFrame = StaticBoundaryRiskFrame.Unavailable;
             LatestMeasurement = SpatialObstacleMeasurement.Unavailable(0.0);
+            LatestHeadMeasurement = SpatialObstacleMeasurement.Unavailable(0.0);
+            LatestLeftHandMeasurement = SpatialObstacleMeasurement.Unavailable(0.0);
+            LatestRightHandMeasurement = SpatialObstacleMeasurement.Unavailable(0.0);
+            fusionFilter.Reset();
             ResetState(headState);
             ResetState(leftState);
             ResetState(rightState);
@@ -153,6 +186,8 @@ namespace TeamVR.AdaptivePassthrough
             out SpatialObstacleMeasurement measurement)
         {
             double now = Time.realtimeSinceStartupAsDouble;
+            BodyState state = StateFor(probe.Owner);
+            bool isHand = probe.Owner != SpatialProbeOwner.Head;
             if (raycastManager == null
                 || !EnvironmentRaycastManager.IsSupported)
             {
@@ -161,8 +196,13 @@ namespace TeamVR.AdaptivePassthrough
             }
 
             EnvironmentRaycastHit hit;
+            float originOffset = isHand
+                ? HandRayOriginOffsetMeters
+                : 0f;
+            Vector3 rayOrigin = probe.Origin
+                + probe.Direction * originOffset;
             bool hasHit = raycastManager.Raycast(
-                    new Ray(probe.Origin, probe.Direction),
+                    new Ray(rayOrigin, probe.Direction),
                     out hit,
                     maximumDistanceMeters)
                 && hit.status == EnvironmentRaycastHitStatus.Hit;
@@ -172,12 +212,34 @@ namespace TeamVR.AdaptivePassthrough
                 return false;
             }
 
-            float distance = Vector3.Distance(probe.Origin, hit.point);
+            if (isHand
+                && head != null
+                && SpatialObstacleFusionFilter.IsPointInsideEstimatedTorso(
+                    hit.point,
+                    head.position,
+                    head.up,
+                    head.forward))
+            {
+                state.selfRejectedThisFrame = true;
+                state.selfRejectionReason = "hit-inside-estimated-torso";
+                measurement = RejectedEnvironmentMeasurement(
+                    probe.Owner,
+                    now,
+                    state.selfRejectionReason,
+                    Vector3.Distance(probe.Origin, hit.point));
+                return false;
+            }
+
+            float distance = originOffset
+                + Vector3.Distance(rayOrigin, hit.point);
             Vector3 hitPoint = hit.point;
             Vector3 normal = hit.normal;
             float closingSpeed = Mathf.Max(
                 0f,
                 Vector3.Dot(probe.Velocity, probe.Direction));
+            closingSpeed = Mathf.Min(
+                MaximumClosingSpeedMetersPerSecond,
+                closingSpeed);
             measurement = new SpatialObstacleMeasurement(
                 SpatialObstacleSource.EnvironmentDepth,
                 now,
@@ -192,7 +254,11 @@ namespace TeamVR.AdaptivePassthrough
                 0f,
                 false,
                 false,
-                1);
+                1,
+                probe.Owner,
+                SpatialObstacleSource.EnvironmentDepth,
+                distance,
+                -1f);
             return true;
         }
 
@@ -208,26 +274,37 @@ namespace TeamVR.AdaptivePassthrough
                 ? (float)Math.Max(0.0001, now - previousUpdateAt)
                 : 0f;
             previousUpdateAt = now;
-            UpdateVelocity(headState, head, deltaSeconds);
-            UpdateVelocity(leftState, leftHand, deltaSeconds);
-            UpdateVelocity(rightState, rightHand, deltaSeconds);
+            UpdateVelocity(headState, head, deltaSeconds, 0.15f, 1.0f);
+            UpdateVelocity(leftState, leftHand, deltaSeconds, 0.50f, 2.0f);
+            UpdateVelocity(rightState, rightHand, deltaSeconds, 0.50f, 2.0f);
+            ClearSelfRejection(leftState);
+            ClearSelfRejection(rightState);
             UpdateSafetyOverlap(
                 headState,
                 head,
                 headSafetyRadius);
-            UpdateSafetyOverlap(
-                leftState,
-                leftHand,
-                handSafetyRadius);
-            UpdateSafetyOverlap(
-                rightState,
-                rightHand,
-                handSafetyRadius);
+            ClearSafetyOverlap(leftState);
+            ClearSafetyOverlap(rightState);
 
             int probeCount = BuildProbes(requestedProbeCount);
+            int headProbeCount = 0;
+            int leftProbeCount = 0;
+            int rightProbeCount = 0;
             int hitCount = 0;
             for (int i = 0; i < probeCount; i++)
             {
+                switch (probes[i].Owner)
+                {
+                    case SpatialProbeOwner.Head:
+                        headProbeCount++;
+                        break;
+                    case SpatialProbeOwner.LeftHand:
+                        leftProbeCount++;
+                        break;
+                    case SpatialProbeOwner.RightHand:
+                        rightProbeCount++;
+                        break;
+                }
                 if (TryMeasure(probes[i], out measurements[hitCount]))
                 {
                     measurementOwners[hitCount] = probes[i].Owner;
@@ -235,94 +312,76 @@ namespace TeamVR.AdaptivePassthrough
                 }
             }
 
-            if (hitCount <= 0)
-            {
-                SpatialObstacleMeasurement overlapHead =
-                    CreateOverlapOnlyMeasurement(
-                        SpatialProbeOwner.Head,
-                        headState,
-                        now);
-                SpatialObstacleMeasurement overlapLeft =
-                    CreateOverlapOnlyMeasurement(
-                        SpatialProbeOwner.LeftHand,
-                        leftState,
-                        now);
-                SpatialObstacleMeasurement overlapRight =
-                    CreateOverlapOnlyMeasurement(
-                        SpatialProbeOwner.RightHand,
-                        rightState,
-                        now);
-                if (overlapHead.Available
-                    || overlapLeft.Available
-                    || overlapRight.Available)
-                {
-                    lastEnvironmentHitAt = now;
-                    LatestMeasurement = Closest(
-                        overlapHead,
-                        Closest(overlapLeft, overlapRight));
-                    CurrentStaticBoundaryFrame = BuildRiskFrame(
-                        now,
-                        overlapHead,
-                        overlapLeft,
-                        overlapRight);
-                    return;
-                }
-
-                float environmentAge = lastEnvironmentHitAt > 0.0
-                    ? (float)Math.Max(0.0, now - lastEnvironmentHitAt)
-                    : float.PositiveInfinity;
-                bool hasEnvironmentMeasurement =
-                    LatestMeasurement.Available
-                    && LatestMeasurement.Source
-                        == SpatialObstacleSource.EnvironmentDepth;
-                if (!SpatialProviderSelection.ShouldUseRoomSceneFallback(
-                        EnvironmentRaycastManager.IsSupported,
-                        hasEnvironmentMeasurement,
-                        environmentAge,
-                        staleAfterSeconds))
-                {
-                    HoldLatestEnvironmentMeasurement(now, environmentAge);
-                    return;
-                }
-
-                PublishFallbackOrUnavailable(now);
-                return;
-            }
-
-            lastEnvironmentHitAt = now;
-
-            SpatialObstacleMeasurement headMeasurement = Aggregate(
+            SpatialObstacleMeasurement headEnvironment = Aggregate(
                 SpatialProbeOwner.Head,
                 measurements,
                 hitCount,
+                headProbeCount,
                 headState,
                 now);
-            SpatialObstacleMeasurement leftMeasurement = Aggregate(
+            SpatialObstacleMeasurement leftEnvironment = Aggregate(
                 SpatialProbeOwner.LeftHand,
                 measurements,
                 hitCount,
+                leftProbeCount,
                 leftState,
                 now);
-            SpatialObstacleMeasurement rightMeasurement = Aggregate(
+            SpatialObstacleMeasurement rightEnvironment = Aggregate(
                 SpatialProbeOwner.RightHand,
                 measurements,
                 hitCount,
+                rightProbeCount,
                 rightState,
                 now);
 
-            if (!headMeasurement.Available)
-            {
-                headMeasurement = ClosestMeasurement(measurements, hitCount);
-            }
+            SpatialObstacleMeasurement headRoom = MeasureRoomScene(
+                SpatialProbeOwner.Head,
+                head,
+                headState,
+                headSafetyRadius,
+                now);
+            SpatialObstacleMeasurement leftRoom = MeasureRoomScene(
+                SpatialProbeOwner.LeftHand,
+                leftHand,
+                leftState,
+                handSafetyRadius,
+                now);
+            SpatialObstacleMeasurement rightRoom = MeasureRoomScene(
+                SpatialProbeOwner.RightHand,
+                rightHand,
+                rightState,
+                handSafetyRadius,
+                now);
 
+            LatestHeadMeasurement = fusionFilter.Fuse(
+                SpatialProbeOwner.Head,
+                headEnvironment,
+                headRoom,
+                now);
+            LatestLeftHandMeasurement = fusionFilter.Fuse(
+                SpatialProbeOwner.LeftHand,
+                leftEnvironment,
+                leftRoom,
+                now);
+            LatestRightHandMeasurement = fusionFilter.Fuse(
+                SpatialProbeOwner.RightHand,
+                rightEnvironment,
+                rightRoom,
+                now);
             LatestMeasurement = Closest(
-                headMeasurement,
-                Closest(leftMeasurement, rightMeasurement));
+                LatestHeadMeasurement,
+                Closest(
+                    LatestLeftHandMeasurement,
+                    LatestRightHandMeasurement));
             CurrentStaticBoundaryFrame = BuildRiskFrame(
                 now,
-                headMeasurement,
-                leftMeasurement,
-                rightMeasurement);
+                LatestHeadMeasurement,
+                LatestLeftHandMeasurement,
+                LatestRightHandMeasurement);
+            qualityController?.RecordSpatialOwners(
+                LatestHeadMeasurement,
+                LatestLeftHandMeasurement,
+                LatestRightHandMeasurement);
         }
 
         private int BuildProbes(int requestedCount)
@@ -331,20 +390,16 @@ namespace TeamVR.AdaptivePassthrough
             Vector3 forward = head.forward;
             Vector3 up = head.up;
             Vector3 right = head.right;
+
+            // Interleave owners so every quality level measures both hands.
+            // The first six probes are distributed 2/2/2 instead of being
+            // consumed entirely by the head.
             AddProbe(ref count, requestedCount, SpatialProbeOwner.Head,
                 head.position, forward, headState.velocity, headSafetyRadius);
-            AddProbe(ref count, requestedCount, SpatialProbeOwner.Head,
-                head.position, Rotate(forward, right, -10f), headState.velocity,
-                headSafetyRadius);
-            AddProbe(ref count, requestedCount, SpatialProbeOwner.Head,
-                head.position, Rotate(forward, right, 10f), headState.velocity,
-                headSafetyRadius);
-            AddProbe(ref count, requestedCount, SpatialProbeOwner.Head,
-                head.position, Rotate(forward, up, -10f), headState.velocity,
-                headSafetyRadius);
-            AddProbe(ref count, requestedCount, SpatialProbeOwner.Head,
-                head.position, Rotate(forward, up, 10f), headState.velocity,
-                headSafetyRadius);
+            AddHandProbe(ref count, requestedCount,
+                SpatialProbeOwner.LeftHand, leftHand, leftState, 0f);
+            AddHandProbe(ref count, requestedCount,
+                SpatialProbeOwner.RightHand, rightHand, rightState, 0f);
             AddProbe(ref count, requestedCount, SpatialProbeOwner.Head,
                 head.position,
                 headState.velocity.magnitude >= MovementDirectionSpeed
@@ -352,19 +407,26 @@ namespace TeamVR.AdaptivePassthrough
                     : forward,
                 headState.velocity,
                 headSafetyRadius);
-
-            AddHandProbes(
-                ref count,
-                requestedCount,
-                SpatialProbeOwner.LeftHand,
-                leftHand,
-                leftState);
-            AddHandProbes(
-                ref count,
-                requestedCount,
-                SpatialProbeOwner.RightHand,
-                rightHand,
-                rightState);
+            AddHandProbe(ref count, requestedCount,
+                SpatialProbeOwner.LeftHand, leftHand, leftState, -12f);
+            AddHandProbe(ref count, requestedCount,
+                SpatialProbeOwner.RightHand, rightHand, rightState, -12f);
+            AddProbe(ref count, requestedCount, SpatialProbeOwner.Head,
+                head.position, Rotate(forward, right, -10f), headState.velocity,
+                headSafetyRadius);
+            AddProbe(ref count, requestedCount, SpatialProbeOwner.Head,
+                head.position, Rotate(forward, right, 10f), headState.velocity,
+                headSafetyRadius);
+            AddHandProbe(ref count, requestedCount,
+                SpatialProbeOwner.LeftHand, leftHand, leftState, 12f);
+            AddHandProbe(ref count, requestedCount,
+                SpatialProbeOwner.RightHand, rightHand, rightState, 12f);
+            AddProbe(ref count, requestedCount, SpatialProbeOwner.Head,
+                head.position, Rotate(forward, up, -10f), headState.velocity,
+                headSafetyRadius);
+            AddProbe(ref count, requestedCount, SpatialProbeOwner.Head,
+                head.position, Rotate(forward, up, 10f), headState.velocity,
+                headSafetyRadius);
 
             int angleIndex = 0;
             while (count < requestedCount)
@@ -388,12 +450,13 @@ namespace TeamVR.AdaptivePassthrough
             return count;
         }
 
-        private void AddHandProbes(
+        private void AddHandProbe(
             ref int count,
             int requestedCount,
             SpatialProbeOwner owner,
             Transform handTransform,
-            BodyState state)
+            BodyState state,
+            float yawDegrees)
         {
             if (handTransform == null || count >= requestedCount)
             {
@@ -403,14 +466,16 @@ namespace TeamVR.AdaptivePassthrough
             Vector3 direction = state.velocity.magnitude >= MovementDirectionSpeed
                 ? state.velocity.normalized
                 : handTransform.forward;
+            if (Mathf.Abs(yawDegrees) > 0.01f)
+            {
+                direction = Rotate(
+                    direction,
+                    HandSpreadAxis(direction, handTransform.right),
+                    yawDegrees);
+            }
+
             AddProbe(ref count, requestedCount, owner, handTransform.position,
                 direction, state.velocity, handSafetyRadius);
-            AddProbe(ref count, requestedCount, owner, handTransform.position,
-                Rotate(direction, handTransform.up, -12f), state.velocity,
-                handSafetyRadius);
-            AddProbe(ref count, requestedCount, owner, handTransform.position,
-                Rotate(direction, handTransform.up, 12f), state.velocity,
-                handSafetyRadius);
         }
 
         private void AddProbe(
@@ -439,6 +504,7 @@ namespace TeamVR.AdaptivePassthrough
             SpatialProbeOwner owner,
             SpatialObstacleMeasurement[] source,
             int sourceCount,
+            int attemptedProbeCount,
             BodyState state,
             double now)
         {
@@ -455,7 +521,11 @@ namespace TeamVR.AdaptivePassthrough
 
             if (count <= 0)
             {
-                return CreateOverlapOnlyMeasurement(owner, state, now);
+                SpatialObstacleMeasurement overlap =
+                    CreateOverlapOnlyMeasurement(owner, state, now);
+                return overlap.Available
+                    ? overlap
+                    : UnavailableEnvironmentMeasurement(owner, state, now);
             }
 
             for (int i = 1; i < count; i++)
@@ -493,6 +563,22 @@ namespace TeamVR.AdaptivePassthrough
             int selectedIndex = sortedMeasurementIndices[medianPosition];
             SpatialObstacleMeasurement selected = source[selectedIndex];
             float rawDistance = selected.DistanceMeters;
+            Transform trackedTransform = TransformFor(owner);
+            Vector3 hazardDirection = trackedTransform == null
+                ? Vector3.zero
+                : selected.HitPoint - trackedTransform.position;
+            bool resetDistanceHistory = ShouldResetDistanceHistory(
+                state.hasHazardDirection,
+                state.previousHazardDirection,
+                hazardDirection,
+                state.hasDistance,
+                state.filteredDistance,
+                rawDistance);
+            if (resetDistanceHistory)
+            {
+                state.hasDistance = false;
+            }
+
             double elapsed = state.hasDistance
                 ? Math.Max(0.0, now - state.lastMeasurementAt)
                 : 0.0;
@@ -501,8 +587,14 @@ namespace TeamVR.AdaptivePassthrough
                     -(float)elapsed / Mathf.Max(0.01f, smoothingTimeSeconds))
                 : 1f;
             float previousDistance = state.filteredDistance;
-            float filteredDistance = state.hasDistance
+            float smoothedDistance = state.hasDistance
                 ? Mathf.Lerp(previousDistance, rawDistance, alpha)
+                : rawDistance;
+            // Approaching measurements must not be delayed by smoothing. This
+            // also guarantees that a raw <= 0.25 m hit reaches emergency logic
+            // in the same spatial sample.
+            float filteredDistance = state.hasDistance
+                ? Mathf.Min(rawDistance, smoothedDistance)
                 : rawDistance;
             float distanceClosingSpeed = state.hasDistance && elapsed > 0.0001
                 ? Mathf.Max(
@@ -512,6 +604,10 @@ namespace TeamVR.AdaptivePassthrough
             state.hasDistance = true;
             state.filteredDistance = filteredDistance;
             state.lastMeasurementAt = now;
+            state.hasHazardDirection = hazardDirection.sqrMagnitude > 0.0001f;
+            state.previousHazardDirection = state.hasHazardDirection
+                ? hazardDirection.normalized
+                : Vector3.zero;
 
             float dispersion = clusterCount <= 1
                 ? 0f
@@ -520,7 +616,8 @@ namespace TeamVR.AdaptivePassthrough
                     - source[sortedMeasurementIndices[0]].DistanceMeters;
             float consistency = Mathf.Exp(
                 -dispersion / Mathf.Max(0.01f, clusterGapMeters));
-            float sampleRatio = clusterCount / (float)Mathf.Max(1, count);
+            float sampleRatio = clusterCount
+                / (float)Mathf.Max(1, attemptedProbeCount);
             bool confirmedOverlap = state.confirmedSafetyOverlap;
             float confidence = confirmedOverlap
                 ? 1f
@@ -532,15 +629,26 @@ namespace TeamVR.AdaptivePassthrough
                 filteredDistance,
                 selected.HitPoint,
                 selected.HitNormal,
-                Mathf.Max(selected.ClosingSpeedMetersPerSecond,
-                    distanceClosingSpeed),
+                Mathf.Min(
+                    MaximumClosingSpeedMetersPerSecond,
+                    Mathf.Max(
+                        resetDistanceHistory
+                            ? 0f
+                            : selected.ClosingSpeedMetersPerSecond,
+                        distanceClosingSpeed)),
                 confidence,
                 clusterCount,
                 dispersion,
                 0f,
                 confirmedOverlap,
                 state.rawSafetyOverlap,
-                clusterCount);
+                clusterCount,
+                owner,
+                SpatialObstacleSource.EnvironmentDepth,
+                filteredDistance,
+                -1f,
+                false,
+                string.Empty);
         }
 
         private StaticBoundaryRiskFrame BuildRiskFrame(
@@ -565,9 +673,14 @@ namespace TeamVR.AdaptivePassthrough
             return new StaticBoundaryRiskFrame(
                 sequence,
                 now,
-                headRisk.Available,
+                headRisk.Available
+                    || leftRisk.Available
+                    || rightRisk.Available
+                    || headState.confirmedSafetyOverlap,
                 headRisk,
-                Mathf.Clamp01(headState.velocity.magnitude / 0.5f),
+                CalculateDirectionalHeadUserState(
+                    headState.velocity,
+                    headDirection),
                 previousUpdateAt > 0.0,
                 leftRisk,
                 rightRisk,
@@ -580,7 +693,8 @@ namespace TeamVR.AdaptivePassthrough
                         : 0f,
                     rightHand != null
                         ? Vector3.Distance(head.position, rightHand.position)
-                        : 0f));
+                        : 0f),
+                headState.confirmedSafetyOverlap);
         }
 
         private static StaticRiskMeasurement ToHeadRisk(
@@ -661,6 +775,9 @@ namespace TeamVR.AdaptivePassthrough
                 ttcRisk,
                 0.55f,
                 0.45f);
+            float directProximityRisk = Mathf.Clamp01(
+                distanceRisk * 0.70f + ttcRisk * 0.30f);
+            risk = Mathf.Max(risk, directProximityRisk);
             if (ShouldForceStaticEmergency(measurement))
             {
                 risk = 1f;
@@ -686,13 +803,15 @@ namespace TeamVR.AdaptivePassthrough
             Transform trackedTransform,
             float safetyRadius)
         {
-            bool rawOverlap = trackedTransform != null
+            int edgeHitCount = trackedTransform != null
                 && raycastManager != null
                 && EnvironmentRaycastManager.IsSupported
-                && CheckBoxHitOnly(
+                ? CountBoxEdgeHits(
                     trackedTransform.position,
                     Vector3.one * Mathf.Max(0.01f, safetyRadius),
-                    trackedTransform.rotation);
+                    trackedTransform.rotation)
+                : 0;
+            bool rawOverlap = edgeHitCount >= 2;
             state.rawSafetyOverlap = rawOverlap;
             UpdateSafetyOverlapConfirmation(
                 rawOverlap,
@@ -734,11 +853,12 @@ namespace TeamVR.AdaptivePassthrough
             }
         }
 
-        private bool CheckBoxHitOnly(
+        private int CountBoxEdgeHits(
             Vector3 center,
             Vector3 halfExtents,
             Quaternion orientation)
         {
+            int hitCount = 0;
             for (int axis = 0; axis < 3; axis++)
             {
                 int crossA = (axis + 1) % 3;
@@ -771,13 +891,12 @@ namespace TeamVR.AdaptivePassthrough
                             distance);
                         if (IsSafetyOverlapStatus(hit.status))
                         {
-                            return true;
+                            hitCount++;
                         }
                     }
                 }
             }
-
-            return false;
+            return hitCount;
         }
 
         public static bool IsSafetyOverlapStatus(
@@ -790,8 +909,7 @@ namespace TeamVR.AdaptivePassthrough
             SpatialObstacleMeasurement measurement)
         {
             return measurement.Available
-                && (measurement.SafetyVolumeOverlap
-                    || measurement.DistanceMeters <= 0.25f);
+                && measurement.DistanceMeters <= 0.25f;
         }
 
         private SpatialObstacleMeasurement CreateOverlapOnlyMeasurement(
@@ -799,30 +917,19 @@ namespace TeamVR.AdaptivePassthrough
             BodyState state,
             double now)
         {
-            if (!state.confirmedSafetyOverlap)
-            {
-                return SpatialObstacleMeasurement.Unavailable(now);
-            }
+            // An overlap without a supporting ray is diagnostic only. It must
+            // never synthesize a zero-metre obstacle or force risk to 1.0.
+            return UnavailableEnvironmentMeasurement(owner, state, now);
+        }
 
-            Transform trackedTransform;
-            float radius;
-            switch (owner)
-            {
-                case SpatialProbeOwner.LeftHand:
-                    trackedTransform = leftHand;
-                    radius = handSafetyRadius;
-                    break;
-                case SpatialProbeOwner.RightHand:
-                    trackedTransform = rightHand;
-                    radius = handSafetyRadius;
-                    break;
-                default:
-                    trackedTransform = head;
-                    radius = headSafetyRadius;
-                    break;
-            }
-
-            if (trackedTransform == null)
+        private SpatialObstacleMeasurement MeasureRoomScene(
+            SpatialProbeOwner owner,
+            Transform trackedTransform,
+            BodyState state,
+            float safetyRadius,
+            double now)
+        {
+            if (trackedTransform == null || roomSceneSpatialProvider == null)
             {
                 return SpatialObstacleMeasurement.Unavailable(now);
             }
@@ -831,24 +938,201 @@ namespace TeamVR.AdaptivePassthrough
                     >= MovementDirectionSpeed
                 ? state.velocity.normalized
                 : trackedTransform.forward;
-            float closingSpeed = Mathf.Max(
-                0f,
-                Vector3.Dot(state.velocity, direction));
+            var probe = new SpatialProbe(
+                owner,
+                trackedTransform.position,
+                direction,
+                state.velocity,
+                safetyRadius);
+            return roomSceneSpatialProvider.TryMeasure(
+                    probe,
+                    out SpatialObstacleMeasurement measurement)
+                ? measurement
+                : SpatialObstacleMeasurement.Unavailable(now);
+        }
+
+        private static SpatialObstacleMeasurement
+            UnavailableEnvironmentMeasurement(
+                SpatialProbeOwner owner,
+                BodyState state,
+                double now)
+        {
             return new SpatialObstacleMeasurement(
-                SpatialObstacleSource.EnvironmentDepth,
+                SpatialObstacleSource.Unavailable,
                 now,
-                true,
+                false,
                 0f,
-                trackedTransform.position + direction * radius,
-                -direction,
-                closingSpeed,
-                1f,
+                Vector3.zero,
+                Vector3.zero,
+                0f,
+                0f,
                 0,
                 0f,
                 0f,
-                true,
+                state.confirmedSafetyOverlap,
                 state.rawSafetyOverlap,
-                0);
+                0,
+                owner,
+                SpatialObstacleSource.Unavailable,
+                -1f,
+                -1f,
+                state.selfRejectedThisFrame,
+                state.selfRejectionReason);
+        }
+
+        private static SpatialObstacleMeasurement RejectedEnvironmentMeasurement(
+            SpatialProbeOwner owner,
+            double now,
+            string reason,
+            float rawDistanceMeters = -1f)
+        {
+            return new SpatialObstacleMeasurement(
+                SpatialObstacleSource.Unavailable,
+                now,
+                false,
+                0f,
+                Vector3.zero,
+                Vector3.zero,
+                0f,
+                0f,
+                0,
+                0f,
+                0f,
+                false,
+                false,
+                0,
+                owner,
+                SpatialObstacleSource.Unavailable,
+                rawDistanceMeters,
+                -1f,
+                true,
+                reason);
+        }
+
+        private Vector3 EstimatedChestPosition()
+        {
+            if (head == null)
+            {
+                return Vector3.zero;
+            }
+
+            Vector3 yawForward = Vector3.ProjectOnPlane(
+                head.forward,
+                Vector3.up);
+            yawForward = yawForward.sqrMagnitude > 0.0001f
+                ? yawForward.normalized
+                : Vector3.forward;
+            return head.position - Vector3.up * 0.45f
+                - yawForward * 0.10f;
+        }
+
+        public static Vector3 HandSpreadAxis(
+            Vector3 direction,
+            Vector3 controllerRight)
+        {
+            Vector3 normalizedDirection = direction.sqrMagnitude > 0.0001f
+                ? direction.normalized
+                : Vector3.forward;
+            Vector3 axis = Vector3.ProjectOnPlane(
+                Vector3.up,
+                normalizedDirection);
+            if (axis.sqrMagnitude <= 0.0001f)
+            {
+                axis = Vector3.ProjectOnPlane(
+                    controllerRight,
+                    normalizedDirection);
+            }
+
+            if (axis.sqrMagnitude <= 0.0001f)
+            {
+                axis = Vector3.Cross(
+                    normalizedDirection,
+                    Vector3.forward);
+            }
+
+            return axis.sqrMagnitude > 0.0001f
+                ? axis.normalized
+                : Vector3.right;
+        }
+
+        public static float CalculateDirectionalHeadUserState(
+            Vector3 headVelocity,
+            Vector3 hazardDirection)
+        {
+            if (hazardDirection.sqrMagnitude <= 0.0001f)
+            {
+                return 0f;
+            }
+
+            float approachSpeed = Mathf.Max(
+                0f,
+                Vector3.Dot(
+                    headVelocity,
+                    hazardDirection.normalized));
+            return Mathf.Clamp01((approachSpeed - 0.10f) / 0.90f);
+        }
+
+        private BodyState StateFor(SpatialProbeOwner owner)
+        {
+            switch (owner)
+            {
+                case SpatialProbeOwner.LeftHand:
+                    return leftState;
+                case SpatialProbeOwner.RightHand:
+                    return rightState;
+                default:
+                    return headState;
+            }
+        }
+
+        private Transform TransformFor(SpatialProbeOwner owner)
+        {
+            switch (owner)
+            {
+                case SpatialProbeOwner.LeftHand:
+                    return leftHand;
+                case SpatialProbeOwner.RightHand:
+                    return rightHand;
+                default:
+                    return head;
+            }
+        }
+
+        public static bool ShouldResetDistanceHistory(
+            bool hasPreviousDirection,
+            Vector3 previousDirection,
+            Vector3 currentDirection,
+            bool hasPreviousDistance,
+            float previousDistance,
+            float currentDistance)
+        {
+            if (!hasPreviousDirection
+                || !hasPreviousDistance
+                || currentDirection.sqrMagnitude <= 0.0001f)
+            {
+                return false;
+            }
+
+            float directionDot = Vector3.Dot(
+                previousDirection.normalized,
+                currentDirection.normalized);
+            return directionDot < MinimumSameDirectionDot
+                || Mathf.Abs(currentDistance - previousDistance)
+                    > MaximumDistanceHistoryJumpMeters;
+        }
+
+        private static void ClearSelfRejection(BodyState state)
+        {
+            state.selfRejectedThisFrame = false;
+            state.selfRejectionReason = string.Empty;
+        }
+
+        private static void ClearSafetyOverlap(BodyState state)
+        {
+            state.rawSafetyOverlap = false;
+            state.confirmedSafetyOverlap = false;
+            state.overlapConfirmations = 0;
+            state.overlapReleaseConfirmations = 0;
         }
 
         private void PublishFallbackOrUnavailable(double now)
@@ -885,28 +1169,6 @@ namespace TeamVR.AdaptivePassthrough
             LatestMeasurement = SpatialObstacleMeasurement.Unavailable(now);
         }
 
-        private void HoldLatestEnvironmentMeasurement(
-            double now,
-            float ageSeconds)
-        {
-            SpatialObstacleMeasurement value = LatestMeasurement;
-            LatestMeasurement = new SpatialObstacleMeasurement(
-                value.Source,
-                now,
-                value.Available,
-                value.DistanceMeters,
-                value.HitPoint,
-                value.HitNormal,
-                value.ClosingSpeedMetersPerSecond,
-                value.Confidence * Mathf.Exp(-ageSeconds * 2f),
-                value.SampleCount,
-                value.SampleDispersionMeters,
-                ageSeconds,
-                value.SafetyVolumeOverlap,
-                value.RawSafetyVolumeOverlap,
-                value.ValidRayHitCount);
-        }
-
         private void ResolveReferences()
         {
             if (raycastManager == null)
@@ -921,6 +1183,8 @@ namespace TeamVR.AdaptivePassthrough
 
             roomSceneProvider = roomSceneProviderBehaviour
                 as IStaticBoundaryFrameProvider;
+            roomSceneSpatialProvider = roomSceneProviderBehaviour
+                as ISpatialObstacleProvider;
             if (head == null && Camera.main != null)
             {
                 head = Camera.main.transform;
@@ -930,7 +1194,9 @@ namespace TeamVR.AdaptivePassthrough
         private static void UpdateVelocity(
             BodyState state,
             Transform trackedTransform,
-            float deltaSeconds)
+            float deltaSeconds,
+            float maximumPositionDeltaMeters,
+            float maximumSpeedMetersPerSecond)
         {
             if (trackedTransform == null)
             {
@@ -940,12 +1206,24 @@ namespace TeamVR.AdaptivePassthrough
             }
 
             Vector3 position = trackedTransform.position;
-            state.velocity = state.hasPosition && deltaSeconds > 0f
-                ? Vector3.Lerp(
+            if (state.hasPosition && deltaSeconds > 0f)
+            {
+                Vector3 positionDelta = position - state.previousPosition;
+                Vector3 instantaneousVelocity = positionDelta.magnitude
+                        > Mathf.Max(0.01f, maximumPositionDeltaMeters)
+                    ? Vector3.zero
+                    : Vector3.ClampMagnitude(
+                        positionDelta / deltaSeconds,
+                        Mathf.Max(0.01f, maximumSpeedMetersPerSecond));
+                state.velocity = Vector3.Lerp(
                     state.velocity,
-                    (position - state.previousPosition) / deltaSeconds,
-                    0.35f)
-                : Vector3.zero;
+                    instantaneousVelocity,
+                    0.35f);
+            }
+            else
+            {
+                state.velocity = Vector3.zero;
+            }
             state.previousPosition = position;
             state.hasPosition = true;
         }
@@ -961,6 +1239,10 @@ namespace TeamVR.AdaptivePassthrough
             state.confirmedSafetyOverlap = false;
             state.overlapConfirmations = 0;
             state.overlapReleaseConfirmations = 0;
+            state.selfRejectedThisFrame = false;
+            state.selfRejectionReason = string.Empty;
+            state.hasHazardDirection = false;
+            state.previousHazardDirection = Vector3.zero;
         }
 
         private static Vector3 Rotate(

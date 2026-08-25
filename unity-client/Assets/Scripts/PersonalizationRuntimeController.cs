@@ -1136,12 +1136,16 @@ public sealed class PersonalizationRuntimeController : MonoBehaviour
             CurrentLogPath = Path.Combine(
                 directory,
                 string.Format(
-                    "{0}-{1:yyyyMMdd-HHmmss}.jsonl",
+                    "{0}-{1:yyyyMMdd-HHmmss-fff}-{2}.jsonl",
                     filePrefix,
-                    DateTime.Now));
+                    DateTime.Now,
+                    Guid.NewGuid().ToString("N").Substring(0, 8)));
             writer = new StreamWriter(
-                CurrentLogPath,
-                false,
+                new FileStream(
+                    CurrentLogPath,
+                    FileMode.CreateNew,
+                    FileAccess.Write,
+                    FileShare.Read),
                 new UTF8Encoding(false));
             Debug.Log("[Personalization] Logging to " + CurrentLogPath);
         }

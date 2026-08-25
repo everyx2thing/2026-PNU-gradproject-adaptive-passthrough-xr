@@ -130,6 +130,9 @@ namespace TeamVR.AdaptivePassthrough
         public readonly int MissedFrames;
         public readonly double UnobservedSeconds;
         public readonly bool ReidentifiedThisFrame;
+        public readonly Vector2 ViewportCenterVelocity;
+        public readonly Vector2 ViewportSizeVelocity;
+        public readonly int KinematicSampleCount;
 
         public TrackedDynamicObject(
             int trackId,
@@ -154,7 +157,10 @@ namespace TeamVR.AdaptivePassthrough
             bool observedThisFrame,
             int missedFrames,
             double unobservedSeconds = 0.0,
-            bool reidentifiedThisFrame = false)
+            bool reidentifiedThisFrame = false,
+            Vector2 viewportCenterVelocity = default,
+            Vector2 viewportSizeVelocity = default,
+            int kinematicSampleCount = 0)
         {
             TrackId = trackId;
             Detection = detection;
@@ -164,6 +170,9 @@ namespace TeamVR.AdaptivePassthrough
             MissedFrames = Math.Max(0, missedFrames);
             UnobservedSeconds = Math.Max(0.0, unobservedSeconds);
             ReidentifiedThisFrame = reidentifiedThisFrame;
+            ViewportCenterVelocity = viewportCenterVelocity;
+            ViewportSizeVelocity = viewportSizeVelocity;
+            KinematicSampleCount = Math.Max(0, kinematicSampleCount);
         }
 
         public bool IsConfirmed
@@ -295,6 +304,8 @@ namespace TeamVR.AdaptivePassthrough
         public readonly float DistanceConfidence;
         public readonly bool HasWorldPoint;
         public readonly Vector3 WorldPoint;
+        public readonly bool HasWorldVelocity;
+        public readonly Vector3 WorldVelocity;
         public readonly float DepthSampleDispersionMeters;
         public readonly bool IsMetricReliable;
         public readonly string DepthRejectedReason;
@@ -334,7 +345,9 @@ namespace TeamVR.AdaptivePassthrough
             Vector3 worldPoint = default,
             float depthSampleDispersionMeters = 0f,
             bool isMetricReliable = false,
-            string depthRejectedReason = null)
+            string depthRejectedReason = null,
+            bool hasWorldVelocity = false,
+            Vector3 worldVelocity = default)
         {
             ScreenZone = screenZone;
             UserRelativeDirection = userRelativeDirection;
@@ -349,6 +362,10 @@ namespace TeamVR.AdaptivePassthrough
             DistanceConfidence = Clamp01(distanceConfidence);
             HasWorldPoint = hasWorldPoint;
             WorldPoint = hasWorldPoint ? worldPoint : Vector3.zero;
+            HasWorldVelocity = hasWorldPoint && hasWorldVelocity;
+            WorldVelocity = HasWorldVelocity
+                ? worldVelocity
+                : Vector3.zero;
             DepthSampleDispersionMeters = NonNegativeFinite(
                 depthSampleDispersionMeters);
             IsMetricReliable = isMetricReliable;
@@ -419,6 +436,9 @@ namespace TeamVR.AdaptivePassthrough
         public readonly float MissingSeconds;
         public readonly bool IdHandoff;
         public readonly bool ForcePassthrough;
+        public readonly bool ClosePassthroughActive;
+        public readonly string CloseTransitionReason;
+        public readonly int CloseReleaseConfirmationCount;
 
         public DynamicRiskAssessment(
             int trackId,
@@ -456,7 +476,10 @@ namespace TeamVR.AdaptivePassthrough
             bool observedThisFrame,
             float missingSeconds = 0f,
             bool idHandoff = false,
-            bool forcePassthrough = false)
+            bool forcePassthrough = false,
+            bool closePassthroughActive = false,
+            string closeTransitionReason = null,
+            int closeReleaseConfirmationCount = 0)
         {
             TrackId = trackId;
             Detection = detection;
@@ -471,6 +494,11 @@ namespace TeamVR.AdaptivePassthrough
             MissingSeconds = Math.Max(0f, missingSeconds);
             IdHandoff = idHandoff;
             ForcePassthrough = forcePassthrough;
+            ClosePassthroughActive = closePassthroughActive;
+            CloseTransitionReason = closeTransitionReason ?? string.Empty;
+            CloseReleaseConfirmationCount = Math.Max(
+                0,
+                closeReleaseConfirmationCount);
         }
     }
 
@@ -483,17 +511,20 @@ namespace TeamVR.AdaptivePassthrough
         public readonly DynamicRiskLevel MaximumLevel;
         public readonly bool ForcePassthrough;
         public readonly float PolicyRisk;
+        public readonly IReadOnlyList<int> LiveTrackIds;
 
         public DynamicRiskFrame(
             double timestampSeconds,
             IReadOnlyList<DynamicRiskAssessment> assessments,
-            int confirmedPersonCount = -1)
+            int confirmedPersonCount = -1,
+            IReadOnlyList<int> liveTrackIds = null)
         {
             TimestampSeconds = timestampSeconds;
             Assessments = assessments ?? Array.Empty<DynamicRiskAssessment>();
             ConfirmedPersonCount = confirmedPersonCount < 0
                 ? Assessments.Count
                 : confirmedPersonCount;
+            LiveTrackIds = liveTrackIds ?? Array.Empty<int>();
 
             float maximumRisk = 0f;
             DynamicRiskLevel maximumLevel = DynamicRiskLevel.Safe;

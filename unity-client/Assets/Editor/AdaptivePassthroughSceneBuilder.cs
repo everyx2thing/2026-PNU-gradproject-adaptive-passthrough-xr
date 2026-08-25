@@ -220,22 +220,22 @@ public static class AdaptivePassthroughSceneBuilder
                 .floatValue = 0.10f;
             presentationObject
                 .FindProperty("personMaximumWidth")
-                .floatValue = 0.32f;
+                .floatValue = 0.42f;
             presentationObject
                 .FindProperty("personMinimumHeight")
                 .floatValue = 0.16f;
             presentationObject
                 .FindProperty("personMaximumHeight")
-                .floatValue = 0.48f;
+                .floatValue = 0.62f;
             presentationObject
                 .FindProperty("maximumPersonRevealArea")
-                .floatValue = 0.45f;
+                .floatValue = 0.55f;
             presentationObject
                 .FindProperty("personPositionSmoothingSeconds")
-                .floatValue = 0.15f;
+                .floatValue = 0.10f;
             presentationObject
                 .FindProperty("personSizeSmoothingSeconds")
-                .floatValue = 0.25f;
+                .floatValue = 0.15f;
             presentationObject
                 .FindProperty("personFadeInSeconds")
                 .floatValue = 0.20f;
@@ -342,8 +342,6 @@ public static class AdaptivePassthroughSceneBuilder
         serialized.FindProperty("weightHandTTC").floatValue = 0.60f;
         serialized.FindProperty("handApproachSpeedMin").floatValue = 0.05f;
         serialized.FindProperty("uiRefreshInterval").floatValue = 0.15f;
-        serialized.FindProperty("panelDistanceMeters").floatValue = 1.00f;
-        serialized.FindProperty("panelVerticalOffsetMeters").floatValue = -0.05f;
         serialized.ApplyModifiedPropertiesWithoutUndo();
     }
 
@@ -430,6 +428,10 @@ public static class AdaptivePassthroughSceneBuilder
         }
 
         InstallQuestUiInput(labelRoot);
+        WorldSpacePanelPlacementController panelPlacement =
+            GetOrAdd<WorldSpacePanelPlacementController>(
+                labelRoot.gameObject);
+        panelPlacement.Configure(labelRoot);
 
         Transform existingPanel = labelRoot.Find("QuestRiskHudPanel");
         GameObject panelObject;
@@ -573,11 +575,13 @@ public static class AdaptivePassthroughSceneBuilder
             staticPolicy,
             dynamicPolicy,
             presentation,
-            trackingQuality);
+            trackingQuality,
+            panelPlacement);
         EditorUtility.SetDirty(experimentLogger);
         EditorUtility.SetDirty(hud);
         EditorUtility.SetDirty(togglePanel);
         EditorUtility.SetDirty(personalizationPanel);
+        EditorUtility.SetDirty(panelPlacement);
         EditorUtility.SetDirty(panelCanvasGroup);
         EditorUtility.SetDirty(controlsRect);
         EditorUtility.SetDirty(summaryText);

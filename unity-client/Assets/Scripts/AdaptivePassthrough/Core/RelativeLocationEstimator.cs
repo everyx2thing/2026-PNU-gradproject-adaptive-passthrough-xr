@@ -101,7 +101,13 @@ namespace TeamVR.AdaptivePassthrough
                 distance != null && distance.IsMetricReliable,
                 distance == null
                     ? "depth_unavailable"
-                    : distance.DepthRejectedReason);
+                    : distance.DepthRejectedReason,
+                distance != null
+                    && distance.IsMetricReliable
+                    && distance.HasWorldVelocity,
+                distance == null
+                    ? UnityEngine.Vector3.zero
+                    : distance.WorldVelocity);
         }
     }
 }

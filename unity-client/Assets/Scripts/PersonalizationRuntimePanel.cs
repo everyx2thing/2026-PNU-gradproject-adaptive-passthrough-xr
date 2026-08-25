@@ -69,6 +69,7 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
     [SerializeField] private DynamicPassthroughPolicyController dynamicPolicy;
     [SerializeField] private SelectivePassthroughController presentation;
     [SerializeField] private TrackingQualityController trackingQuality;
+    [SerializeField] private WorldSpacePanelPlacementController panelPlacement;
     [SerializeField, Min(1f)] private float refreshRateHz = 5f;
     [SerializeField, Range(0.35f, 1f)] private float panelOpacity = 1f;
 
@@ -198,7 +199,8 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
         StaticPassthroughPolicyController staticController,
         DynamicPassthroughPolicyController dynamicController,
         SelectivePassthroughController presentationController,
-        TrackingQualityController qualityController = null)
+        TrackingQualityController qualityController = null,
+        WorldSpacePanelPlacementController placementController = null)
     {
         if (personalization != null)
         {
@@ -210,6 +212,7 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
         dynamicPolicy = dynamicController;
         presentation = presentationController;
         trackingQuality = qualityController;
+        panelPlacement = placementController;
         if (isActiveAndEnabled && personalization != null)
         {
             personalization.SnapshotUpdated += Refresh;
@@ -293,6 +296,19 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
         title.text = "ADAPTIVE LAB";
         title.fontStyle = FontStyles.Bold;
         title.color = new Color(0.72f, 0.90f, 1f);
+        GameObject dragHandle = CreateRect(
+            "PanelDragHandle",
+            dashboard.transform,
+            new Vector2(0.02f, 0.925f),
+            new Vector2(0.245f, 0.99f),
+            Vector2.zero,
+            Vector2.zero);
+        Image dragImage = dragHandle.AddComponent<Image>();
+        dragImage.color = new Color(0f, 0f, 0f, 0f);
+        dragImage.raycastTarget = true;
+        WorldSpacePanelDragHandle drag =
+            dragHandle.AddComponent<WorldSpacePanelDragHandle>();
+        drag.Configure(panelPlacement);
 
         modeChip = CreateStatusChip(
             dashboard.transform, "Mode", 0.255f, 0.395f);
@@ -316,24 +332,38 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
 
         CreateActionButton(
             dashboard.transform,
-            "SAVE SETTINGS",
+            "LIVE",
             new Vector2(0.35f, 0.855f),
-            new Vector2(0.475f, 0.918f),
+            new Vector2(0.405f, 0.918f),
+            () => SetPage(0),
+            AccentColor);
+        CreateActionButton(
+            dashboard.transform,
+            "PANEL",
+            new Vector2(0.41f, 0.855f),
+            new Vector2(0.465f, 0.918f),
+            () => SetPage(1),
+            AccentColor);
+        CreateActionButton(
+            dashboard.transform,
+            "SAVE SETTINGS",
+            new Vector2(0.47f, 0.855f),
+            new Vector2(0.57f, 0.918f),
             SaveRuntimeSettings,
             ButtonColor);
         CreateActionButton(
             dashboard.transform,
             "RESET SETTINGS",
-            new Vector2(0.485f, 0.855f),
-            new Vector2(0.61f, 0.918f),
+            new Vector2(0.575f, 0.855f),
+            new Vector2(0.68f, 0.918f),
             ResetRuntimeSettings,
             WarningColor);
 
         TMP_Text opacityLabel = CreateText(
             dashboard.transform,
             "PanelOpacityLabel",
-            new Vector2(0.625f, 0.855f),
-            new Vector2(0.745f, 0.918f),
+            new Vector2(0.685f, 0.855f),
+            new Vector2(0.79f, 0.918f),
             14f,
             TextAlignmentOptions.MidlineRight);
         opacityLabel.text = "PANEL OPACITY";
@@ -341,7 +371,7 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
         opacityLabel.color = new Color(0.62f, 0.76f, 0.88f);
         Slider opacitySlider = CreateSlider(
             dashboard.transform,
-            new Vector2(0.75f, 0.86f),
+            new Vector2(0.79f, 0.86f),
             new Vector2(0.925f, 0.915f),
             0.35f,
             1f);
@@ -379,8 +409,127 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
         pages.Add(livePage);
 
         BuildLivePage(livePage.transform);
+        GameObject panelPage = CreatePage(
+            dashboard.transform,
+            "PanelPlacementPage");
+        pages.Add(panelPage);
+        BuildPanelPlacementPage(panelPage.transform);
         currentPage = 0;
         SetPage(0);
+    }
+
+    private void BuildPanelPlacementPage(Transform parent)
+    {
+        GameObject card = CreateCard(
+            parent,
+            "PanelPlacementCard",
+            new Vector2(0.04f, 0.08f),
+            new Vector2(0.96f, 0.94f),
+            "WORLD PANEL PLACEMENT");
+        CreateInfoStrip(
+            card.transform,
+            "PlacementHelp",
+            "WORLD-LOCKED · DRAG THE ADAPTIVE LAB TITLE · HOLD LEFT Y FOR 1 SECOND TO RECOVER",
+            new Vector2(0.04f, 0.78f),
+            new Vector2(0.96f, 0.90f));
+
+        CreatePanelPlacementSlider(
+            card.transform,
+            "DISTANCE",
+            0.60f,
+            WorldSpacePanelPlacementController.MinimumDistanceMeters,
+            WorldSpacePanelPlacementController.MaximumDistanceMeters,
+            () => panelPlacement == null ? 1f : panelPlacement.DistanceMeters,
+            value => panelPlacement?.SetDistance(value),
+            "F2");
+        CreatePanelPlacementSlider(
+            card.transform,
+            "HEIGHT",
+            0.42f,
+            WorldSpacePanelPlacementController.MinimumHeightMeters,
+            WorldSpacePanelPlacementController.MaximumHeightMeters,
+            () => panelPlacement == null ? -0.05f : panelPlacement.HeightMeters,
+            value => panelPlacement?.SetHeight(value),
+            "F2");
+        CreatePanelPlacementSlider(
+            card.transform,
+            "SCALE",
+            0.24f,
+            WorldSpacePanelPlacementController.MinimumScale,
+            WorldSpacePanelPlacementController.MaximumScale,
+            () => panelPlacement == null ? 1f : panelPlacement.ScaleMultiplier,
+            value => panelPlacement?.SetScaleMultiplier(value),
+            "F2");
+
+        CreateActionButton(
+            card.transform,
+            "FACE ME",
+            new Vector2(0.05f, 0.05f),
+            new Vector2(0.31f, 0.17f),
+            () => panelPlacement?.FaceMe(),
+            ButtonColor);
+        CreateActionButton(
+            card.transform,
+            "BRING HERE",
+            new Vector2(0.37f, 0.05f),
+            new Vector2(0.63f, 0.17f),
+            () => panelPlacement?.BringHere(),
+            AccentColor);
+        CreateActionButton(
+            card.transform,
+            "RESET PANEL",
+            new Vector2(0.69f, 0.05f),
+            new Vector2(0.95f, 0.17f),
+            () => panelPlacement?.ResetPanel(),
+            WarningColor);
+    }
+
+    private void CreatePanelPlacementSlider(
+        Transform parent,
+        string label,
+        float centerY,
+        float minimum,
+        float maximum,
+        Func<float> getter,
+        Action<float> setter,
+        string format)
+    {
+        TMP_Text labelText = CreateText(
+            parent,
+            label + "Label",
+            new Vector2(0.06f, centerY),
+            new Vector2(0.25f, centerY + 0.11f),
+            20f,
+            TextAlignmentOptions.MidlineLeft);
+        labelText.text = label;
+        labelText.fontStyle = FontStyles.Bold;
+        Slider slider = CreateSlider(
+            parent,
+            new Vector2(0.26f, centerY + 0.02f),
+            new Vector2(0.82f, centerY + 0.09f),
+            minimum,
+            maximum);
+        TMP_Text valueText = CreateText(
+            parent,
+            label + "Value",
+            new Vector2(0.84f, centerY),
+            new Vector2(0.95f, centerY + 0.11f),
+            20f,
+            TextAlignmentOptions.MidlineRight);
+        slider.onValueChanged.AddListener(value =>
+        {
+            if (!refreshing)
+            {
+                setter?.Invoke(value);
+            }
+        });
+        sliderBindings.Add(new SliderBinding
+        {
+            Slider = slider,
+            ValueText = valueText,
+            Getter = getter,
+            Format = format
+        });
     }
 
     private void BuildLivePage(Transform parent)
@@ -1131,9 +1280,9 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
                 + snapshot.SpatialMilliseconds.ToString("F1"));
         SetMetric(
             trackingSourceTile,
-            snapshot.SpatialSource + "\n"
-                + snapshot.SpatialDistanceMeters.ToString("F2") + "m  "
-                + snapshot.SpatialConfidence.ToString("F2"));
+            FormatSpatialOwner("H", snapshot.HeadSpatial) + "\n"
+                + FormatSpatialOwner("L", snapshot.LeftHandSpatial) + "\n"
+                + FormatSpatialOwner("R", snapshot.RightHandSpatial));
         SetMetric(
             trackingPersonTile,
             "#" + snapshot.PersonTrackId + "  "
@@ -1151,16 +1300,49 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
                 + " m");
         SetMetric(
             trackingInferenceTile,
-            snapshot.InferenceRateHz.ToString("F1") + "Hz "
+            (snapshot.CameraReady ? "CAM OK " : "CAM -- ")
+                + "target "
+                + snapshot.TargetInferenceRateHz.ToString("F1")
+                + "Hz / actual "
+                + (snapshot.HasInferenceMeasurement
+                    ? snapshot.MeasuredInferenceRateHz.ToString("F1")
+                        + "Hz"
+                    : "unavailable") + " "
                 + snapshot.InferenceBackend + "\n"
                 + snapshot.InferenceActiveMilliseconds.ToString("F1")
                 + "/"
                 + snapshot.InferenceWallMilliseconds.ToString("F0")
-                + "ms");
+                + "ms " + snapshot.InferenceWatchdogState + "\n"
+                + "raw/person " + snapshot.RawCandidateCount + "/"
+                + snapshot.PersonCandidateCount + " reject "
+                + snapshot.ClassRejectedCount + "/"
+                + snapshot.ConfidenceRejectedCount + "/"
+                + snapshot.BoxRejectedCount);
         SetMetric(
             trackingFrameTile,
             snapshot.FramesPerSecond.ToString("F0") + " / "
                 + snapshot.FrameP95Milliseconds.ToString("F1") + "ms");
+    }
+
+    private static string FormatSpatialOwner(
+        string label,
+        SpatialOwnerDiagnostics value)
+    {
+        string environment = value.EnvironmentDistanceMeters >= 0f
+            ? value.EnvironmentDistanceMeters.ToString("F2")
+            : "--";
+        string room = value.RoomSceneDistanceMeters >= 0f
+            ? value.RoomSceneDistanceMeters.ToString("F2")
+            : "--";
+        string rejection = value.SelfRejected
+            ? " !" + value.RejectionReason
+            : string.Empty;
+        return label + " D/R " + environment + "/" + room
+            + " " + value.SelectedSource
+            + " hit" + value.ValidRayHitCount
+            + " o" + (value.ConfirmedOverlap ? "1" : "0")
+            + " c" + value.Confidence.ToString("F2")
+            + rejection;
     }
 
     private void RefreshThresholdTile()
@@ -2009,6 +2191,23 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
         {
             trackingQuality =
                 FindAnyObjectByType<TrackingQualityController>();
+        }
+
+        if (panelPlacement == null)
+        {
+            Canvas canvas = GetComponentInParent<Canvas>();
+            GameObject root = canvas == null
+                ? transform.root.gameObject
+                : canvas.gameObject;
+            panelPlacement = root.GetComponent<
+                WorldSpacePanelPlacementController>();
+            if (panelPlacement == null)
+            {
+                panelPlacement = root.AddComponent<
+                    WorldSpacePanelPlacementController>();
+            }
+
+            panelPlacement.Configure(root.transform);
         }
     }
 }

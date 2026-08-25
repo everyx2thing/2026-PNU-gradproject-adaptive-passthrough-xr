@@ -43,12 +43,12 @@ public sealed class SelectivePassthroughController :
     [SerializeField, Range(0f, 1f)] private float minimumPersonWindowRisk = 0.50f;
     [SerializeField, Range(1, 5)] private int maximumPersonWindows = 3;
     [SerializeField, Range(0.01f, 1f)] private float personMinimumWidth = 0.10f;
-    [SerializeField, Range(0.01f, 1f)] private float personMaximumWidth = 0.32f;
+    [SerializeField, Range(0.01f, 1f)] private float personMaximumWidth = 0.42f;
     [SerializeField, Range(0.01f, 1f)] private float personMinimumHeight = 0.16f;
-    [SerializeField, Range(0.01f, 1f)] private float personMaximumHeight = 0.48f;
-    [SerializeField, Range(0.05f, 1f)] private float maximumPersonRevealArea = 0.45f;
-    [SerializeField, Min(0.001f)] private float personPositionSmoothingSeconds = 0.15f;
-    [SerializeField, Min(0.001f)] private float personSizeSmoothingSeconds = 0.25f;
+    [SerializeField, Range(0.01f, 1f)] private float personMaximumHeight = 0.62f;
+    [SerializeField, Range(0.05f, 1f)] private float maximumPersonRevealArea = 0.55f;
+    [SerializeField, Min(0.001f)] private float personPositionSmoothingSeconds = 0.10f;
+    [SerializeField, Min(0.001f)] private float personSizeSmoothingSeconds = 0.15f;
     [SerializeField, Min(0.001f)] private float personFadeInSeconds = 0.20f;
     [SerializeField, Min(0f)] private float personLostHoldSeconds = 1.50f;
     [SerializeField, Min(0.001f)] private float personFadeOutSeconds = 0.30f;
@@ -72,6 +72,7 @@ public sealed class SelectivePassthroughController :
     private bool lastPublishedVisibility;
     private string lastPublishedVisibilitySource = "none";
     private long lastObservedFrameSequence;
+    private DynamicRiskController subscribedDynamicRiskController;
 
     public event Action<bool, string, double> VisibilityChanged;
 
@@ -114,6 +115,7 @@ public sealed class SelectivePassthroughController :
             RebuildPersonWindowTracker();
         }
         InitializeRendering();
+        RefreshPipelineResetSubscription();
     }
 
     private void LateUpdate()
@@ -139,6 +141,7 @@ public sealed class SelectivePassthroughController :
 
     private void OnDisable()
     {
+        UnsubscribePipelineReset();
         DisableAllWindows();
         SetLayerVisible(false);
         PublishVisibilityState();
@@ -236,8 +239,6 @@ public sealed class SelectivePassthroughController :
         }
 
         if (dynamicFeatureEnabled
-            && decision != null
-            && decision.Enabled
             && frame != null
             && hasNewFrame)
         {
@@ -246,8 +247,7 @@ public sealed class SelectivePassthroughController :
                 DynamicRiskAssessment assessment = frame.Assessments[i];
                 if (assessment != null
                     && assessment.Detection != null
-                    && assessment.ObservedThisFrame
-                    && assessment.Score >= minimumPersonWindowRisk)
+                    && assessment.ObservedThisFrame)
                 {
                     personCandidates.Add(assessment);
                 }
@@ -255,11 +255,7 @@ public sealed class SelectivePassthroughController :
         }
 
         personCandidates.Sort(CompareRiskDescending);
-        int selectedCount = Mathf.Min(
-            Mathf.Max(1, maximumPersonWindows),
-            personCandidates.Count);
-        float revealArea = 0f;
-        for (int i = 0; i < selectedCount; i++)
+        for (int i = 0; i < personCandidates.Count; i++)
         {
             DynamicRiskAssessment assessment = personCandidates[i];
             Rect rect = SelectivePassthroughMath.FocusedPersonWindowRect(
@@ -270,43 +266,31 @@ public sealed class SelectivePassthroughController :
                 personMaximumWidth,
                 personMinimumHeight,
                 personMaximumHeight);
-            if (assessment.Location.HasWorldPoint
-                && presentationCamera != null)
+            double captureRealtime = now;
+            double presentedRealtime = now;
+            if (controller != null)
             {
-                Vector3 reprojected =
-                    presentationCamera.WorldToViewportPoint(
-                        assessment.Location.WorldPoint);
-                if (reprojected.z > 0f)
-                {
-                    float centerX = Mathf.Clamp(
-                        reprojected.x,
-                        cameraViewport.xMin + rect.width * 0.5f,
-                        cameraViewport.xMax - rect.width * 0.5f);
-                    float centerY = Mathf.Clamp(
-                        reprojected.y,
-                        cameraViewport.yMin + rect.height * 0.5f,
-                        cameraViewport.yMax - rect.height * 0.5f);
-                    rect.position = new Vector2(
-                        centerX - rect.width * 0.5f,
-                        centerY - rect.height * 0.5f);
-                }
-            }
-            float area = rect.width * rect.height;
-            if (revealArea + area > maximumPersonRevealArea
-                && revealArea > 0f)
-            {
-                continue;
+                captureRealtime =
+                    controller.LatestFrameCaptureRealtimeSeconds > 0.0
+                        ? controller.LatestFrameCaptureRealtimeSeconds
+                        : now;
+                presentedRealtime =
+                    controller.LatestFrameProcessedRealtimeSeconds > 0.0
+                        ? controller.LatestFrameProcessedRealtimeSeconds
+                        : now;
             }
 
-            revealArea += area;
             personWindowTracker.Observe(
                 assessment.TrackId,
                 rect,
                 assessment.Score,
-                controller == null
-                    ? now
-                    : controller.LatestFrameProcessedRealtimeSeconds);
+                captureRealtime,
+                presentedRealtime,
+                assessment.ForcePassthrough
+                    || assessment.Score >= minimumPersonWindowRisk);
         }
+
+        ReprojectTrackedWorldPoints(frame);
 
         personWindowTracker.Update(
             now,
@@ -317,9 +301,24 @@ public sealed class SelectivePassthroughController :
         EnsurePersonSlots(windows.Count);
         renderedPersonTrackIds.Clear();
         int activeCount = 0;
+        bool presentationEnabled = dynamicFeatureEnabled
+            && decision != null
+            && decision.Enabled;
+        float renderedRevealArea = 0f;
         for (int i = 0; i < windows.Count; i++)
         {
+            if (!presentationEnabled)
+            {
+                break;
+            }
+
             PersonWindowSnapshot window = windows[i];
+            float windowArea = window.Rect.width * window.Rect.height;
+            if (renderedRevealArea + windowArea > maximumPersonRevealArea
+                && renderedRevealArea > 0f)
+            {
+                continue;
+            }
             WindowSlot slot = FindOrAssignPersonSlot(window.TrackId);
             if (slot == null)
             {
@@ -327,6 +326,7 @@ public sealed class SelectivePassthroughController :
             }
 
             renderedPersonTrackIds.Add(window.TrackId);
+            renderedRevealArea += windowArea;
             SetSlotProperties(
                 slot,
                 window.Rect,
@@ -348,6 +348,50 @@ public sealed class SelectivePassthroughController :
         }
 
         ActivePersonWindowCount = activeCount;
+    }
+
+    private void ReprojectTrackedWorldPoints(DynamicRiskFrame frame)
+    {
+        if (frame == null
+            || presentationCamera == null
+            || personWindowTracker == null)
+        {
+            return;
+        }
+
+        for (int i = 0; i < frame.Assessments.Count; i++)
+        {
+            DynamicRiskAssessment assessment = frame.Assessments[i];
+            if (assessment == null
+                || !assessment.Location.HasWorldPoint
+                || !assessment.Location.HasWorldVelocity)
+            {
+                continue;
+            }
+
+            double captureRealtime = dynamicPolicy == null
+                || dynamicPolicy.DynamicRiskController == null
+                ? Time.realtimeSinceStartupAsDouble
+                : dynamicPolicy.DynamicRiskController
+                    .LatestFrameCaptureRealtimeSeconds;
+            float predictionAge = Mathf.Min(
+                0.50f,
+                (float)Math.Max(
+                    0.0,
+                    Time.realtimeSinceStartupAsDouble - captureRealtime));
+            Vector3 viewport = presentationCamera.WorldToViewportPoint(
+                assessment.Location.WorldPoint
+                    + assessment.Location.WorldVelocity * predictionAge);
+            if (viewport.z <= 0f)
+            {
+                continue;
+            }
+
+            personWindowTracker.ReprojectCenter(
+                assessment.TrackId,
+                new Vector2(viewport.x, viewport.y),
+                cameraViewport);
+        }
     }
 
     public bool TryGetPersonWindow(
@@ -438,6 +482,8 @@ public sealed class SelectivePassthroughController :
         {
             presentationCamera = Camera.main;
         }
+
+        RefreshPipelineResetSubscription();
     }
 
     private void InitializeRendering()
@@ -717,6 +763,48 @@ public sealed class SelectivePassthroughController :
             personFadeOutSeconds,
             0.50f,
             1.50f);
+    }
+
+    private void RefreshPipelineResetSubscription()
+    {
+        DynamicRiskController controller = dynamicPolicy == null
+            ? null
+            : dynamicPolicy.DynamicRiskController;
+        if (ReferenceEquals(controller, subscribedDynamicRiskController))
+        {
+            return;
+        }
+
+        UnsubscribePipelineReset();
+        subscribedDynamicRiskController = controller;
+        if (subscribedDynamicRiskController != null)
+        {
+            subscribedDynamicRiskController.PipelineReset +=
+                HandlePipelineReset;
+        }
+    }
+
+    private void UnsubscribePipelineReset()
+    {
+        if (subscribedDynamicRiskController != null)
+        {
+            subscribedDynamicRiskController.PipelineReset -=
+                HandlePipelineReset;
+            subscribedDynamicRiskController = null;
+        }
+    }
+
+    private void HandlePipelineReset()
+    {
+        personWindowTracker?.Reset();
+        lastObservedFrameSequence = 0;
+        for (int i = 0; i < personSlots.Count; i++)
+        {
+            SetSlotActive(personSlots[i], false);
+            personSlots[i].TrackId = 0;
+        }
+
+        ActivePersonWindowCount = 0;
     }
 
     private static void DestroySlot(WindowSlot slot)

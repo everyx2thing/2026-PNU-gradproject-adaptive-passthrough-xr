@@ -607,7 +607,7 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: fe87c0e1cc204ed48ad3b37840f39efc, type: 3}
-  m_Name: 
+  m_Name:
   m_EditorClassIdentifier: UnityEngine.UI::UnityEngine.UI.Image
   m_Material: {fileID: 0}
   m_Color: {r: 0.02, g: 0.03, b: 0.05, a: 0.82}
@@ -645,7 +645,7 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 48f24f8e3fa266e4d827e6007f4b93d7, type: 3}
-  m_Name: 
+  m_Name:
   m_EditorClassIdentifier: Assembly-CSharp::IndependentPassthroughHud
   staticPolicy: {fileID: 458888772}
   dynamicPolicy: {fileID: 458888771}
@@ -662,7 +662,7 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: eafea21ff705ba5488b46fcc014a996a, type: 3}
-  m_Name: 
+  m_Name:
   m_EditorClassIdentifier: Assembly-CSharp::PassthroughFeatureTogglePanel
   presentation: {fileID: 458888770}
   staticToggleButton: {fileID: 1505132721}
@@ -922,7 +922,7 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: aed62bf3ae2456c408f247f96808ce96, type: 3}
-  m_Name: 
+  m_Name:
   m_EditorClassIdentifier: 
   m_modelOculusTouchQuestAndRiftSLeftController: {fileID: 1328507985}
   m_modelOculusTouchQuestAndRiftSRightController: {fileID: 166476809}
@@ -948,7 +948,7 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 5b023183069df224080314a560e6e1ff, type: 3}
-  m_Name: 
+  m_Name:
   m_EditorClassIdentifier: Meta.XR.BuildingBlocks::Meta.XR.BuildingBlocks.BuildingBlock
   blockId: 5817f7c0-f2a5-45f9-a5ca-64264e0166e8
   instanceId: abf22521-8c55-417c-beef-0697c95d0dfd
@@ -1208,7 +1208,7 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: a79441f348de89743a2939f4d699eac1, type: 3}
-  m_Name: 
+  m_Name:
   m_EditorClassIdentifier: Unity.RenderPipelines.Universal.Runtime::UnityEngine.Rendering.Universal.UniversalAdditionalCameraData
   m_RenderShadows: 1
   m_RequiresDepthTextureOption: 2
@@ -2572,12 +2572,12 @@ MonoBehaviour:
   minimumPersonWindowRisk: 0.5
   maximumPersonWindows: 3
   personMinimumWidth: 0.1
-  personMaximumWidth: 0.32
+  personMaximumWidth: 0.42
   personMinimumHeight: 0.16
-  personMaximumHeight: 0.48
-  maximumPersonRevealArea: 0.45
-  personPositionSmoothingSeconds: 0.15
-  personSizeSmoothingSeconds: 0.25
+  personMaximumHeight: 0.62
+  maximumPersonRevealArea: 0.55
+  personPositionSmoothingSeconds: 0.1
+  personSizeSmoothingSeconds: 0.15
   personFadeInSeconds: 0.2
   personLostHoldSeconds: 1.5
   personFadeOutSeconds: 0.3
@@ -3782,6 +3782,7 @@ MonoBehaviour:
   dynamicPolicy: {fileID: 458888771}
   presentation: {fileID: 458888770}
   trackingQuality: {fileID: 458888779}
+  panelPlacement: {fileID: 954923361}
   refreshRateHz: 5
   panelOpacity: 1
 --- !u!1 &607719369
@@ -5665,7 +5666,6 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::QuestSceneDistanceLogger
   labelText: {fileID: 1045401346}
-  labelRoot: {fileID: 954923358}
 --- !u!4 &908076461
 Transform:
   m_ObjectHideFlags: 0
@@ -6199,6 +6199,7 @@ GameObject:
   - component: {fileID: 954923357}
   - component: {fileID: 954923359}
   - component: {fileID: 954923360}
+  - component: {fileID: 954923361}
   m_Layer: 0
   m_Name: DistanceCanvas
   m_TagString: Untagged
@@ -6294,6 +6295,23 @@ MonoBehaviour:
     m_Bits: 4294967295
   pointer: {fileID: 0}
   sortOrder: 0
+--- !u!114 &954923361
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 954923356}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: bb79fd214c0a1864082ab1cab41ad843, type: 3}
+  m_Name:
+  m_EditorClassIdentifier: TeamVR.AdaptivePassthrough.Runtime::WorldSpacePanelPlacementController
+  panelRoot: {fileID: 954923358}
+  head: {fileID: 0}
+  distanceMeters: 1
+  heightMeters: -0.05
+  scaleMultiplier: 1
 --- !u!1 &961018662
 GameObject:
   m_ObjectHideFlags: 0
@@ -11033,8 +11051,6 @@ MonoBehaviour:
   weightHandTTC: 0.6
   handApproachSpeedMin: 0.05
   uiRefreshInterval: 0.15
-  panelDistanceMeters: 1
-  panelVerticalOffsetMeters: -0.05
 --- !u!4 &1676843310
 Transform:
   m_ObjectHideFlags: 0

@@ -29,21 +29,21 @@ namespace TeamVR.AdaptivePassthrough.Tests
             Assert.That(balanced.spatialRayCount, Is.EqualTo(12));
             Assert.That(balanced.personInferenceRateHz, Is.EqualTo(3f));
             Assert.That(balanced.inferenceSliceMilliseconds, Is.EqualTo(1.5f));
-            Assert.That(balanced.maximumLayersPerFrame, Is.EqualTo(2));
+            Assert.That(balanced.maximumLayersPerFrame, Is.EqualTo(64));
             Assert.That(accuracy.spatialRateHz, Is.EqualTo(30f));
             Assert.That(accuracy.spatialRayCount, Is.EqualTo(24));
             Assert.That(accuracy.personInferenceRateHz, Is.EqualTo(3f));
             Assert.That(accuracy.inferenceSliceMilliseconds, Is.EqualTo(2.5f));
-            Assert.That(accuracy.maximumLayersPerFrame, Is.EqualTo(4));
+            Assert.That(accuracy.maximumLayersPerFrame, Is.EqualTo(96));
             Assert.That(performance.spatialRateHz, Is.EqualTo(10f));
-            Assert.That(performance.spatialRayCount, Is.EqualTo(6));
-            Assert.That(performance.personInferenceRateHz, Is.EqualTo(2f));
+            Assert.That(performance.spatialRayCount, Is.EqualTo(12));
+            Assert.That(performance.personInferenceRateHz, Is.EqualTo(3f));
             Assert.That(performance.inferenceSliceMilliseconds, Is.EqualTo(0.75f));
-            Assert.That(performance.maximumLayersPerFrame, Is.EqualTo(1));
+            Assert.That(performance.maximumLayersPerFrame, Is.EqualTo(48));
         }
 
         [Test]
-        public void AdaptiveSecondStageDropsToTenHzSixRaysTwoHz()
+        public void AdaptiveSecondStageKeepsHandsAndThreeHzInference()
         {
             TrackingQualitySettings degraded =
                 TrackingQualityController.CalculateEffectiveSettings(
@@ -51,10 +51,10 @@ namespace TeamVR.AdaptivePassthrough.Tests
                     2);
 
             Assert.That(degraded.spatialRateHz, Is.EqualTo(10f));
-            Assert.That(degraded.spatialRayCount, Is.EqualTo(6));
-            Assert.That(degraded.personInferenceRateHz, Is.EqualTo(2f));
+            Assert.That(degraded.spatialRayCount, Is.EqualTo(12));
+            Assert.That(degraded.personInferenceRateHz, Is.EqualTo(3f));
             Assert.That(degraded.inferenceSliceMilliseconds, Is.EqualTo(0.75f));
-            Assert.That(degraded.maximumLayersPerFrame, Is.EqualTo(1));
+            Assert.That(degraded.maximumLayersPerFrame, Is.EqualTo(48));
         }
 
         [Test]
@@ -67,9 +67,9 @@ namespace TeamVR.AdaptivePassthrough.Tests
 
             Assert.That(degraded.spatialRateHz, Is.EqualTo(30f));
             Assert.That(degraded.spatialRayCount, Is.EqualTo(24));
-            Assert.That(degraded.personInferenceRateHz, Is.EqualTo(2.5f));
+            Assert.That(degraded.personInferenceRateHz, Is.EqualTo(3f));
             Assert.That(degraded.inferenceSliceMilliseconds, Is.EqualTo(1f));
-            Assert.That(degraded.maximumLayersPerFrame, Is.EqualTo(1));
+            Assert.That(degraded.maximumLayersPerFrame, Is.EqualTo(64));
         }
 
         [Test]
@@ -96,6 +96,33 @@ namespace TeamVR.AdaptivePassthrough.Tests
                 Assert.That(snapshot.InferenceWallMilliseconds, Is.Zero);
                 Assert.That(snapshot.CaptureAgeMilliseconds, Is.Zero);
                 Assert.That(snapshot.FrameP95Milliseconds, Is.Zero);
+                Assert.That(snapshot.HasInferenceMeasurement, Is.False);
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(gameObject);
+            }
+        }
+
+        [Test]
+        public void DiagnosticsSeparateTargetFromMeasuredInferenceRate()
+        {
+            var gameObject = new GameObject("TrackingRateDiagnosticsTest");
+            try
+            {
+                var controller =
+                    gameObject.AddComponent<TrackingQualityController>();
+                TrackingDiagnosticsSnapshot before = controller.GetSnapshot();
+                Assert.That(before.TargetInferenceRateHz, Is.EqualTo(3f));
+                Assert.That(before.MeasuredInferenceRateHz, Is.Zero);
+                Assert.That(before.HasInferenceMeasurement, Is.False);
+                Assert.That(before.InferenceRateHz, Is.Zero);
+
+                controller.RecordInference(1.0, 5f);
+                TrackingDiagnosticsSnapshot after = controller.GetSnapshot();
+                Assert.That(after.HasInferenceMeasurement, Is.True);
+                Assert.That(after.TargetInferenceRateHz, Is.EqualTo(3f));
+                Assert.That(after.MeasuredInferenceRateHz, Is.Zero);
             }
             finally
             {
@@ -250,6 +277,31 @@ namespace TeamVR.AdaptivePassthrough.Tests
                 QuestSpatialObstacleProvider.ShouldForceStaticEmergency(
                     closeRay),
                 Is.True);
+        }
+
+        [Test]
+        public void FarConfirmedOverlapDoesNotForceStaticEmergency()
+        {
+            var farOverlap = new SpatialObstacleMeasurement(
+                SpatialObstacleSource.EnvironmentDepth,
+                1.0,
+                true,
+                1.20f,
+                Vector3.forward * 1.20f,
+                Vector3.back,
+                0f,
+                1f,
+                3,
+                0.02f,
+                0f,
+                true,
+                true,
+                3);
+
+            Assert.That(
+                QuestSpatialObstacleProvider.ShouldForceStaticEmergency(
+                    farOverlap),
+                Is.False);
         }
 
         [Test]
