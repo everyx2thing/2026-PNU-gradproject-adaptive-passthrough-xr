@@ -14,6 +14,7 @@ Random Forest 개인화 모델 학습 (3.4.2절)
 로직을 얹는 방식으로 확장할 예정 (TODO).
 """
 
+import argparse
 import os
 import pandas as pd
 from sklearn.model_selection import train_test_split
@@ -30,9 +31,21 @@ LABEL_COLUMN = "window_label"
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--source", choices=["mock", "real"], default="mock",
+                         help="mock: {source}_features.csv에 mock_features.csv 사용 (기본값) / "
+                              "real: real_features.csv 사용, 모델도 rf_personalization_real.joblib로 별도 저장")
+    args = parser.parse_args()
+
     os.makedirs(MODEL_DIR, exist_ok=True)
 
-    df = pd.read_csv(os.path.join(DATA_DIR, "mock_features.csv"))
+    df = pd.read_csv(os.path.join(DATA_DIR, f"{args.source}_features.csv"))
+
+    if len(df) < 5:
+        raise SystemExit(
+            f"윈도우가 {len(df)}개뿐이라 학습을 진행할 수 없습니다 (최소 5개 이상 권장).\n"
+            f"세션/이벤트 로그를 더 쌓은 뒤 build_features.py --source {args.source}부터 다시 실행하세요."
+        )
 
     print(f"전체 윈도우 수: {len(df)}")
     print(f"라벨 분포:\n{df[LABEL_COLUMN].value_counts()}\n")
@@ -74,7 +87,8 @@ def main():
     for name, importance in importances:
         print(f"  {name}: {importance:.4f}")
 
-    model_path = os.path.join(MODEL_DIR, "rf_personalization.joblib")
+    model_filename = "rf_personalization.joblib" if args.source == "mock" else "rf_personalization_real.joblib"
+    model_path = os.path.join(MODEL_DIR, model_filename)
     joblib.dump(model, model_path)
     print(f"\n모델 저장 완료: {model_path}")
 

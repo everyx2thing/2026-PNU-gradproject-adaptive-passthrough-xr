@@ -119,7 +119,7 @@ NavMeshSettings:
     debug:
       m_Flags: 0
   m_NavMeshData: {fileID: 0}
---- !u!1 &76859063
+--- !u!1 &788952057
 GameObject:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -127,8 +127,163 @@ GameObject:
   m_PrefabAsset: {fileID: 0}
   serializedVersion: 6
   m_Component:
-  - component: {fileID: 76859065}
-  - component: {fileID: 76859064}
+  - component: {fileID: 788952064}
+  - component: {fileID: 788952063}
+  - component: {fileID: 788952062}
+  - component: {fileID: 788952061}
+  - component: {fileID: 788952060}
+  - component: {fileID: 788952059}
+  - component: {fileID: 788952058}
+  m_Layer: 0
+  m_Name: Adaptive Dynamic Risk System
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &788952058
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 788952057}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: da3de8e37cb5e82479fd58b2265c955c, type: 3}
+  m_Name:
+  m_EditorClassIdentifier: TeamVR.AdaptivePassthrough.Runtime::TeamVR.AdaptivePassthrough.SpatialTrackingVisualLab
+  visible: 1
+  sequenceSeconds: 12
+--- !u!114 &788952059
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 788952057}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: fd05c8f9e7b114d42b90debe0fa30723, type: 3}
+  m_Name:
+  m_EditorClassIdentifier: TeamVR.AdaptivePassthrough.Runtime::TeamVR.AdaptivePassthrough.TrackingQualityController
+  profile: 0
+  adaptiveRateEnabled: 1
+--- !u!114 &788952060
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 788952057}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 6300bcc59e5ce024dafd381fd0007602, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: TeamVR.AdaptivePassthrough.Runtime::TeamVR.AdaptivePassthrough.DynamicRiskSessionLogger
+  controller: {fileID: 0}
+  presentationBehaviour: {fileID: 0}
+  snapshotSequenceProviderBehaviour: {fileID: 0}
+  trackingQuality: {fileID: 0}
+  spatialProvider: {fileID: 0}
+  enableLogging: 1
+  flushEveryRecords: 10
+  filePrefix: dynamic-risk
+--- !u!114 &788952061
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 788952057}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: b1397a4869f55684cac0e0283843eaf3, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: TeamVR.AdaptivePassthrough.Runtime::TeamVR.AdaptivePassthrough.DynamicRiskDebugOverlay
+  controller: {fileID: 0}
+  visible: 1
+  developmentBuildOnly: 1
+  drawPanelBackground: 0
+  showHeader: 0
+  normalizedViewport:
+    serializedVersion: 2
+    x: 0.05
+    y: 0.18
+    width: 0.9
+    height: 0.72
+  fontSize: 22
+--- !u!114 &788952062
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 788952057}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 89528b8e15b2aa54ca77d5a1fc5cfc1e, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: TeamVR.AdaptivePassthrough.Runtime::TeamVR.AdaptivePassthrough.MockPersonDetectionSource
+  controller: {fileID: 0}
+  inferenceRateHz: 10
+  loop: 1
+  includeSecondPerson: 1
+  runOnAndroid: 0
+--- !u!114 &788952063
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 788952057}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: b7bd1575561a8604ab2bdb8a2eee837c, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: TeamVR.AdaptivePassthrough.Runtime::TeamVR.AdaptivePassthrough.DynamicRiskController
+  riskSettings:
+    proximityWeight: 0.3
+    approachWeight: 0.3
+    ttcWeight: 0.15
+    collisionPathWeight: 0.1
+    objectTypeWeight: 0.05
+    proximityApproachWeight: 0.1
+    recedingMultiplier: 0.55
+    approachRateAtMaximumRisk: 0.15
+    closingSpeedAtMaximumRisk: 1.2
+    maximumRiskDistanceMeters: 0.6
+    middleRiskDistanceMeters: 1.5
+    lowRiskDistanceMeters: 3
+    criticalTtcSeconds: 2
+    zeroRiskTtcSeconds: 15
+    centerApproachRateAtMaximumRisk: 0.3
+  targetLabel: person
+--- !u!4 &788952064
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 788952057}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1 &831439860
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 831439862}
+  - component: {fileID: 831439861}
   m_Layer: 0
   m_Name: Main Camera
   m_TagString: MainCamera
@@ -136,13 +291,13 @@ GameObject:
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
   m_IsActive: 1
---- !u!20 &76859064
+--- !u!20 &831439861
 Camera:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 76859063}
+  m_GameObject: {fileID: 831439860}
   m_Enabled: 1
   serializedVersion: 2
   m_ClearFlags: 2
@@ -187,130 +342,16 @@ Camera:
   m_OcclusionCulling: 1
   m_StereoConvergence: 10
   m_StereoSeparation: 0.022
---- !u!4 &76859065
+--- !u!4 &831439862
 Transform:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 76859063}
+  m_GameObject: {fileID: 831439860}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: 0, y: 0, z: -10}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!1 &236312585
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 236312590}
-  - component: {fileID: 236312589}
-  - component: {fileID: 236312588}
-  - component: {fileID: 236312587}
-  - component: {fileID: 236312586}
-  m_Layer: 0
-  m_Name: Adaptive Dynamic Risk System
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!114 &236312586
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 236312585}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 6300bcc59e5ce024dafd381fd0007602, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: TeamVR.AdaptivePassthrough.Runtime::TeamVR.AdaptivePassthrough.DynamicRiskSessionLogger
-  controller: {fileID: 0}
-  enableLogging: 1
-  flushEveryRecords: 10
-  filePrefix: dynamic-risk
---- !u!114 &236312587
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 236312585}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: b1397a4869f55684cac0e0283843eaf3, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: TeamVR.AdaptivePassthrough.Runtime::TeamVR.AdaptivePassthrough.DynamicRiskDebugOverlay
-  controller: {fileID: 0}
-  visible: 1
-  normalizedViewport:
-    serializedVersion: 2
-    x: 0.08
-    y: 0.08
-    width: 0.84
-    height: 0.76
-  fontSize: 22
---- !u!114 &236312588
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 236312585}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 89528b8e15b2aa54ca77d5a1fc5cfc1e, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: TeamVR.AdaptivePassthrough.Runtime::TeamVR.AdaptivePassthrough.MockPersonDetectionSource
-  controller: {fileID: 0}
-  inferenceRateHz: 10
-  loop: 1
-  includeSecondPerson: 1
-  runOnAndroid: 0
---- !u!114 &236312589
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 236312585}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: b7bd1575561a8604ab2bdb8a2eee837c, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: TeamVR.AdaptivePassthrough.Runtime::TeamVR.AdaptivePassthrough.DynamicRiskController
-  riskSettings:
-    proximityWeight: 0.3
-    approachWeight: 0.3
-    ttcWeight: 0.15
-    collisionPathWeight: 0.1
-    objectTypeWeight: 0.05
-    proximityApproachWeight: 0.1
-    recedingMultiplier: 0.55
-    approachRateAtMaximumRisk: 0.15
-    criticalTtcSeconds: 2
-    zeroRiskTtcSeconds: 15
-    centerApproachRateAtMaximumRisk: 0.3
-  targetLabel: person
---- !u!4 &236312590
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 236312585}
-  serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -320,5 +361,5 @@ Transform:
 SceneRoots:
   m_ObjectHideFlags: 0
   m_Roots:
-  - {fileID: 76859065}
-  - {fileID: 236312590}
+  - {fileID: 831439862}
+  - {fileID: 788952064}

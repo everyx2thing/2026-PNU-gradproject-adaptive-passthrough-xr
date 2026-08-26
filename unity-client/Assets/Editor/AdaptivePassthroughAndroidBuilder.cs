@@ -24,6 +24,8 @@ public static class AdaptivePassthroughAndroidBuilder
 
     private static void Build(BuildOptions options)
     {
+        AdaptivePassthroughBoundarySetup.ConfigureForQuestBuild();
+
         string[] scenes = EditorBuildSettings.scenes
             .Where(
                 scene =>

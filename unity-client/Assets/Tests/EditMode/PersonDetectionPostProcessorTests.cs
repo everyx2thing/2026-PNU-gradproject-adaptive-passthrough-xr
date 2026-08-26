@@ -126,6 +126,21 @@ namespace TeamVR.AdaptivePassthrough.Tests
             }
         }
 
+        [Test]
+        public void LowConfidenceCandidateIsKeptForExistingTrackMatching()
+        {
+            PersonDetectionPostProcessResult result = Processor().Process(
+                new[] { 320f, 320f, 160f, 320f },
+                new[] { 0 },
+                new[] { 0.40f },
+                640,
+                640);
+
+            Assert.That(result.Detections.Count, Is.EqualTo(1));
+            Assert.That(result.LowConfidenceTrackingCount, Is.EqualTo(1));
+            Assert.That(result.Detections[0].confidence, Is.EqualTo(0.40f));
+        }
+
         private static PersonDetectionPostProcessor Processor()
         {
             return new PersonDetectionPostProcessor(

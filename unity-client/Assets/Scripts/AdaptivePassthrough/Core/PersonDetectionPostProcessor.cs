@@ -9,6 +9,7 @@ namespace TeamVR.AdaptivePassthrough
         public readonly int RawCandidateCount;
         public readonly int PersonCandidateCount;
         public readonly int BelowConfidenceCount;
+        public readonly int LowConfidenceTrackingCount;
         public readonly int InvalidBoxCount;
         public readonly int SuppressedByNmsCount;
         public readonly int LimitedCandidateCount;
@@ -18,6 +19,7 @@ namespace TeamVR.AdaptivePassthrough
             int rawCandidateCount,
             int personCandidateCount,
             int belowConfidenceCount,
+            int lowConfidenceTrackingCount,
             int invalidBoxCount,
             int suppressedByNmsCount,
             int limitedCandidateCount)
@@ -26,6 +28,7 @@ namespace TeamVR.AdaptivePassthrough
             RawCandidateCount = rawCandidateCount;
             PersonCandidateCount = personCandidateCount;
             BelowConfidenceCount = belowConfidenceCount;
+            LowConfidenceTrackingCount = lowConfidenceTrackingCount;
             InvalidBoxCount = invalidBoxCount;
             SuppressedByNmsCount = suppressedByNmsCount;
             LimitedCandidateCount = limitedCandidateCount;
@@ -73,6 +76,7 @@ namespace TeamVR.AdaptivePassthrough
                 Math.Min(classIds.Count, scores.Count));
             int personCount = 0;
             int belowConfidence = 0;
+            int lowConfidenceTracking = 0;
             int invalidCount = 0;
             var candidates = new List<Candidate>();
 
@@ -85,10 +89,18 @@ namespace TeamVR.AdaptivePassthrough
 
                 personCount++;
                 float score = scores[i];
-                if (!IsFinite(score) || score < settings.confidenceThreshold)
+                float trackingThreshold = Math.Min(
+                    Clamp01(settings.confidenceThreshold),
+                    Clamp01(settings.trackingConfidenceThreshold));
+                if (!IsFinite(score) || score < trackingThreshold)
                 {
                     belowConfidence++;
                     continue;
+                }
+
+                if (score < Clamp01(settings.confidenceThreshold))
+                {
+                    lowConfidenceTracking++;
                 }
 
                 if (!TryDecode(
@@ -172,6 +184,7 @@ namespace TeamVR.AdaptivePassthrough
                 rawCount,
                 personCount,
                 belowConfidence,
+                lowConfidenceTracking,
                 invalidCount,
                 suppressed,
                 limitedCandidates);
@@ -286,6 +299,7 @@ namespace TeamVR.AdaptivePassthrough
         {
             return new PersonDetectionPostProcessResult(
                 Array.Empty<DynamicObjectDetection>(),
+                0,
                 0,
                 0,
                 0,

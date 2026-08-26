@@ -22,6 +22,7 @@ namespace TeamVR.AdaptivePassthrough
             PersonBoxCoordinateSpace.ModelPixels;
         public int personClassId;
         public float confidenceThreshold = 0.55f;
+        public float trackingConfidenceThreshold = 0.35f;
         public float iouThreshold = 0.45f;
         public int maximumCandidates = 50;
         public int maximumDetections = 10;

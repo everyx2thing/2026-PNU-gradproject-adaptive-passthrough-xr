@@ -4,6 +4,7 @@
   "references": [
     "TeamVR.AdaptivePassthrough.Runtime",
     "meta.xr.mrutilitykit",
+    "Meta.XR.EnvironmentDepth",
     "Unity.InferenceEngine"
   ],
   "includePlatforms": [

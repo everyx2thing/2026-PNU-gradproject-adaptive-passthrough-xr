@@ -11,6 +11,7 @@ Unity Sentis 로드 테스트는 Unity 프로젝트가 준비되면 별도로 �
 지금 이 스크립트는 "서버에서 변환 → 파일로 저장"까지만 검증합니다.
 """
 
+import argparse
 import os
 import joblib
 import numpy as np
@@ -25,17 +26,43 @@ DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
 
 TARGET_MAX_SIZE_MB = 50  # 3.4.4절 목표 모델 크기
 
+# skl2onnx는 기본으로 설치된 onnx 패키지가 지원하는 최신 opset을 자동 선택하는데,
+# 이게 onnxruntime/Sentis가 아직 공식 지원 안 하는 "개발중" opset일 수 있어서 로드 자체가
+# 실패할 수 있음 (실제로 이 환경에서 opset 22 자동 선택 -> onnxruntime 1.19가 21까지만
+# 공식 지원이라 로드 실패 발생). 팀원 PC마다 onnx 패키지 버전이 달라 재현성도 없으므로
+# 안전하게 낮은 값으로 고정. Sentis가 이 opset도 못 읽으면 더 낮춰야 할 수 있음 (TODO).
+TARGET_ONNX_OPSET = 17
+
 
 def main():
-    model_path = os.path.join(MODEL_DIR, "rf_personalization.joblib")
-    onnx_path = os.path.join(MODEL_DIR, "rf_personalization.onnx")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--source", choices=["mock", "real"], default="mock",
+                         help="train_model.py --source와 맞춰서 사용 (mock/real 모델 파일 구분)")
+    args = parser.parse_args()
+
+    model_filename = "rf_personalization.joblib" if args.source == "mock" else "rf_personalization_real.joblib"
+    onnx_filename = "rf_personalization.onnx" if args.source == "mock" else "rf_personalization_real.onnx"
+    model_path = os.path.join(MODEL_DIR, model_filename)
+    onnx_path = os.path.join(MODEL_DIR, onnx_filename)
 
     print(f"모델 로드: {model_path}")
     model = joblib.load(model_path)
 
+    print(f"학습된 클래스 순서 (model.classes_): {list(model.classes_)}")
+    print("  -> Unity에서 확률 텐서의 컬럼 인덱스는 이 순서를 그대로 따름. "
+          "'Negative'가 이 목록에 없으면(표본 부족 등) p_negative는 항상 0으로 취급할 것.")
+
     # ONNX 변환 (입력: 7차원 float 벡터, 배치 크기는 가변 None)
+    # zipmap=False: 기본값(True)이면 확률 출력이 seq(map(string,float)) 타입으로 나오는데,
+    # Unity Sentis는 시퀀스/맵 타입을 지원하지 않고 텐서만 읽을 수 있음 (TODO였던 "출력 텐서
+    # 이름 확인" 이슈의 근본 원인). zipmap=False로 끄면 shape (N, n_classes)의 순수 float
+    # 텐서가 나와서 Sentis에서 바로 PeekOutput으로 읽을 수 있음.
     initial_type = [("float_input", FloatTensorType([None, len(FEATURE_COLUMNS)]))]
-    onnx_model = convert_sklearn(model, initial_types=initial_type)
+    onnx_model = convert_sklearn(
+        model, initial_types=initial_type,
+        options={id(model): {"zipmap": False}},
+        target_opset=TARGET_ONNX_OPSET,
+    )
 
     with open(onnx_path, "wb") as f:
         f.write(onnx_model.SerializeToString())
@@ -52,7 +79,7 @@ def main():
     print("\n=== 변환 검증 (sklearn vs ONNX 예측 비교) ===")
 
     import pandas as pd
-    df = pd.read_csv(os.path.join(DATA_DIR, "mock_features.csv"))
+    df = pd.read_csv(os.path.join(DATA_DIR, f"{args.source}_features.csv"))
     X_sample = df[FEATURE_COLUMNS].values.astype(np.float32)[:10]  # 샘플 10개만 비교
 
     # sklearn 예측
@@ -77,16 +104,16 @@ def main():
     classes = list(model.classes_)
 
     proba_output_name = sess.get_outputs()[1].name  # 보통 output_label 다음이 확률
-    onnx_proba_raw = sess.run([proba_output_name], {input_name: X_sample})[0]
-    # onnxruntime의 ZipMap 출력은 [{"Negative": 0.1, ...}, ...] 형태의 dict 리스트
+    onnx_proba = sess.run([proba_output_name], {input_name: X_sample})[0]
+    # zipmap=False로 변환했으므로 shape (N, n_classes)의 순수 float 텐서 (컬럼 순서 = classes)
 
     TOLERANCE = 1e-3
     proba_ok = True
-    for i, (sk_row, onnx_row) in enumerate(zip(sklearn_proba, onnx_proba_raw)):
+    for i, (sk_row, onnx_row) in enumerate(zip(sklearn_proba, onnx_proba)):
         for cls_idx, cls_name in enumerate(classes):
             sk_val = sk_row[cls_idx]
-            onnx_val = onnx_row.get(cls_name, None)
-            if onnx_val is None or abs(sk_val - onnx_val) > TOLERANCE:
+            onnx_val = onnx_row[cls_idx]
+            if abs(sk_val - onnx_val) > TOLERANCE:
                 print(f"  [{i}] {cls_name}: sklearn={sk_val:.4f}, onnx={onnx_val} MISMATCH")
                 proba_ok = False
 
