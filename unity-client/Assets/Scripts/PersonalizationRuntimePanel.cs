@@ -27,6 +27,7 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
         public bool DynamicFeatureEnabled = true;
         public bool MlEnabled;
         public int TrackingProfile;
+        public int FeedbackMode;
     }
 
     private sealed class SliderBinding
@@ -116,6 +117,8 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
     private MetricTile trackingInferenceTile;
     private MetricTile trackingFrameTile;
     private MetricTile trackingThresholdTile;
+    private Button feedbackModeButton;
+    private TMP_Text feedbackModeLabel;
     private CanvasGroup panelCanvasGroup;
     private TMP_Text featureHelpText;
     private TMP_Text thresholdHelpText;
@@ -250,6 +253,21 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
             if (image != null)
             {
                 image.color = enabled ? EnabledColor : DisabledColor;
+            }
+        }
+
+        if (feedbackModeButton != null && feedbackModeLabel != null)
+        {
+            bool passthrough = presentation == null
+                || presentation.FeedbackMode
+                    == SafetyFeedbackMode.Passthrough;
+            feedbackModeLabel.text = passthrough
+                ? "OUTPUT: PASSTHROUGH"
+                : "OUTPUT: RED BORDER + VIBRATION";
+            Image image = feedbackModeButton.targetGraphic as Image;
+            if (image != null)
+            {
+                image.color = passthrough ? AccentColor : WarningColor;
             }
         }
 
@@ -725,27 +743,36 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
             parent,
             "STATIC",
             new Vector2(0.02f, 0.03f),
-            new Vector2(0.23f, 0.17f),
+            new Vector2(0.18f, 0.17f),
             () => presentation != null && presentation.StaticFeatureEnabled,
             () => presentation?.ToggleStaticFeature());
         CreateToggleButton(
             parent,
             "DYNAMIC",
-            new Vector2(0.25f, 0.03f),
-            new Vector2(0.46f, 0.17f),
+            new Vector2(0.19f, 0.03f),
+            new Vector2(0.35f, 0.17f),
             () => presentation != null && presentation.DynamicFeatureEnabled,
             () => presentation?.ToggleDynamicFeature());
+        feedbackModeButton = CreateActionButton(
+            parent,
+            "OUTPUT: PASSTHROUGH",
+            new Vector2(0.36f, 0.03f),
+            new Vector2(0.62f, 0.17f),
+            () => presentation?.ToggleFeedbackMode(),
+            AccentColor);
+        feedbackModeLabel =
+            feedbackModeButton.GetComponentInChildren<TMP_Text>();
         CreateToggleButton(
             parent,
             "ML",
-            new Vector2(0.49f, 0.03f),
-            new Vector2(0.72f, 0.17f),
+            new Vector2(0.63f, 0.03f),
+            new Vector2(0.78f, 0.17f),
             () => personalization != null && personalization.MlEnabled,
             () => personalization?.ToggleMlEnabled());
         CreateActionButton(
             parent,
             "APPLY ML NOW",
-            new Vector2(0.74f, 0.03f),
+            new Vector2(0.79f, 0.03f),
             new Vector2(0.98f, 0.17f),
             () => personalization?.ApplyModelNow(),
             AccentColor);
@@ -2034,7 +2061,10 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
                 && personalization.MlEnabled,
             TrackingProfile = trackingQuality == null
                 ? (int)TrackingQualityProfile.Balanced
-                : (int)trackingQuality.Profile
+                : (int)trackingQuality.Profile,
+            FeedbackMode = presentation == null
+                ? (int)SafetyFeedbackMode.Passthrough
+                : (int)presentation.FeedbackMode
         };
 
         PlayerPrefs.DeleteKey(LegacyRuntimeSettingsPreferenceKey);
@@ -2074,6 +2104,12 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
                 settings.StaticFeatureEnabled);
             presentation?.SetDynamicFeatureEnabled(
                 settings.DynamicFeatureEnabled);
+            presentation?.SetFeedbackMode(
+                Enum.IsDefined(
+                    typeof(SafetyFeedbackMode),
+                    settings.FeedbackMode)
+                    ? (SafetyFeedbackMode)settings.FeedbackMode
+                    : SafetyFeedbackMode.Passthrough);
             personalization?.SetMlEnabled(settings.MlEnabled);
             if (trackingQuality != null
                 && Enum.IsDefined(
@@ -2105,6 +2141,7 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
         currentPage = 0;
         presentation?.SetStaticFeatureEnabled(true);
         presentation?.SetDynamicFeatureEnabled(true);
+        presentation?.SetFeedbackMode(SafetyFeedbackMode.Passthrough);
         personalization?.SetMlEnabled(false);
         trackingQuality?.ResetSavedProfile();
         ApplyPanelOpacity(panelOpacity, false);

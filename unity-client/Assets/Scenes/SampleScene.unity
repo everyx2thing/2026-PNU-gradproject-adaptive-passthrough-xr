@@ -2384,6 +2384,7 @@ GameObject:
   - component: {fileID: 458888777}
   - component: {fileID: 458888779}
   - component: {fileID: 458888778}
+  - component: {fileID: 458888780}
   m_Layer: 0
   m_Name: Adaptive Dynamic Risk System
   m_TagString: Untagged
@@ -2559,6 +2560,8 @@ MonoBehaviour:
   dynamicPolicy: {fileID: 458888771}
   staticFeatureEnabled: 1
   dynamicFeatureEnabled: 1
+  feedbackMode: 0
+  alertFeedback: {fileID: 458888780}
   passthroughLayer: {fileID: 947436444}
   windowShader: {fileID: 4800000, guid: 3f7d092ca5b0537458ebf48f1bcb5796, type: 3}
   presentationCamera: {fileID: 999914985}
@@ -2783,6 +2786,24 @@ MonoBehaviour:
   m_EditorClassIdentifier: TeamVR.AdaptivePassthrough.Runtime::TeamVR.AdaptivePassthrough.TrackingQualityController
   profile: 0
   adaptiveRateEnabled: 1
+--- !u!114 &458888780
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 458888762}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 60b144dd840cd3746ba0eaf7c2ace6b1, type: 3}
+  m_Name:
+  m_EditorClassIdentifier: Assembly-CSharp::SafetyAlertFeedbackController
+  borderShader: {fileID: 4800000, guid: ded53f91996686540b48de333f686e84, type: 3}
+  borderColor: {r: 1, g: 0.02, b: 0.01, a: 0.95}
+  borderThickness: 0.035
+  minimumHapticAmplitude: 0.3
+  maximumHapticAmplitude: 0.85
+  hapticFrequency: 0.7
 --- !u!1 &464549247
 GameObject:
   m_ObjectHideFlags: 0

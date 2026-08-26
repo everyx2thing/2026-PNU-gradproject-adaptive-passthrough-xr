@@ -32,6 +32,9 @@ public sealed class SelectivePassthroughController :
     [SerializeField] private DynamicPassthroughPolicyController dynamicPolicy;
     [SerializeField] private bool staticFeatureEnabled = true;
     [SerializeField] private bool dynamicFeatureEnabled = true;
+    [SerializeField] private SafetyFeedbackMode feedbackMode =
+        SafetyFeedbackMode.Passthrough;
+    [SerializeField] private SafetyAlertFeedbackController alertFeedback;
 
     [Header("Passthrough Rendering")]
     [SerializeField] private OVRPassthroughLayer passthroughLayer;
@@ -86,6 +89,13 @@ public sealed class SelectivePassthroughController :
     {
         get { return dynamicFeatureEnabled; }
     }
+    public SafetyFeedbackMode FeedbackMode => feedbackMode;
+    public bool PassthroughOutputVisible =>
+        feedbackMode == SafetyFeedbackMode.Passthrough
+        && AnyWindowVisible;
+    public bool AlertFeedbackActive =>
+        feedbackMode == SafetyFeedbackMode.RedBorderAndHaptics
+        && AnyWindowVisible;
     public bool AnyWindowVisible
     {
         get
@@ -135,7 +145,7 @@ public sealed class SelectivePassthroughController :
 
         UpdatePersonWindows();
         UpdateWallWindow();
-        SetLayerVisible(AnyWindowVisible);
+        ApplyFeedbackOutput();
         PublishVisibilityState();
     }
 
@@ -144,6 +154,7 @@ public sealed class SelectivePassthroughController :
         UnsubscribePipelineReset();
         DisableAllWindows();
         SetLayerVisible(false);
+        alertFeedback?.SetAlertActive(false, 0f);
         PublishVisibilityState();
     }
 
@@ -156,12 +167,14 @@ public sealed class SelectivePassthroughController :
         StaticPassthroughPolicyController staticController,
         DynamicPassthroughPolicyController dynamicController,
         OVRPassthroughLayer layer,
-        Shader shader)
+        Shader shader,
+        SafetyAlertFeedbackController alertController = null)
     {
         staticPolicy = staticController;
         dynamicPolicy = dynamicController;
         passthroughLayer = layer;
         windowShader = shader;
+        alertFeedback = alertController;
         DestroyRuntimeResources();
         RebuildPersonWindowTracker();
         ResolveReferences();
@@ -209,6 +222,32 @@ public sealed class SelectivePassthroughController :
     public void ToggleDynamicFeature()
     {
         SetDynamicFeatureEnabled(!dynamicFeatureEnabled);
+    }
+
+    public void SetFeedbackMode(SafetyFeedbackMode mode)
+    {
+        feedbackMode = Enum.IsDefined(typeof(SafetyFeedbackMode), mode)
+            ? mode
+            : SafetyFeedbackMode.Passthrough;
+        if (feedbackMode == SafetyFeedbackMode.Passthrough)
+        {
+            alertFeedback?.SetAlertActive(false, 0f);
+        }
+        else
+        {
+            SetLayerVisible(false);
+            SuppressPassthroughWindowRenderers();
+        }
+
+        PublishVisibilityState();
+    }
+
+    public void ToggleFeedbackMode()
+    {
+        SetFeedbackMode(
+            feedbackMode == SafetyFeedbackMode.Passthrough
+                ? SafetyFeedbackMode.RedBorderAndHaptics
+                : SafetyFeedbackMode.Passthrough);
     }
 
     private void UpdatePersonWindows()
@@ -400,7 +439,8 @@ public sealed class SelectivePassthroughController :
         out float opacity)
     {
         PersonWindowSnapshot snapshot;
-        if (personWindowTracker != null
+        if (feedbackMode == SafetyFeedbackMode.Passthrough
+            && personWindowTracker != null
             && personWindowTracker.TryGetSnapshot(
                 trackId,
                 out snapshot))
@@ -481,6 +521,16 @@ public sealed class SelectivePassthroughController :
         if (presentationCamera == null)
         {
             presentationCamera = Camera.main;
+        }
+
+        if (alertFeedback == null)
+        {
+            alertFeedback = GetComponent<SafetyAlertFeedbackController>();
+            if (alertFeedback == null)
+            {
+                alertFeedback =
+                    FindAnyObjectByType<SafetyAlertFeedbackController>();
+            }
         }
 
         RefreshPipelineResetSubscription();
@@ -674,8 +724,59 @@ public sealed class SelectivePassthroughController :
     {
         if (passthroughLayer != null)
         {
-            passthroughLayer.hidden = !visible;
+            passthroughLayer.hidden =
+                feedbackMode != SafetyFeedbackMode.Passthrough
+                || !visible;
         }
+    }
+
+    private void ApplyFeedbackOutput()
+    {
+        bool feedbackRequested = AnyWindowVisible;
+        if (feedbackMode == SafetyFeedbackMode.RedBorderAndHaptics)
+        {
+            SuppressPassthroughWindowRenderers();
+            SetLayerVisible(false);
+            alertFeedback?.SetAlertActive(
+                feedbackRequested,
+                FeedbackRiskIntensity());
+            return;
+        }
+
+        alertFeedback?.SetAlertActive(false, 0f);
+        SetLayerVisible(feedbackRequested);
+    }
+
+    private float FeedbackRiskIntensity()
+    {
+        float risk = 0f;
+        if (StaticWindowVisible
+            && staticPolicy != null
+            && staticPolicy.LatestStatic != null)
+        {
+            risk = Mathf.Max(
+                risk,
+                staticPolicy.LatestStatic.CombinedRisk);
+        }
+
+        if (ActivePersonWindowCount > 0
+            && dynamicPolicy != null
+            && dynamicPolicy.Latest != null)
+        {
+            risk = Mathf.Max(risk, dynamicPolicy.Latest.Risk);
+        }
+
+        return Mathf.Clamp01(Mathf.Max(0.50f, risk));
+    }
+
+    private void SuppressPassthroughWindowRenderers()
+    {
+        for (int i = 0; i < personSlots.Count; i++)
+        {
+            SetSlotActive(personSlots[i], false);
+        }
+
+        SetSlotActive(wallSlot, false);
     }
 
     public PassthroughPresentationSnapshot GetPresentationSnapshot()

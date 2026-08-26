@@ -17,6 +17,8 @@ namespace TeamVR.AdaptivePassthrough.Tests
         private const string PersonalizationSourceModelPath =
             "Assets/Models/rf_personalization_real.onnx.source";
         private const string QuestScenePath = "Assets/Scenes/SampleScene.unity";
+        private const string SafetyAlertShaderPath =
+            "Assets/Shaders/AdaptivePassthrough/SafetyAlertBorder.shader";
 
         [Test]
         public void PersonModelImportsWithExpectedThreeOutputContract()
@@ -206,6 +208,7 @@ namespace TeamVR.AdaptivePassthrough.Tests
                 MonoBehaviour spatialProvider = null;
                 MonoBehaviour trackingQuality = null;
                 MonoBehaviour panelPlacement = null;
+                MonoBehaviour alertFeedback = null;
                 int legacySnapshotCount = 0;
                 int passthroughLayerCount = 0;
                 int controllerLaserCount = 0;
@@ -255,6 +258,9 @@ namespace TeamVR.AdaptivePassthrough.Tests
                                 break;
                             case "WorldSpacePanelPlacementController":
                                 panelPlacement = behaviour;
+                                break;
+                            case "SafetyAlertFeedbackController":
+                                alertFeedback = behaviour;
                                 break;
                             case "OVRPassthroughLayer":
                                 passthroughLayer = behaviour;
@@ -318,6 +324,11 @@ namespace TeamVR.AdaptivePassthrough.Tests
                 Assert.That(spatialProvider, Is.Not.Null);
                 Assert.That(trackingQuality, Is.Not.Null);
                 Assert.That(panelPlacement, Is.Not.Null);
+                Assert.That(alertFeedback, Is.Not.Null);
+                Assert.That(
+                    AssetDatabase.LoadAssetAtPath<Shader>(
+                        SafetyAlertShaderPath),
+                    Is.Not.Null);
                 Transform labelRoot = new SerializedObject(experimentLogger)
                     .FindProperty("labelRoot")
                     .objectReferenceValue as Transform;
@@ -437,6 +448,18 @@ namespace TeamVR.AdaptivePassthrough.Tests
                     Is.SameAs(passthroughLayer));
                 Assert.That(
                     new SerializedObject(presentation)
+                        .FindProperty("alertFeedback")
+                        .objectReferenceValue,
+                    Is.SameAs(alertFeedback));
+                Assert.That(
+                    new SerializedObject(alertFeedback)
+                        .FindProperty("borderShader")
+                        .objectReferenceValue,
+                    Is.SameAs(
+                        AssetDatabase.LoadAssetAtPath<Shader>(
+                            SafetyAlertShaderPath)));
+                Assert.That(
+                    new SerializedObject(presentation)
                         .FindProperty("staticFeatureEnabled")
                         .boolValue,
                     Is.True);
@@ -445,6 +468,11 @@ namespace TeamVR.AdaptivePassthrough.Tests
                         .FindProperty("dynamicFeatureEnabled")
                         .boolValue,
                     Is.True);
+                Assert.That(
+                    new SerializedObject(presentation)
+                        .FindProperty("feedbackMode")
+                        .intValue,
+                    Is.EqualTo((int)SafetyFeedbackMode.Passthrough));
                 Assert.That(
                     new SerializedObject(presentation)
                         .FindProperty("personMaximumWidth")

@@ -24,6 +24,8 @@ public static class AdaptivePassthroughSceneBuilder
         "Assets/Models/personalization_runtime.onnx";
     public const string PassthroughWindowShaderPath =
         "Assets/Shaders/AdaptivePassthrough/PassthroughWindow.shader";
+    public const string SafetyAlertBorderShaderPath =
+        "Assets/Shaders/AdaptivePassthrough/SafetyAlertBorder.shader";
     public const string OvrRayHelperPrefabPath =
         "Packages/com.meta.xr.sdk.core/Prefabs/OVRRayHelper.prefab";
 
@@ -165,6 +167,8 @@ public static class AdaptivePassthroughSceneBuilder
                 GetOrAdd<PersonalizationRuntimeController>(system);
             SelectivePassthroughController presentation =
                 GetOrAdd<SelectivePassthroughController>(system);
+            SafetyAlertFeedbackController alertFeedback =
+                GetOrAdd<SafetyAlertFeedbackController>(system);
             BoundaryVisibilityController boundaryVisibility =
                 GetOrAdd<BoundaryVisibilityController>(system);
             OVRManager manager = Object.FindAnyObjectByType<OVRManager>();
@@ -181,6 +185,9 @@ public static class AdaptivePassthroughSceneBuilder
             Shader windowShader =
                 AssetDatabase.LoadAssetAtPath<Shader>(
                     PassthroughWindowShaderPath);
+            Shader alertShader =
+                AssetDatabase.LoadAssetAtPath<Shader>(
+                    SafetyAlertBorderShaderPath);
             ConfigureStaticBoundaryMeasurements(experimentLogger);
             ConfigureStaticBoundaryPolicy(staticPolicy);
             ConfigureDynamicPolicy(dynamicPolicy);
@@ -205,7 +212,9 @@ public static class AdaptivePassthroughSceneBuilder
                 staticPolicy,
                 dynamicPolicy,
                 passthroughLayer,
-                windowShader);
+                windowShader,
+                alertFeedback);
+            alertFeedback.Configure(alertShader);
             ConfigureBoundaryManager(manager);
             boundaryVisibility.Configure(
                 manager,
@@ -270,6 +279,7 @@ public static class AdaptivePassthroughSceneBuilder
             EditorUtility.SetDirty(staticPolicy);
             EditorUtility.SetDirty(dynamicPolicy);
             EditorUtility.SetDirty(presentation);
+            EditorUtility.SetDirty(alertFeedback);
             EditorUtility.SetDirty(personalization);
             EditorUtility.SetDirty(boundaryVisibility);
             EditorUtility.SetDirty(passthroughLayer);

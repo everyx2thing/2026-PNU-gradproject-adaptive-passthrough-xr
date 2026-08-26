@@ -382,6 +382,23 @@ namespace TeamVR.AdaptivePassthrough.Tests
             }
         }
 
+        [Test]
+        public void SafetyFeedbackPulsesRemainBoundedAndIncludeRestIntervals()
+        {
+            Assert.That(
+                SafetyFeedbackPulse.IsHapticPulseOn(0f, 1f),
+                Is.True);
+            Assert.That(
+                SafetyFeedbackPulse.IsHapticPulseOn(0.18f, 1f),
+                Is.False);
+            Assert.That(
+                SafetyFeedbackPulse.VisualPulse(0f, 0.5f),
+                Is.InRange(0f, 1f));
+            Assert.That(
+                SafetyFeedbackPulse.VisualPulse(10f, 1f),
+                Is.InRange(0f, 1f));
+        }
+
         private static SpatialObstacleMeasurement Measurement(
             SpatialObstacleSource source,
             float distanceMeters)
