@@ -1,3 +1,4 @@
+using System.Reflection;
 using NUnit.Framework;
 using TeamVR.AdaptivePassthrough;
 using UnityEngine;
@@ -43,7 +44,11 @@ namespace TeamVR.AdaptivePassthrough.Tests
 
             Assert.That(first.SelectedSource,
                 Is.EqualTo(SpatialObstacleSource.RoomScene));
+            Assert.That(first.Source,
+                Is.EqualTo(SpatialObstacleSource.RoomScene));
             Assert.That(second.SelectedSource,
+                Is.EqualTo(SpatialObstacleSource.EnvironmentDepth));
+            Assert.That(second.Source,
                 Is.EqualTo(SpatialObstacleSource.EnvironmentDepth));
         }
 
@@ -118,6 +123,26 @@ namespace TeamVR.AdaptivePassthrough.Tests
                     Vector3.up,
                     Vector3.forward),
                 Is.False);
+        }
+
+        [Test]
+        public void SelfFilter_RejectsChestFacingHandRayButNotForwardRay()
+        {
+            Vector3 chest = new Vector3(0f, 1.2f, 0f);
+            Vector3 hand = new Vector3(0.4f, 1.2f, 0.2f);
+
+            Assert.That(SpatialObstacleFusionFilter
+                .IsDirectionTowardEstimatedChest(
+                    hand,
+                    chest - hand,
+                    chest,
+                    0.80f), Is.True);
+            Assert.That(SpatialObstacleFusionFilter
+                .IsDirectionTowardEstimatedChest(
+                    hand,
+                    hand - chest,
+                    chest,
+                    0.80f), Is.False);
         }
 
         [Test]
@@ -222,6 +247,99 @@ namespace TeamVR.AdaptivePassthrough.Tests
         }
 
         [Test]
+        public void PrimaryDirectionalHeadStateUsesHigherLowObstacleRisk()
+        {
+            StaticRiskMeasurement headRisk = Risk(0.20f);
+            StaticRiskMeasurement lowObstacleRisk = Risk(0.80f);
+
+            float towardLowObstacle = QuestSpatialObstacleProvider
+                .CalculatePrimaryDirectionalHeadUserState(
+                    Vector3.forward,
+                    headRisk,
+                    Vector3.right,
+                    lowObstacleRisk,
+                    Vector3.forward);
+            float towardLowerRiskHeadHazard = QuestSpatialObstacleProvider
+                .CalculatePrimaryDirectionalHeadUserState(
+                    Vector3.right,
+                    headRisk,
+                    Vector3.right,
+                    lowObstacleRisk,
+                    Vector3.forward);
+
+            Assert.That(towardLowObstacle, Is.GreaterThan(0.9f));
+            Assert.That(towardLowerRiskHeadHazard, Is.Zero);
+        }
+
+        [Test]
+        public void SafetyEdgeSamplingUsesFourRaycastsAndRotatesFullSweep()
+        {
+            Assert.That(QuestSpatialObstacleProvider
+                .MaximumSafetyEdgeRaycastsPerMeasurement, Is.EqualTo(4));
+            int edgeIndex = 0;
+            edgeIndex = QuestSpatialObstacleProvider.AdvanceSafetyEdgeIndex(
+                edgeIndex,
+                QuestSpatialObstacleProvider
+                    .MaximumSafetyEdgeRaycastsPerMeasurement);
+            Assert.That(edgeIndex, Is.EqualTo(4));
+            edgeIndex = QuestSpatialObstacleProvider.AdvanceSafetyEdgeIndex(
+                edgeIndex,
+                QuestSpatialObstacleProvider
+                    .MaximumSafetyEdgeRaycastsPerMeasurement);
+            Assert.That(edgeIndex, Is.EqualTo(8));
+            edgeIndex = QuestSpatialObstacleProvider.AdvanceSafetyEdgeIndex(
+                edgeIndex,
+                QuestSpatialObstacleProvider
+                    .MaximumSafetyEdgeRaycastsPerMeasurement);
+            Assert.That(edgeIndex, Is.Zero);
+        }
+
+        [Test]
+        public void SpatialTrackingSessionResetClearsBodyAndSweepState()
+        {
+            var gameObject = new GameObject("spatial-provider-reset-test");
+            try
+            {
+                var provider = gameObject.AddComponent<
+                    QuestSpatialObstacleProvider>();
+                FieldInfo headStateField = typeof(QuestSpatialObstacleProvider)
+                    .GetField(
+                        "headState",
+                        BindingFlags.Instance | BindingFlags.NonPublic);
+                object headState = headStateField.GetValue(provider);
+                System.Type stateType = headState.GetType();
+                stateType.GetField("velocity").SetValue(
+                    headState,
+                    Vector3.forward);
+                stateType.GetField("nextSafetyEdgeIndex").SetValue(
+                    headState,
+                    8);
+                stateType.GetField("safetyEdgeHitMask").SetValue(
+                    headState,
+                    15);
+
+                provider.ResetTrackingSession();
+
+                Assert.That(
+                    (Vector3)stateType.GetField("velocity").GetValue(headState),
+                    Is.EqualTo(Vector3.zero));
+                Assert.That(
+                    (int)stateType.GetField("nextSafetyEdgeIndex")
+                        .GetValue(headState),
+                    Is.Zero);
+                Assert.That(
+                    (int)stateType.GetField("safetyEdgeHitMask")
+                        .GetValue(headState),
+                    Is.Zero);
+                Assert.That(provider.LatestMeasurement.Available, Is.False);
+            }
+            finally
+            {
+                Object.DestroyImmediate(gameObject);
+            }
+        }
+
+        [Test]
         public void TorsoAndHandSpreadUseGravityAlignedAxes()
         {
             Vector3 point = new Vector3(0f, 1.2f, -0.08f);
@@ -245,6 +363,55 @@ namespace TeamVR.AdaptivePassthrough.Tests
         }
 
         [Test]
+        public void LocomotionCorridorDirectionIgnoresHeadPitchAndPointsDown()
+        {
+            Vector3 pitchedForward = Quaternion.Euler(60f, 25f, 0f)
+                * Vector3.forward;
+            Vector3 direction =
+                QuestSpatialObstacleProvider.LocomotionCorridorDirection(
+                    pitchedForward,
+                    42f);
+
+            Assert.That(direction.y, Is.LessThan(-0.60f));
+            Assert.That(
+                Vector3.Dot(
+                    Vector3.ProjectOnPlane(direction, Vector3.up).normalized,
+                    QuestSpatialObstacleProvider.HorizontalDirection(
+                        pitchedForward,
+                        Vector3.forward)),
+                Is.GreaterThan(0.99f));
+        }
+
+        [Test]
+        public void LocomotionFloorFilterKeepsRaisedAndVerticalObstacles()
+        {
+            Assert.That(
+                QuestSpatialObstacleProvider.ShouldRejectLocomotionFloorHit(
+                    new Vector3(0f, 0.02f, 1f),
+                    Vector3.up,
+                    true,
+                    0f,
+                    0.08f),
+                Is.True);
+            Assert.That(
+                QuestSpatialObstacleProvider.ShouldRejectLocomotionFloorHit(
+                    new Vector3(0f, 0.25f, 1f),
+                    Vector3.up,
+                    true,
+                    0f,
+                    0.08f),
+                Is.False);
+            Assert.That(
+                QuestSpatialObstacleProvider.ShouldRejectLocomotionFloorHit(
+                    new Vector3(0f, 0.02f, 1f),
+                    Vector3.back,
+                    false,
+                    0f,
+                    0.08f),
+                Is.False);
+        }
+
+        [Test]
         public void PersonDepthPreRaycastGateRejectsStaleWarmupAndMotion()
         {
             Assert.That(
@@ -263,6 +430,34 @@ namespace TeamVR.AdaptivePassthrough.Tests
                 QuestPersonDepthProvider.PreRaycastRejectionReason(
                     2, 0.2f, new Vector2(0.1f, 0f), Vector2.zero),
                 Is.Empty);
+        }
+
+        [Test]
+        public void CameraFrameTimestampMapsIntoMonotonicRealtimeClock()
+        {
+            System.DateTime utcNow = new System.DateTime(
+                2026, 8, 30, 12, 0, 1, System.DateTimeKind.Utc);
+            System.DateTime capturedAt = utcNow.AddMilliseconds(-125.0);
+
+            double captureRealtime =
+                QuestPersonDetectionRunner.CaptureRealtimeSeconds(
+                    capturedAt,
+                    utcNow,
+                    42.0);
+
+            Assert.That(captureRealtime, Is.EqualTo(41.875).Within(0.0001));
+            Assert.That(
+                QuestPersonDetectionRunner.CaptureRealtimeSeconds(
+                    utcNow.AddSeconds(1.0),
+                    utcNow,
+                    42.0),
+                Is.EqualTo(42.0));
+            Assert.That(
+                QuestPersonDetectionRunner.CaptureRealtimeSeconds(
+                    default,
+                    utcNow,
+                    42.0),
+                Is.EqualTo(42.0));
         }
 
         [Test]
@@ -418,6 +613,22 @@ namespace TeamVR.AdaptivePassthrough.Tests
                 false,
                 false,
                 source == SpatialObstacleSource.EnvironmentDepth ? 1 : 0);
+        }
+
+        private static StaticRiskMeasurement Risk(float risk)
+        {
+            return new StaticRiskMeasurement(
+                true,
+                1f,
+                0f,
+                false,
+                0f,
+                0f,
+                0f,
+                0f,
+                0f,
+                0f,
+                risk);
         }
     }
 }

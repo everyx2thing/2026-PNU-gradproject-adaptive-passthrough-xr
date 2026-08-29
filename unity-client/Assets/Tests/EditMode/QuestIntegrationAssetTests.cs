@@ -19,6 +19,8 @@ namespace TeamVR.AdaptivePassthrough.Tests
         private const string QuestScenePath = "Assets/Scenes/SampleScene.unity";
         private const string SafetyAlertShaderPath =
             "Assets/Shaders/AdaptivePassthrough/SafetyAlertBorder.shader";
+        private const string HazardCueShaderPath =
+            "Assets/Shaders/AdaptivePassthrough/HazardCue.shader";
 
         [Test]
         public void PersonModelImportsWithExpectedThreeOutputContract()
@@ -458,6 +460,42 @@ namespace TeamVR.AdaptivePassthrough.Tests
                     Is.SameAs(
                         AssetDatabase.LoadAssetAtPath<Shader>(
                             SafetyAlertShaderPath)));
+                Shader hazardCueShader =
+                    AssetDatabase.LoadAssetAtPath<Shader>(
+                        HazardCueShaderPath);
+                Assert.That(hazardCueShader, Is.Not.Null);
+                var serializedPresentation =
+                    new SerializedObject(presentation);
+                Assert.That(
+                    serializedPresentation.FindProperty("cueShader")
+                        .objectReferenceValue,
+                    Is.SameAs(hazardCueShader));
+                Assert.That(
+                    serializedPresentation.FindProperty("personEdgeFeather")
+                        .floatValue,
+                    Is.EqualTo(0.065f).Within(0.0001f));
+                Assert.That(
+                    serializedPresentation
+                        .FindProperty("personPositionSmoothingSeconds")
+                        .floatValue,
+                    Is.EqualTo(0.10f).Within(0.0001f));
+                Assert.That(
+                    serializedPresentation
+                        .FindProperty("personSizeSmoothingSeconds")
+                        .floatValue,
+                    Is.EqualTo(0.10f).Within(0.0001f));
+                Assert.That(
+                    serializedPresentation.FindProperty("personFadeInSeconds")
+                        .floatValue,
+                    Is.EqualTo(0.125f).Within(0.0001f));
+                Assert.That(
+                    serializedPresentation.FindProperty("personFadeOutSeconds")
+                        .floatValue,
+                    Is.EqualTo(0.30f).Within(0.0001f));
+                Assert.That(
+                    serializedPresentation.FindProperty("wallEdgeFeather")
+                        .floatValue,
+                    Is.EqualTo(0.065f).Within(0.0001f));
                 Assert.That(
                     new SerializedObject(presentation)
                         .FindProperty("staticFeatureEnabled")

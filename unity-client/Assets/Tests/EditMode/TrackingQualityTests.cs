@@ -36,10 +36,72 @@ namespace TeamVR.AdaptivePassthrough.Tests
             Assert.That(accuracy.inferenceSliceMilliseconds, Is.EqualTo(2.5f));
             Assert.That(accuracy.maximumLayersPerFrame, Is.EqualTo(96));
             Assert.That(performance.spatialRateHz, Is.EqualTo(10f));
-            Assert.That(performance.spatialRayCount, Is.EqualTo(12));
+            Assert.That(performance.spatialRayCount, Is.EqualTo(6));
             Assert.That(performance.personInferenceRateHz, Is.EqualTo(3f));
             Assert.That(performance.inferenceSliceMilliseconds, Is.EqualTo(0.75f));
             Assert.That(performance.maximumLayersPerFrame, Is.EqualTo(48));
+        }
+
+        [Test]
+        public void SixRayPlan_RetainsHandsAndLowObstacleCorridor()
+        {
+            var root = new GameObject("Six Ray Probe Plan");
+            var head = new GameObject("Head");
+            var left = new GameObject("Left");
+            var right = new GameObject("Right");
+            try
+            {
+                QuestSpatialObstacleProvider provider =
+                    root.AddComponent<QuestSpatialObstacleProvider>();
+                provider.Configure(
+                    null,
+                    null,
+                    null,
+                    head.transform,
+                    left.transform,
+                    right.transform);
+                MethodInfo build = typeof(QuestSpatialObstacleProvider)
+                    .GetMethod(
+                        "BuildProbes",
+                        BindingFlags.Instance | BindingFlags.NonPublic);
+                FieldInfo probeField = typeof(QuestSpatialObstacleProvider)
+                    .GetField(
+                        "probes",
+                        BindingFlags.Instance | BindingFlags.NonPublic);
+
+                int count = (int)build.Invoke(provider, new object[] { 6 });
+                var probes = (SpatialProbe[])probeField.GetValue(provider);
+                int leftCount = 0;
+                int rightCount = 0;
+                int corridorCount = 0;
+                for (int i = 0; i < count; i++)
+                {
+                    leftCount += probes[i].Owner
+                            == SpatialProbeOwner.LeftHand
+                        ? 1
+                        : 0;
+                    rightCount += probes[i].Owner
+                            == SpatialProbeOwner.RightHand
+                        ? 1
+                        : 0;
+                    corridorCount += probes[i].Purpose
+                            == SpatialProbePurpose.LocomotionCorridor
+                        ? 1
+                        : 0;
+                }
+
+                Assert.That(count, Is.EqualTo(6));
+                Assert.That(leftCount, Is.EqualTo(2));
+                Assert.That(rightCount, Is.EqualTo(2));
+                Assert.That(corridorCount, Is.EqualTo(1));
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(root);
+                UnityEngine.Object.DestroyImmediate(head);
+                UnityEngine.Object.DestroyImmediate(left);
+                UnityEngine.Object.DestroyImmediate(right);
+            }
         }
 
         [Test]
@@ -51,7 +113,7 @@ namespace TeamVR.AdaptivePassthrough.Tests
                     2);
 
             Assert.That(degraded.spatialRateHz, Is.EqualTo(10f));
-            Assert.That(degraded.spatialRayCount, Is.EqualTo(12));
+            Assert.That(degraded.spatialRayCount, Is.EqualTo(6));
             Assert.That(degraded.personInferenceRateHz, Is.EqualTo(3f));
             Assert.That(degraded.inferenceSliceMilliseconds, Is.EqualTo(0.75f));
             Assert.That(degraded.maximumLayersPerFrame, Is.EqualTo(48));
@@ -435,6 +497,29 @@ namespace TeamVR.AdaptivePassthrough.Tests
             Assert.That(recordType.GetField("frameSequence"), Is.Not.Null);
             Assert.That(recordType.GetField("visibilitySource"), Is.Not.Null);
             Assert.That(recordType.GetField("scenarioId"), Is.Not.Null);
+        }
+
+        [Test]
+        public void ResetPipelinePublishesSessionBoundary()
+        {
+            var gameObject = new GameObject("Dynamic Risk Reset Test");
+            try
+            {
+                DynamicRiskController controller =
+                    gameObject.AddComponent<DynamicRiskController>();
+                int resetCount = 0;
+                controller.PipelineReset += () => resetCount++;
+
+                controller.ResetPipeline();
+
+                Assert.That(resetCount, Is.EqualTo(1));
+                Assert.That(controller.LatestFrame, Is.Null);
+                Assert.That(controller.LatestFrameSequence, Is.Zero);
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(gameObject);
+            }
         }
     }
 }

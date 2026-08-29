@@ -17,6 +17,12 @@ namespace TeamVR.AdaptivePassthrough
         RightHand
     }
 
+    public enum SpatialProbePurpose
+    {
+        Standard,
+        LocomotionCorridor
+    }
+
     public enum SpatialObstacleSource
     {
         Unavailable,
@@ -80,7 +86,7 @@ namespace TeamVR.AdaptivePassthrough
                         profile, 30f, 24, 3f, 2.5f, 96);
                 case TrackingQualityProfile.Performance:
                     return new TrackingQualitySettings(
-                        profile, 10f, 12, 3f, 0.75f, 48);
+                        profile, 10f, 6, 3f, 0.75f, 48);
                 default:
                     return new TrackingQualitySettings(
                         TrackingQualityProfile.Balanced,
@@ -100,6 +106,7 @@ namespace TeamVR.AdaptivePassthrough
         public readonly Vector3 Direction;
         public readonly Vector3 Velocity;
         public readonly float SafetyRadius;
+        public readonly SpatialProbePurpose Purpose;
 
         public SpatialProbe(
             SpatialProbeOwner owner,
@@ -107,6 +114,23 @@ namespace TeamVR.AdaptivePassthrough
             Vector3 direction,
             Vector3 velocity,
             float safetyRadius)
+            : this(
+                owner,
+                origin,
+                direction,
+                velocity,
+                safetyRadius,
+                SpatialProbePurpose.Standard)
+        {
+        }
+
+        public SpatialProbe(
+            SpatialProbeOwner owner,
+            Vector3 origin,
+            Vector3 direction,
+            Vector3 velocity,
+            float safetyRadius,
+            SpatialProbePurpose purpose)
         {
             Owner = owner;
             Origin = origin;
@@ -115,6 +139,7 @@ namespace TeamVR.AdaptivePassthrough
                 : Vector3.forward;
             Velocity = velocity;
             SafetyRadius = Mathf.Max(0f, safetyRadius);
+            Purpose = purpose;
         }
     }
 
@@ -141,6 +166,9 @@ namespace TeamVR.AdaptivePassthrough
         public readonly float RoomSceneDistanceMeters;
         public readonly bool SelfRejected;
         public readonly string RejectionReason;
+        public readonly SpatialProbePurpose ProbePurpose;
+        public readonly int SurfaceId;
+        public readonly HazardPresentationGeometry PresentationGeometry;
 
         public SpatialObstacleMeasurement(
             SpatialObstacleSource source,
@@ -163,7 +191,10 @@ namespace TeamVR.AdaptivePassthrough
             float environmentDistanceMeters = -1f,
             float roomSceneDistanceMeters = -1f,
             bool selfRejected = false,
-            string rejectionReason = null)
+            string rejectionReason = null,
+            SpatialProbePurpose probePurpose = SpatialProbePurpose.Standard,
+            int surfaceId = -1,
+            HazardPresentationGeometry presentationGeometry = default)
         {
             Source = source;
             TimestampSeconds = Math.Max(0.0, timestampSeconds);
@@ -194,10 +225,27 @@ namespace TeamVR.AdaptivePassthrough
             RoomSceneDistanceMeters = roomSceneDistanceMeters;
             SelfRejected = selfRejected;
             RejectionReason = rejectionReason ?? string.Empty;
+            ProbePurpose = probePurpose;
+            SurfaceId = surfaceId;
+            PresentationGeometry = available
+                && presentationGeometry.Available
+                ? presentationGeometry
+                : default;
         }
 
         public static SpatialObstacleMeasurement Unavailable(
             double timestampSeconds)
+        {
+            return Unavailable(
+                timestampSeconds,
+                SpatialProbeOwner.Head,
+                SpatialProbePurpose.Standard);
+        }
+
+        public static SpatialObstacleMeasurement Unavailable(
+            double timestampSeconds,
+            SpatialProbeOwner owner,
+            SpatialProbePurpose purpose)
         {
             return new SpatialObstacleMeasurement(
                 SpatialObstacleSource.Unavailable,
@@ -211,7 +259,16 @@ namespace TeamVR.AdaptivePassthrough
                 0,
                 0f,
                 0f,
-                false);
+                false,
+                false,
+                0,
+                owner,
+                SpatialObstacleSource.Unavailable,
+                -1f,
+                -1f,
+                false,
+                string.Empty,
+                purpose);
         }
     }
 

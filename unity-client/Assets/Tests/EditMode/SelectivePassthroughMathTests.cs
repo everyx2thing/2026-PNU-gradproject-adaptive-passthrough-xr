@@ -74,5 +74,38 @@ namespace TeamVR.AdaptivePassthrough.Tests
             Assert.That(right.xMax, Is.EqualTo(1f));
             Assert.That(right.xMin, Is.GreaterThanOrEqualTo(0f));
         }
+
+        [Test]
+        public void StereoRectsUseIndependentEyeCentersAndPreserveSize()
+        {
+            Rect tracked = new Rect(0.40f, 0.30f, 0.20f, 0.30f);
+            bool available = SelectivePassthroughMath.TryStereoRects(
+                tracked,
+                new Rect(0.05f, 0.10f, 0.90f, 0.80f),
+                new Vector3(0.46f, 0.52f, 1f),
+                new Vector3(0.54f, 0.52f, 1f),
+                out Rect left,
+                out Rect right);
+
+            Assert.That(available, Is.True);
+            Assert.That(left.center.x, Is.EqualTo(0.46f).Within(0.0001f));
+            Assert.That(right.center.x, Is.EqualTo(0.54f).Within(0.0001f));
+            Assert.That(left.width, Is.EqualTo(tracked.width));
+            Assert.That(right.height, Is.EqualTo(tracked.height));
+        }
+
+        [Test]
+        public void StereoRectsRejectAnEyeBehindCamera()
+        {
+            bool available = SelectivePassthroughMath.TryStereoRects(
+                new Rect(0.40f, 0.30f, 0.20f, 0.30f),
+                new Rect(0f, 0f, 1f, 1f),
+                new Vector3(0.48f, 0.50f, 1f),
+                new Vector3(0.52f, 0.50f, -1f),
+                out _,
+                out _);
+
+            Assert.That(available, Is.False);
+        }
     }
 }

@@ -13,6 +13,12 @@ namespace TeamVR.AdaptivePassthrough
         private readonly Dictionary<int, DynamicRiskAssessment>
             lastObservedAssessments =
                 new Dictionary<int, DynamicRiskAssessment>();
+        private readonly Dictionary<int, string[]> lostReasonCache =
+            new Dictionary<int, string[]>();
+        private readonly List<DynamicObjectDetection> filteredDetections =
+            new List<DynamicObjectDetection>(16);
+        private readonly HashSet<int> liveTrackSet = new HashSet<int>();
+        private readonly List<int> expiredAssessmentIds = new List<int>(16);
         private readonly string targetLabel;
 
         public DynamicRiskPipeline(
@@ -40,7 +46,8 @@ namespace TeamVR.AdaptivePassthrough
             Func<TrackedDynamicObject, PersonDistanceMeasurement>
                 distanceResolver)
         {
-            var filtered = new List<DynamicObjectDetection>();
+            List<DynamicObjectDetection> filtered = filteredDetections;
+            filtered.Clear();
             if (detections != null)
             {
                 for (int i = 0; i < detections.Count; i++)
@@ -59,7 +66,11 @@ namespace TeamVR.AdaptivePassthrough
 
             IReadOnlyList<TrackedDynamicObject> tracked =
                 tracker.Update(timestampSeconds, filtered);
-            var liveTrackIds = new List<int>(tracker.LiveTrackIds);
+            var liveTrackIds = new List<int>();
+            foreach (int trackId in tracker.LiveTrackIds)
+            {
+                liveTrackIds.Add(trackId);
+            }
             motionEstimator.PruneExcept(liveTrackIds);
             metricMotionEstimator.PruneExcept(liveTrackIds);
             riskEstimator.PruneExcept(liveTrackIds);
@@ -134,6 +145,10 @@ namespace TeamVR.AdaptivePassthrough
             metricMotionEstimator.Reset();
             riskEstimator.Reset();
             lastObservedAssessments.Clear();
+            lostReasonCache.Clear();
+            liveTrackSet.Clear();
+            expiredAssessmentIds.Clear();
+            filteredDetections.Clear();
         }
 
         private DynamicRiskAssessment CreateLostAssessment(
@@ -145,11 +160,9 @@ namespace TeamVR.AdaptivePassthrough
                 tracked.UnobservedSeconds / 0.75);
             float score = previous.Score
                 * (1f - 0.40f * decayProgress);
-            var reasons = new List<string>(previous.Reasons);
-            if (!reasons.Contains("temporarily_lost"))
-            {
-                reasons.Add("temporarily_lost");
-            }
+            string[] reasons = ReasonsWithTemporaryLoss(
+                tracked.TrackId,
+                previous.Reasons);
 
             return new DynamicRiskAssessment(
                 tracked.TrackId,
@@ -158,7 +171,7 @@ namespace TeamVR.AdaptivePassthrough
                 previous.Motion,
                 score,
                 riskEstimator.LevelForScore(score),
-                reasons.ToArray(),
+                reasons,
                 previous.Breakdown,
                 TrackLifecycle.Lost,
                 false,
@@ -170,23 +183,71 @@ namespace TeamVR.AdaptivePassthrough
                 previous.CloseReleaseConfirmationCount);
         }
 
-        private void PruneAssessments(IEnumerable<int> liveTrackIds)
+        private string[] ReasonsWithTemporaryLoss(
+            int trackId,
+            string[] previousReasons)
         {
-            var live = liveTrackIds == null
-                ? new HashSet<int>()
-                : new HashSet<int>(liveTrackIds);
-            var expired = new List<int>();
-            foreach (int trackId in lastObservedAssessments.Keys)
+            previousReasons = previousReasons ?? Array.Empty<string>();
+            for (int i = 0; i < previousReasons.Length; i++)
             {
-                if (!live.Contains(trackId))
+                if (string.Equals(
+                    previousReasons[i],
+                    "temporarily_lost",
+                    StringComparison.Ordinal))
                 {
-                    expired.Add(trackId);
+                    return previousReasons;
                 }
             }
 
-            for (int i = 0; i < expired.Count; i++)
+            if (lostReasonCache.TryGetValue(trackId, out string[] cached)
+                && cached.Length == previousReasons.Length + 1)
             {
-                lastObservedAssessments.Remove(expired[i]);
+                bool matches = true;
+                for (int i = 0; i < previousReasons.Length; i++)
+                {
+                    matches &= string.Equals(
+                        cached[i],
+                        previousReasons[i],
+                        StringComparison.Ordinal);
+                }
+                if (matches)
+                {
+                    return cached;
+                }
+            }
+
+            var result = new string[previousReasons.Length + 1];
+            Array.Copy(previousReasons, result, previousReasons.Length);
+            result[result.Length - 1] = "temporarily_lost";
+            lostReasonCache[trackId] = result;
+            return result;
+        }
+
+        private void PruneAssessments(IReadOnlyList<int> liveTrackIds)
+        {
+            liveTrackSet.Clear();
+            if (liveTrackIds != null)
+            {
+                for (int i = 0; i < liveTrackIds.Count; i++)
+                {
+                    liveTrackSet.Add(liveTrackIds[i]);
+                }
+            }
+
+            expiredAssessmentIds.Clear();
+            foreach (int trackId in lastObservedAssessments.Keys)
+            {
+                if (!liveTrackSet.Contains(trackId))
+                {
+                    expiredAssessmentIds.Add(trackId);
+                }
+            }
+
+            for (int i = 0; i < expiredAssessmentIds.Count; i++)
+            {
+                int trackId = expiredAssessmentIds[i];
+                lastObservedAssessments.Remove(trackId);
+                lostReasonCache.Remove(trackId);
             }
         }
     }

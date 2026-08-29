@@ -730,38 +730,13 @@ public class QuestRiskExperimentLogger : MonoBehaviour,
 
         foreach (WallSurface surface in wallSurfaces)
         {
-            Vector3 closestPoint = Vector3.zero;
-            float candidateDistance = float.PositiveInfinity;
-            if (surface.hasPlaneBounds)
+            if (!TryGetClosestPoint(
+                    surface,
+                    point,
+                    out Vector3 closestPoint,
+                    out float candidateDistance))
             {
-                Vector3 planePoint =
-                    FiniteSpatialBoundsMath.ClosestPointOnPlane(
-                        point,
-                        surface.position,
-                        surface.rotation,
-                        surface.planeBounds);
-                candidateDistance = Vector3.Distance(point, planePoint);
-                closestPoint = planePoint;
-            }
-
-            bool insideVolume = false;
-            if (surface.hasVolumeBounds)
-            {
-                Vector3 volumePoint =
-                    FiniteSpatialBoundsMath.ClosestPointOnVolume(
-                        point,
-                        surface.position,
-                        surface.rotation,
-                        surface.volumeBounds,
-                        out insideVolume);
-                float volumeDistance = insideVolume
-                    ? 0f
-                    : Vector3.Distance(point, volumePoint);
-                if (volumeDistance < candidateDistance)
-                {
-                    candidateDistance = volumeDistance;
-                    closestPoint = volumePoint;
-                }
+                continue;
             }
 
             if (candidateDistance >= distance)
@@ -780,32 +755,176 @@ public class QuestRiskExperimentLogger : MonoBehaviour,
         return wallIndex >= 0;
     }
 
+    private bool TryGetClosestCorridorObstacle(
+        SpatialProbe probe,
+        out float distance,
+        out Vector3 directionToObstacle,
+        out int surfaceIndex)
+    {
+        distance = float.PositiveInfinity;
+        directionToObstacle = Vector3.zero;
+        surfaceIndex = -1;
+        Vector3 rayDirection = probe.Direction.sqrMagnitude > 0.0001f
+            ? probe.Direction.normalized
+            : new Vector3(0f, -0.7f, 0.7f).normalized;
+        foreach (WallSurface surface in wallSurfaces)
+        {
+            if (!IsCorridorSemanticCandidate(surface)
+                || !TryGetClosestPoint(
+                    surface,
+                    probe.Origin,
+                    out Vector3 closestPoint,
+                    out float candidateDistance))
+            {
+                continue;
+            }
+
+            Vector3 delta = closestPoint - probe.Origin;
+            bool insideSweptCorridor =
+                FiniteSpatialBoundsMath.IsInsideLocomotionCorridor(
+                    delta,
+                    rayDirection,
+                    probe.SafetyRadius,
+                    out _,
+                    out _);
+            if (!insideSweptCorridor || candidateDistance >= distance)
+            {
+                continue;
+            }
+
+            distance = candidateDistance;
+            surfaceIndex = surface.index;
+            directionToObstacle = delta.sqrMagnitude > 0.000001f
+                ? delta.normalized
+                : -surface.normal;
+        }
+
+        return surfaceIndex >= 0;
+    }
+
+    private static bool TryGetClosestPoint(
+        WallSurface surface,
+        Vector3 point,
+        out Vector3 closestPoint,
+        out float distance)
+    {
+        closestPoint = Vector3.zero;
+        distance = float.PositiveInfinity;
+        if (surface.hasPlaneBounds)
+        {
+            closestPoint = FiniteSpatialBoundsMath.ClosestPointOnPlane(
+                point,
+                surface.position,
+                surface.rotation,
+                surface.planeBounds);
+            distance = Vector3.Distance(point, closestPoint);
+        }
+
+        if (surface.hasVolumeBounds)
+        {
+            Vector3 volumePoint = FiniteSpatialBoundsMath.ClosestPointOnVolume(
+                point,
+                surface.position,
+                surface.rotation,
+                surface.volumeBounds,
+                out bool insideVolume);
+            float volumeDistance = insideVolume
+                ? 0f
+                : Vector3.Distance(point, volumePoint);
+            if (volumeDistance < distance)
+            {
+                distance = volumeDistance;
+                closestPoint = volumePoint;
+            }
+        }
+
+        return !float.IsNaN(distance) && !float.IsInfinity(distance);
+    }
+
+    private static bool IsCorridorSemanticCandidate(WallSurface surface)
+    {
+        if (!FiniteSpatialBoundsMath.IsLowObstacleSemantic(
+                surface.label,
+                surface.hasVolumeBounds))
+        {
+            return false;
+        }
+
+        return FiniteSpatialBoundsMath.IsLowObstacleHeight(
+            surface.hasVolumeBounds,
+            WorldVerticalSize(surface));
+    }
+
+    private static float WorldVerticalSize(WallSurface surface)
+    {
+        Vector3 size = surface.volumeBounds.size;
+        Vector3 worldX = surface.rotation * Vector3.right;
+        Vector3 worldY = surface.rotation * Vector3.up;
+        Vector3 worldZ = surface.rotation * Vector3.forward;
+        return Mathf.Abs(Vector3.Dot(worldX, Vector3.up)) * size.x
+            + Mathf.Abs(Vector3.Dot(worldY, Vector3.up)) * size.y
+            + Mathf.Abs(Vector3.Dot(worldZ, Vector3.up)) * size.z;
+    }
+
     public bool TryMeasure(
         SpatialProbe probe,
         out SpatialObstacleMeasurement measurement)
     {
         double now = Time.realtimeSinceStartupAsDouble;
-        if (!SceneDataAvailable
-            || !TryGetClosestWall(
+        float distance;
+        Vector3 direction;
+        int wallIndex;
+        bool measured = probe.Purpose
+                == SpatialProbePurpose.LocomotionCorridor
+            ? TryGetClosestCorridorObstacle(
+                probe,
+                out distance,
+                out direction,
+                out wallIndex)
+            : TryGetClosestWall(
                 probe.Origin,
-                out float distance,
-                out Vector3 direction,
-                out int wallIndex))
+                out distance,
+                out direction,
+                out wallIndex);
+        if (!SceneDataAvailable || !measured)
         {
-            measurement = SpatialObstacleMeasurement.Unavailable(now);
+            measurement = SpatialObstacleMeasurement.Unavailable(
+                now,
+                probe.Owner,
+                probe.Purpose);
             return false;
         }
 
         float closingSpeed = Mathf.Max(
             0f,
             Vector3.Dot(probe.Velocity, direction));
+        Vector3 hitPoint = probe.Origin + direction * distance;
+        WallSurface surface;
+        bool hasSurface = TryFindWallSurface(wallIndex, out surface);
+        Vector3 normal = hasSurface
+            ? ResolveFiniteSurfaceNormal(surface, hitPoint).normalized
+            : -direction;
+        if (Vector3.Dot(normal, probe.Origin - hitPoint) < 0f)
+        {
+            normal = -normal;
+        }
+
+        HazardPresentationGeometry geometry = hasSurface
+            ? CreateRoomWallGeometry(
+                surface,
+                hitPoint,
+                distance,
+                now,
+                probe.Owner,
+                probe.Purpose)
+            : default;
         measurement = new SpatialObstacleMeasurement(
             SpatialObstacleSource.RoomScene,
             now,
             true,
             distance,
-            probe.Origin + direction * distance,
-            -direction,
+            hitPoint,
+            normal,
             closingSpeed,
             0.70f,
             1,
@@ -819,8 +938,275 @@ public class QuestRiskExperimentLogger : MonoBehaviour,
             -1f,
             distance,
             false,
-            wallIndex >= 0 ? "" : "room-scene-unavailable");
+            wallIndex >= 0 ? "" : "room-scene-unavailable",
+            probe.Purpose,
+            wallIndex,
+            geometry);
         return true;
+    }
+
+    private bool TryFindWallSurface(int wallIndex, out WallSurface result)
+    {
+        for (int i = 0; i < wallSurfaces.Count; i++)
+        {
+            if (wallSurfaces[i].index == wallIndex)
+            {
+                result = wallSurfaces[i];
+                return true;
+            }
+        }
+
+        result = default;
+        return false;
+    }
+
+    private static HazardPresentationGeometry CreateRoomWallGeometry(
+        WallSurface surface,
+        Vector3 hitPoint,
+        float distanceMeters,
+        double timestampSeconds,
+        SpatialProbeOwner owner,
+        SpatialProbePurpose purpose)
+    {
+        if (!surface.hasPlaneBounds)
+        {
+            Vector3 presentationNormal = ResolveFiniteSurfaceNormal(
+                surface,
+                hitPoint);
+            float width = Mathf.Clamp(
+                AngularSpanMeters(distanceMeters, 12f),
+                0.12f,
+                AngularSpanMeters(distanceMeters, 45f));
+            float height = Mathf.Clamp(
+                AngularSpanMeters(distanceMeters, 18f),
+                0.18f,
+                AngularSpanMeters(distanceMeters, 60f));
+            if (surface.hasVolumeBounds)
+            {
+                return CreateVolumeFaceGeometry(
+                    surface,
+                    hitPoint,
+                    presentationNormal,
+                    width,
+                    height,
+                    timestampSeconds,
+                    owner,
+                    purpose);
+            }
+            return HazardPresentationGeometry.CreatePlanePatch(
+                surface.index,
+                purpose == SpatialProbePurpose.LocomotionCorridor
+                    ? HazardVisualKind.LowObstaclePatch
+                    : HazardVisualKind.WallPlane,
+                hitPoint,
+                presentationNormal,
+                Vector3.up,
+                width,
+                height,
+                timestampSeconds,
+                0.70f,
+                SpatialObstacleSource.RoomScene,
+                owner,
+                purpose);
+        }
+
+        Vector3 localHit = Quaternion.Inverse(surface.rotation)
+            * (hitPoint - surface.position);
+        float targetWidth = Mathf.Clamp(
+            AngularSpanMeters(distanceMeters, 12f),
+            0.12f,
+            AngularSpanMeters(distanceMeters, 45f));
+        float targetHeight = Mathf.Clamp(
+            AngularSpanMeters(distanceMeters, 18f),
+            0.18f,
+            AngularSpanMeters(distanceMeters, 60f));
+        float left = Mathf.Max(
+            surface.planeBounds.xMin,
+            localHit.x - targetWidth * 0.5f);
+        float right = Mathf.Min(
+            surface.planeBounds.xMax,
+            localHit.x + targetWidth * 0.5f);
+        float bottom = Mathf.Max(
+            surface.planeBounds.yMin,
+            localHit.y - targetHeight * 0.5f);
+        float top = Mathf.Min(
+            surface.planeBounds.yMax,
+            localHit.y + targetHeight * 0.5f);
+        Vector3 bl = surface.position + surface.rotation
+            * new Vector3(left, bottom, 0f);
+        Vector3 br = surface.position + surface.rotation
+            * new Vector3(right, bottom, 0f);
+        Vector3 tr = surface.position + surface.rotation
+            * new Vector3(right, top, 0f);
+        Vector3 tl = surface.position + surface.rotation
+            * new Vector3(left, top, 0f);
+        return new HazardPresentationGeometry(
+            surface.index,
+            purpose == SpatialProbePurpose.LocomotionCorridor
+                ? HazardVisualKind.LowObstaclePatch
+                : HazardVisualKind.WallPlane,
+            bl,
+            br,
+            tr,
+            tl,
+            surface.normal,
+            timestampSeconds,
+            0.70f,
+            0f,
+            SpatialObstacleSource.RoomScene,
+            owner,
+            purpose);
+    }
+
+    private static HazardPresentationGeometry CreateVolumeFaceGeometry(
+        WallSurface surface,
+        Vector3 hitPoint,
+        Vector3 worldNormal,
+        float targetWidth,
+        float targetHeight,
+        double timestampSeconds,
+        SpatialProbeOwner owner,
+        SpatialProbePurpose purpose)
+    {
+        Quaternion inverse = Quaternion.Inverse(surface.rotation);
+        Vector3 localHit = inverse * (hitPoint - surface.position);
+        Vector3 localNormal = inverse * worldNormal;
+        Bounds bounds = surface.volumeBounds;
+        Vector3 horizontal;
+        Vector3 vertical;
+        int horizontalAxis;
+        int verticalAxis;
+        if (Mathf.Abs(localNormal.x) >= Mathf.Abs(localNormal.y)
+            && Mathf.Abs(localNormal.x) >= Mathf.Abs(localNormal.z))
+        {
+            horizontal = Vector3.forward;
+            vertical = Vector3.up;
+            horizontalAxis = 2;
+            verticalAxis = 1;
+        }
+        else if (Mathf.Abs(localNormal.y) >= Mathf.Abs(localNormal.z))
+        {
+            horizontal = Vector3.right;
+            vertical = Vector3.forward;
+            horizontalAxis = 0;
+            verticalAxis = 2;
+        }
+        else
+        {
+            horizontal = Vector3.right;
+            vertical = Vector3.up;
+            horizontalAxis = 0;
+            verticalAxis = 1;
+        }
+
+        float horizontalMinimum = bounds.min[horizontalAxis];
+        float horizontalMaximum = bounds.max[horizontalAxis];
+        float verticalMinimum = bounds.min[verticalAxis];
+        float verticalMaximum = bounds.max[verticalAxis];
+        float halfWidth = Mathf.Min(
+            targetWidth,
+            horizontalMaximum - horizontalMinimum) * 0.5f;
+        float halfHeight = Mathf.Min(
+            targetHeight,
+            verticalMaximum - verticalMinimum) * 0.5f;
+        float horizontalCenter = Mathf.Clamp(
+            localHit[horizontalAxis],
+            horizontalMinimum + halfWidth,
+            horizontalMaximum - halfWidth);
+        float verticalCenter = Mathf.Clamp(
+            localHit[verticalAxis],
+            verticalMinimum + halfHeight,
+            verticalMaximum - halfHeight);
+        Vector3 localCenter = localHit;
+        localCenter[horizontalAxis] = horizontalCenter;
+        localCenter[verticalAxis] = verticalCenter;
+        Vector3 bl = surface.position + surface.rotation
+            * (localCenter - horizontal * halfWidth - vertical * halfHeight);
+        Vector3 br = surface.position + surface.rotation
+            * (localCenter + horizontal * halfWidth - vertical * halfHeight);
+        Vector3 tr = surface.position + surface.rotation
+            * (localCenter + horizontal * halfWidth + vertical * halfHeight);
+        Vector3 tl = surface.position + surface.rotation
+            * (localCenter - horizontal * halfWidth + vertical * halfHeight);
+        return new HazardPresentationGeometry(
+            surface.index,
+            purpose == SpatialProbePurpose.LocomotionCorridor
+                ? HazardVisualKind.LowObstaclePatch
+                : HazardVisualKind.WallPlane,
+            bl,
+            br,
+            tr,
+            tl,
+            worldNormal,
+            timestampSeconds,
+            0.70f,
+            0f,
+            SpatialObstacleSource.RoomScene,
+            owner,
+            purpose);
+    }
+
+    private static Vector3 ResolveFiniteSurfaceNormal(
+        WallSurface surface,
+        Vector3 hitPoint)
+    {
+        if (surface.hasPlaneBounds || !surface.hasVolumeBounds)
+        {
+            return surface.normal;
+        }
+
+        Vector3 local = Quaternion.Inverse(surface.rotation)
+            * (hitPoint - surface.position);
+        Bounds bounds = surface.volumeBounds;
+        float nearest = Mathf.Abs(local.x - bounds.min.x);
+        Vector3 localNormal = Vector3.left;
+        SelectCloserFace(
+            Mathf.Abs(local.x - bounds.max.x),
+            Vector3.right,
+            ref nearest,
+            ref localNormal);
+        SelectCloserFace(
+            Mathf.Abs(local.y - bounds.min.y),
+            Vector3.down,
+            ref nearest,
+            ref localNormal);
+        SelectCloserFace(
+            Mathf.Abs(local.y - bounds.max.y),
+            Vector3.up,
+            ref nearest,
+            ref localNormal);
+        SelectCloserFace(
+            Mathf.Abs(local.z - bounds.min.z),
+            Vector3.back,
+            ref nearest,
+            ref localNormal);
+        SelectCloserFace(
+            Mathf.Abs(local.z - bounds.max.z),
+            Vector3.forward,
+            ref nearest,
+            ref localNormal);
+        return surface.rotation * localNormal;
+    }
+
+    private static void SelectCloserFace(
+        float distance,
+        Vector3 normal,
+        ref float nearest,
+        ref Vector3 selectedNormal)
+    {
+        if (distance < nearest)
+        {
+            nearest = distance;
+            selectedNormal = normal;
+        }
+    }
+
+    private static float AngularSpanMeters(
+        float distanceMeters,
+        float degrees)
+    {
+        return 2f * Mathf.Max(0.05f, distanceMeters)
+            * Mathf.Tan(degrees * 0.5f * Mathf.Deg2Rad);
     }
 
     private Vector3 GetNeckPoint()

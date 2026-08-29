@@ -12,10 +12,11 @@ namespace TeamVR.AdaptivePassthrough
 
     public enum StaticActivationCause
     {
-        None,
-        Head,
-        Hand,
-        Emergency
+        None = 0,
+        Head = 1,
+        Hand = 2,
+        Emergency = 3,
+        LowObstacle = 4
     }
 
     public readonly struct StaticHandRiskMeasurement
@@ -142,6 +143,13 @@ namespace TeamVR.AdaptivePassthrough
         public readonly int HeadWallIndex;
         public readonly float ObservedReachMeters;
         public readonly bool HeadSafetyOverlapEmergency;
+        public readonly StaticRiskMeasurement LowObstacle;
+        public readonly Vector3 LowObstacleHazardDirectionWorld;
+        public readonly bool LowObstacleHazardDirectionAvailable;
+        public readonly HazardPresentationGeometry HeadPresentationGeometry;
+        public readonly HazardPresentationGeometry LeftHandPresentationGeometry;
+        public readonly HazardPresentationGeometry RightHandPresentationGeometry;
+        public readonly HazardPresentationGeometry LowObstaclePresentationGeometry;
 
         public StaticBoundaryRiskFrame(
             long sequence,
@@ -156,7 +164,14 @@ namespace TeamVR.AdaptivePassthrough
             bool headHazardDirectionAvailable,
             int headWallIndex,
             float observedReachMeters,
-            bool headSafetyOverlapEmergency = false)
+            bool headSafetyOverlapEmergency = false,
+            StaticRiskMeasurement lowObstacle = default,
+            Vector3 lowObstacleHazardDirectionWorld = default,
+            bool lowObstacleHazardDirectionAvailable = false,
+            HazardPresentationGeometry headPresentationGeometry = default,
+            HazardPresentationGeometry leftHandPresentationGeometry = default,
+            HazardPresentationGeometry rightHandPresentationGeometry = default,
+            HazardPresentationGeometry lowObstaclePresentationGeometry = default)
         {
             SchemaVersion = CurrentSchemaVersion;
             Sequence = Math.Max(0L, sequence);
@@ -164,11 +179,15 @@ namespace TeamVR.AdaptivePassthrough
             HeadSafetyOverlapEmergency = headSafetyOverlapEmergency;
             Available = available
                 && (head.Available
+                    || lowObstacle.Available
                     || leftHand.Available
                     || rightHand.Available
                     || HeadSafetyOverlapEmergency);
             Head = Available && head.Available
                 ? head
+                : StaticRiskMeasurement.Unavailable;
+            LowObstacle = Available && lowObstacle.Available
+                ? lowObstacle
                 : StaticRiskMeasurement.Unavailable;
             UserState01 = Clamp01(userState01);
             MotionWindowWarmedUp = motionWindowWarmedUp;
@@ -187,6 +206,30 @@ namespace TeamVR.AdaptivePassthrough
                 && HeadHazardDirectionWorld.sqrMagnitude > 0.0001f;
             HeadWallIndex = Available && head.Available ? headWallIndex : -1;
             ObservedReachMeters = Mathf.Max(0f, Safe(observedReachMeters));
+            LowObstacleHazardDirectionWorld = Available
+                && LowObstacle.Available
+                ? SafeDirection(lowObstacleHazardDirectionWorld)
+                : Vector3.zero;
+            LowObstacleHazardDirectionAvailable = Available
+                && LowObstacle.Available
+                && lowObstacleHazardDirectionAvailable
+                && LowObstacleHazardDirectionWorld.sqrMagnitude > 0.0001f;
+            HeadPresentationGeometry = Available
+                && headPresentationGeometry.Available
+                ? headPresentationGeometry
+                : default;
+            LeftHandPresentationGeometry = Available
+                && leftHandPresentationGeometry.Available
+                ? leftHandPresentationGeometry
+                : default;
+            RightHandPresentationGeometry = Available
+                && rightHandPresentationGeometry.Available
+                ? rightHandPresentationGeometry
+                : default;
+            LowObstaclePresentationGeometry = Available
+                && lowObstaclePresentationGeometry.Available
+                ? lowObstaclePresentationGeometry
+                : default;
         }
 
         public float MaximumHandRisk
@@ -196,7 +239,12 @@ namespace TeamVR.AdaptivePassthrough
 
         public float CombinedRisk
         {
-            get { return Mathf.Max(Head.Risk, MaximumHandRisk); }
+            get
+            {
+                return Mathf.Max(
+                    Mathf.Max(Head.Risk, LowObstacle.Risk),
+                    MaximumHandRisk);
+            }
         }
 
         public bool AnyApproach(float minimumSpeed)
@@ -204,6 +252,7 @@ namespace TeamVR.AdaptivePassthrough
             float threshold = Mathf.Max(0f, Safe(minimumSpeed));
             return Available
                 && (Head.TowardBoundarySpeed > threshold
+                    || LowObstacle.TowardBoundarySpeed > threshold
                     || LeftHand.TowardBoundarySpeed > threshold
                     || RightHand.TowardBoundarySpeed > threshold);
         }
@@ -298,6 +347,7 @@ namespace TeamVR.AdaptivePassthrough
         public readonly bool EmergencyHold;
         public readonly Vector3 HazardDirectionWorld;
         public readonly bool HazardDirectionAvailable;
+        public readonly HazardPresentationGeometry PresentationGeometry;
 
         public StaticPassthroughDecision(
             PassthroughSourceDecision sourceDecision,
@@ -313,7 +363,8 @@ namespace TeamVR.AdaptivePassthrough
             bool emergencyTrigger,
             bool emergencyHold,
             Vector3 hazardDirectionWorld,
-            bool hazardDirectionAvailable)
+            bool hazardDirectionAvailable,
+            HazardPresentationGeometry presentationGeometry = default)
         {
             SourceDecision = sourceDecision;
             WarningLevel = warningLevel;
@@ -333,6 +384,9 @@ namespace TeamVR.AdaptivePassthrough
             HazardDirectionAvailable =
                 hazardDirectionAvailable
                 && HazardDirectionWorld.sqrMagnitude > 0.0001f;
+            PresentationGeometry = presentationGeometry.Available
+                ? presentationGeometry.WithRisk(CombinedRisk)
+                : default;
         }
 
         public bool Enabled

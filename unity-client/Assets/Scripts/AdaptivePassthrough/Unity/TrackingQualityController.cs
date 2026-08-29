@@ -466,7 +466,7 @@ namespace TeamVR.AdaptivePassthrough
             return new TrackingQualitySettings(
                 selectedProfile,
                 10f,
-                12,
+                6,
                 3f,
                 0.75f,
                 48);

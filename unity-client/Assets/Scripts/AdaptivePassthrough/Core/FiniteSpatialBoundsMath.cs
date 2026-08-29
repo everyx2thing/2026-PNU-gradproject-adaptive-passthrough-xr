@@ -1,3 +1,4 @@
+using System;
 using UnityEngine;
 
 namespace TeamVR.AdaptivePassthrough
@@ -33,6 +34,90 @@ namespace TeamVR.AdaptivePassthrough
                 ? ClosestSurfacePoint(local, localBounds)
                 : localBounds.ClosestPoint(local);
             return anchorPosition + anchorRotation * closestLocal;
+        }
+
+        public static bool IsInsideLocomotionCorridor(
+            Vector3 deltaFromProbeOrigin,
+            Vector3 probeDirection,
+            float safetyRadius,
+            out float alongRayMeters,
+            out float offAxisMeters)
+        {
+            Vector3 direction = probeDirection.sqrMagnitude > 0.0001f
+                ? probeDirection.normalized
+                : new Vector3(0f, -0.7f, 0.7f).normalized;
+            alongRayMeters = Vector3.Dot(deltaFromProbeOrigin, direction);
+            offAxisMeters = (
+                deltaFromProbeOrigin - direction * alongRayMeters).magnitude;
+            float corridorRadius = Mathf.Max(
+                0.35f,
+                Mathf.Max(0f, safetyRadius) + 0.25f);
+            return alongRayMeters >= 0.05f
+                && alongRayMeters <= 3.0f
+                && offAxisMeters <= corridorRadius
+                && deltaFromProbeOrigin.y <= 0.30f
+                && deltaFromProbeOrigin.y >= -2.20f;
+        }
+
+        public static bool IsLowObstacleSemantic(
+            string semanticLabel,
+            bool hasVolumeBounds)
+        {
+            string label = semanticLabel ?? string.Empty;
+            bool forbidden = label.IndexOf(
+                    "WALL",
+                    StringComparison.OrdinalIgnoreCase) >= 0
+                || label.IndexOf(
+                    "WINDOW",
+                    StringComparison.OrdinalIgnoreCase) >= 0
+                || label.IndexOf(
+                    "DOOR",
+                    StringComparison.OrdinalIgnoreCase) >= 0
+                || label.IndexOf(
+                    "CEILING",
+                    StringComparison.OrdinalIgnoreCase) >= 0
+                || label.IndexOf(
+                    "FLOOR",
+                    StringComparison.OrdinalIgnoreCase) >= 0;
+            if (forbidden)
+            {
+                return false;
+            }
+
+            return hasVolumeBounds || !string.IsNullOrWhiteSpace(label);
+        }
+
+        public static bool IsLowObstacleHeight(
+            bool hasVolumeBounds,
+            float worldVerticalSizeMeters,
+            float maximumHeightMeters = 1.25f)
+        {
+            return !hasVolumeBounds
+                || Mathf.Max(0f, worldVerticalSizeMeters)
+                    <= Mathf.Max(0.10f, maximumHeightMeters);
+        }
+
+        public static bool IsSamePresentationSurface(
+            Vector3 previousPoint,
+            Vector3 previousNormal,
+            Vector3 point,
+            Vector3 normal,
+            float maximumPointJumpMeters = 0.75f,
+            float maximumPlaneOffsetMeters = 0.25f,
+            float minimumNormalDot = 0.866f)
+        {
+            Vector3 safePreviousNormal = previousNormal.sqrMagnitude > 0.0001f
+                ? previousNormal.normalized
+                : Vector3.forward;
+            Vector3 safeNormal = normal.sqrMagnitude > 0.0001f
+                ? normal.normalized
+                : Vector3.forward;
+            Vector3 delta = point - previousPoint;
+            return Vector3.Dot(safePreviousNormal, safeNormal)
+                    >= Mathf.Clamp(minimumNormalDot, -1f, 1f)
+                && Mathf.Abs(Vector3.Dot(safeNormal, delta))
+                    <= Mathf.Max(0f, maximumPlaneOffsetMeters)
+                && delta.magnitude <= Mathf.Max(0f, maximumPointJumpMeters);
         }
 
         private static Vector3 ClosestSurfacePoint(

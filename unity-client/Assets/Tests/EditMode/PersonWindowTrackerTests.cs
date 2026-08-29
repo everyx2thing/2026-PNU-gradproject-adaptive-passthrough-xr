@@ -163,6 +163,46 @@ namespace TeamVR.AdaptivePassthrough.Tests
         }
 
         [Test]
+        public void WorldGeometryExpiresFromCaptureTimeNotPresentationTime()
+        {
+            var tracker = new PersonWindowTracker(lostHoldSeconds: 1.5f);
+            HazardPresentationGeometry geometry =
+                HazardPresentationGeometry.CreatePlanePatch(
+                    31,
+                    HazardVisualKind.PersonCapsule,
+                    new Vector3(0f, 1f, 1f),
+                    Vector3.back,
+                    Vector3.up,
+                    0.5f,
+                    1f,
+                    2.0,
+                    1f,
+                    SpatialObstacleSource.EnvironmentDepth,
+                    SpatialProbeOwner.Head,
+                    SpatialProbePurpose.Standard);
+
+            tracker.BeginFrame();
+            tracker.Observe(
+                31,
+                new Rect(0.3f, 0.2f, 0.4f, 0.7f),
+                0.9f,
+                2.0,
+                2.4,
+                true,
+                geometry);
+            tracker.Update(2.4, 0.125f);
+            Assert.That(tracker.GetSnapshots(1)[0]
+                .PresentationGeometry.Available, Is.True);
+
+            tracker.BeginFrame();
+            tracker.Update(2.51, 0f);
+            PersonWindowSnapshot held = tracker.GetSnapshots(1)[0];
+            Assert.That(held.PresentationGeometry.Available, Is.False);
+            Assert.That(held.Opacity, Is.GreaterThan(0f));
+            Assert.That(held.HoldRemainingSeconds, Is.GreaterThan(1.3f));
+        }
+
+        [Test]
         public void LowRiskObservationWarmsTrackingWithoutOpeningWindow()
         {
             var tracker = new PersonWindowTracker(lostHoldSeconds: 1.5f);
@@ -221,6 +261,35 @@ namespace TeamVR.AdaptivePassthrough.Tests
             Assert.That(held.HoldRemainingSeconds,
                 Is.EqualTo(0.5f).Within(0.001f));
             Assert.That(held.Risk, Is.EqualTo(0.8f));
+        }
+
+        [Test]
+        public void HeldHigherRiskWindowSurvivesThreeWindowLimit()
+        {
+            var tracker = new PersonWindowTracker(lostHoldSeconds: 1.5f);
+            Rect rect = new Rect(0.2f, 0.2f, 0.2f, 0.4f);
+            tracker.BeginFrame();
+            tracker.Observe(1, rect, 0.9f, 0.0, 0.0, true);
+            tracker.Observe(2, rect, 0.6f, 0.0, 0.0, true);
+            tracker.Observe(3, rect, 0.6f, 0.0, 0.0, true);
+            tracker.Observe(4, rect, 0.6f, 0.0, 0.0, true);
+            tracker.Update(0.0, 0.2f);
+
+            tracker.BeginFrame();
+            tracker.Observe(2, rect, 0.6f, 0.1, 0.1, true);
+            tracker.Observe(3, rect, 0.6f, 0.1, 0.1, true);
+            tracker.Observe(4, rect, 0.6f, 0.1, 0.1, true);
+            tracker.Update(0.1, 0.1f);
+
+            var snapshots = tracker.GetSnapshots(3);
+            bool containsHeldHighRisk = false;
+            for (int i = 0; i < snapshots.Count; i++)
+            {
+                containsHeldHighRisk |= snapshots[i].TrackId == 1;
+            }
+
+            Assert.That(containsHeldHighRisk, Is.True);
+            Assert.That(snapshots[0].TrackId, Is.EqualTo(1));
         }
     }
 }

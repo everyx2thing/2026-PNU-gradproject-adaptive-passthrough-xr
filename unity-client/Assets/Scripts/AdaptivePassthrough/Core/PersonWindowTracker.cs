@@ -60,6 +60,9 @@ namespace TeamVR.AdaptivePassthrough
         public readonly bool ObservedThisFrame;
         public readonly float HoldRemainingSeconds;
         public readonly float PredictionAgeSeconds;
+        public readonly HazardPresentationGeometry PresentationGeometry;
+        public readonly float Pulse01;
+        public readonly PassthroughAnimationPhase AnimationPhase;
 
         public PersonWindowSnapshot(
             int trackId,
@@ -68,7 +71,11 @@ namespace TeamVR.AdaptivePassthrough
             float risk,
             bool observedThisFrame,
             float holdRemainingSeconds = 0f,
-            float predictionAgeSeconds = 0f)
+            float predictionAgeSeconds = 0f,
+            HazardPresentationGeometry presentationGeometry = default,
+            float pulse01 = 0f,
+            PassthroughAnimationPhase animationPhase =
+                PassthroughAnimationPhase.Hidden)
         {
             TrackId = trackId;
             Rect = rect;
@@ -77,6 +84,9 @@ namespace TeamVR.AdaptivePassthrough
             ObservedThisFrame = observedThisFrame;
             HoldRemainingSeconds = Mathf.Max(0f, holdRemainingSeconds);
             PredictionAgeSeconds = Mathf.Max(0f, predictionAgeSeconds);
+            PresentationGeometry = presentationGeometry;
+            Pulse01 = Mathf.Clamp01(pulse01);
+            AnimationPhase = animationPhase;
         }
     }
 
@@ -99,6 +109,7 @@ namespace TeamVR.AdaptivePassthrough
             public float PredictionAgeSeconds;
             public bool HasReprojectedCenter;
             public Vector2 ReprojectedCenter;
+            public PassthroughPresentationState Presentation;
         }
 
         private readonly Dictionary<int, State> states =
@@ -148,6 +159,30 @@ namespace TeamVR.AdaptivePassthrough
                 state.ObservedThisFrame = false;
                 state.RevealEligibleThisFrame = false;
                 state.HasReprojectedCenter = false;
+                state.Presentation.BeginFrame();
+            }
+        }
+
+        /// <summary>
+        /// Marks an intentional global presentation-policy transition. Turning
+        /// the policy off preserves already qualified world geometry until its
+        /// normal hold and fade complete; ordinary missing observations still
+        /// use the 0.5 second sensor-stale expiry.
+        /// </summary>
+        public void SetPresentationPolicyActive(bool active)
+        {
+            SetPresentationPolicyActive(active, lastUpdateSeconds);
+        }
+
+        public void SetPresentationPolicyActive(
+            bool active,
+            double timestampSeconds)
+        {
+            foreach (State state in states.Values)
+            {
+                state.Presentation.SetPresentationPolicyActive(
+                    active,
+                    timestampSeconds);
             }
         }
 
@@ -215,6 +250,25 @@ namespace TeamVR.AdaptivePassthrough
             double presentedTimestampSeconds,
             bool revealEligible)
         {
+            Observe(
+                trackId,
+                targetRect,
+                risk,
+                captureTimestampSeconds,
+                presentedTimestampSeconds,
+                revealEligible,
+                default);
+        }
+
+        public void Observe(
+            int trackId,
+            Rect targetRect,
+            float risk,
+            double captureTimestampSeconds,
+            double presentedTimestampSeconds,
+            bool revealEligible,
+            HazardPresentationGeometry presentationGeometry)
+        {
             State state;
             if (!states.TryGetValue(trackId, out state))
             {
@@ -224,7 +278,14 @@ namespace TeamVR.AdaptivePassthrough
                     CurrentRect = targetRect,
                     TargetRect = targetRect,
                     Opacity = 0f,
-                    LastKinematicSampleSeconds = captureTimestampSeconds
+                    LastKinematicSampleSeconds = captureTimestampSeconds,
+                    Presentation = new PassthroughPresentationState(
+                        fadeInSeconds,
+                        positionSmoothingSeconds,
+                        PassthroughPresentationState.DefaultPulseSeconds,
+                        lostHoldSeconds,
+                        fadeOutSeconds,
+                        maximumPredictionSeconds)
                 };
                 states.Add(trackId, state);
             }
@@ -275,6 +336,13 @@ namespace TeamVR.AdaptivePassthrough
                     presentedTimestampSeconds;
                 state.Risk = Mathf.Clamp01(risk);
             }
+
+            state.Presentation.Observe(
+                presentationGeometry,
+                risk,
+                captureTimestampSeconds,
+                presentedTimestampSeconds,
+                revealEligible);
         }
 
         public void Update(double timestampSeconds, float deltaTime)
@@ -292,10 +360,6 @@ namespace TeamVR.AdaptivePassthrough
                 double kinematicAge = Math.Max(
                     0.0,
                     timestampSeconds - state.LastKinematicSampleSeconds);
-                double presentationAge = Math.Max(
-                    0.0,
-                    timestampSeconds
-                        - state.LastQualifiedPresentedSeconds);
                 float predictionAge = Mathf.Min(
                     maximumPredictionSeconds,
                     (float)kinematicAge);
@@ -331,29 +395,8 @@ namespace TeamVR.AdaptivePassthrough
                     predictedRect,
                     positionAlpha,
                     sizeAlpha);
-                if (state.RevealEligibleThisFrame)
-                {
-                    state.Opacity = Mathf.MoveTowards(
-                        state.Opacity,
-                        1f,
-                        safeDelta / fadeInSeconds);
-                    continue;
-                }
-
-                if (state.HasQualifiedObservation
-                    && presentationAge <= lostHoldSeconds)
-                {
-                    state.Opacity = Mathf.MoveTowards(
-                        state.Opacity,
-                        1f,
-                        safeDelta / fadeInSeconds);
-                    continue;
-                }
-
-                state.Opacity = Mathf.MoveTowards(
-                    state.Opacity,
-                    0f,
-                    safeDelta / fadeOutSeconds);
+                state.Presentation.Update(timestampSeconds, safeDelta);
+                state.Opacity = state.Presentation.Opacity;
                 if (state.Opacity <= 0f)
                 {
                     // Keep non-presented observations long enough to warm the
@@ -390,7 +433,10 @@ namespace TeamVR.AdaptivePassthrough
                     state.Risk,
                     state.ObservedThisFrame,
                     HoldRemaining(state, lastUpdateSeconds),
-                    state.PredictionAgeSeconds));
+                    state.PredictionAgeSeconds,
+                    state.Presentation.Geometry,
+                    state.Presentation.Pulse01,
+                    state.Presentation.Phase));
             }
 
             snapshotBuffer.Sort(CompareSnapshots);
@@ -420,7 +466,10 @@ namespace TeamVR.AdaptivePassthrough
                     state.Risk,
                     state.ObservedThisFrame,
                     HoldRemaining(state, lastUpdateSeconds),
-                    state.PredictionAgeSeconds);
+                    state.PredictionAgeSeconds,
+                    state.Presentation.Geometry,
+                    state.Presentation.Pulse01,
+                    state.Presentation.Phase);
                 return true;
             }
 
@@ -446,13 +495,9 @@ namespace TeamVR.AdaptivePassthrough
 
         private float HoldRemaining(State state, double timestampSeconds)
         {
-            double age = Math.Max(
-                0.0,
-                timestampSeconds
-                    - state.LastQualifiedPresentedSeconds);
-            return state.HasQualifiedObservation
-                ? Mathf.Max(0f, lostHoldSeconds - (float)age)
-                : 0f;
+            return state.Presentation == null
+                ? 0f
+                : state.Presentation.HoldRemainingSeconds;
         }
 
         public void Reset()
@@ -484,16 +529,19 @@ namespace TeamVR.AdaptivePassthrough
             PersonWindowSnapshot left,
             PersonWindowSnapshot right)
         {
-            int observed = right.ObservedThisFrame.CompareTo(
-                left.ObservedThisFrame);
-            if (observed != 0)
+            // A high-risk window that is inside its loss hold must not be
+            // displaced by lower-risk observations when the renderer is
+            // limited to three people. Freshness only breaks equal-risk ties.
+            int risk = right.Risk.CompareTo(left.Risk);
+            if (risk != 0)
             {
-                return observed;
+                return risk;
             }
 
-            int risk = right.Risk.CompareTo(left.Risk);
-            return risk != 0
-                ? risk
+            int observed = right.ObservedThisFrame.CompareTo(
+                left.ObservedThisFrame);
+            return observed != 0
+                ? observed
                 : right.Opacity.CompareTo(left.Opacity);
         }
     }

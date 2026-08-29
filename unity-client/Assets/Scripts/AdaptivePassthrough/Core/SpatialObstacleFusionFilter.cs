@@ -14,15 +14,26 @@ namespace TeamVR.AdaptivePassthrough
     {
         public const float AgreementDistanceMeters = 0.35f;
         public const float EmergencyDistanceMeters = 0.25f;
+        public const float MinimumAgreementNormalDot = 0.866f;
+        public const float MaximumAgreementPlaneOffsetMeters = 0.25f;
+        public const float RoomBoundsToleranceMeters = 0.05f;
 
-        private readonly float[] pendingDepthDistances = new float[3];
-        private readonly int[] pendingDepthConfirmations = new int[3];
-        private readonly float[] acceptedDepthDistances = new float[3];
-        private readonly bool[] hasAcceptedDepth = new bool[3];
+        private const int PurposeCount = 2;
+        private const int FusionStateCount = 3 * PurposeCount;
+        private readonly float[] pendingDepthDistances =
+            new float[FusionStateCount];
+        private readonly int[] pendingDepthConfirmations =
+            new int[FusionStateCount];
+        private readonly float[] acceptedDepthDistances =
+            new float[FusionStateCount];
+        private readonly bool[] hasAcceptedDepth =
+            new bool[FusionStateCount];
         private readonly SpatialObstacleMeasurement[] lastApproved =
-            new SpatialObstacleMeasurement[3];
-        private readonly double[] lastApprovedAt = new double[3];
-        private readonly bool[] hasLastApproved = new bool[3];
+            new SpatialObstacleMeasurement[FusionStateCount];
+        private readonly double[] lastApprovedAt =
+            new double[FusionStateCount];
+        private readonly bool[] hasLastApproved =
+            new bool[FusionStateCount];
 
         public SpatialObstacleMeasurement Fuse(
             SpatialProbeOwner owner,
@@ -30,7 +41,11 @@ namespace TeamVR.AdaptivePassthrough
             SpatialObstacleMeasurement room,
             double timestampSeconds)
         {
-            int index = Mathf.Clamp((int)owner, 0, 2);
+            SpatialProbePurpose purpose = environment.Available
+                ? environment.ProbePurpose
+                : room.ProbePurpose;
+            int index = Mathf.Clamp((int)owner, 0, 2) * PurposeCount
+                + Mathf.Clamp((int)purpose, 0, PurposeCount - 1);
             bool environmentValid = environment.Available
                 && !environment.SelfRejected
                 && environment.Confidence > 0f;
@@ -73,11 +88,14 @@ namespace TeamVR.AdaptivePassthrough
             SpatialObstacleSource publishedSource;
             if (environmentValid && roomValid)
             {
-                publishedSource = SpatialObstacleSource.Fused;
                 float difference = Mathf.Abs(
                     environmentDistance - roomDistance);
-                if (difference <= AgreementDistanceMeters)
+                bool samePresentationSurface =
+                    AreMeasurementsSpatiallyCompatible(environment, room);
+                if (difference <= AgreementDistanceMeters
+                    && samePresentationSurface)
                 {
+                    publishedSource = SpatialObstacleSource.Fused;
                     ResetPending(index);
                     selected = environmentDistance <= roomDistance
                         ? environment
@@ -91,11 +109,13 @@ namespace TeamVR.AdaptivePassthrough
                         || ConfirmNearDepth(index, environmentDistance)
                             ? environment
                             : room;
+                    publishedSource = selected.Source;
                 }
                 else
                 {
                     ResetPending(index);
                     selected = room;
+                    publishedSource = SpatialObstacleSource.RoomScene;
                 }
             }
             else if (environmentValid)
@@ -161,6 +181,7 @@ namespace TeamVR.AdaptivePassthrough
                 owner,
                 selected,
                 environment,
+                room,
                 publishedSource,
                 timestampSeconds,
                 environmentDiagnosticDistance,
@@ -239,6 +260,55 @@ namespace TeamVR.AdaptivePassthrough
             return x * x + y * y + z * z <= 1f;
         }
 
+        public static bool AreMeasurementsSpatiallyCompatible(
+            SpatialObstacleMeasurement environment,
+            SpatialObstacleMeasurement room)
+        {
+            if (!environment.Available || !room.Available)
+            {
+                return false;
+            }
+
+            HazardPresentationGeometry environmentGeometry =
+                environment.PresentationGeometry;
+            HazardPresentationGeometry roomGeometry = room.PresentationGeometry;
+            Vector3 environmentNormal = environmentGeometry.Available
+                ? environmentGeometry.SurfaceNormal
+                : environment.HitNormal;
+            Vector3 roomNormal = roomGeometry.Available
+                ? roomGeometry.SurfaceNormal
+                : room.HitNormal;
+            if (environmentNormal.sqrMagnitude > 0.0001f
+                && roomNormal.sqrMagnitude > 0.0001f
+                && Mathf.Abs(Vector3.Dot(
+                    environmentNormal.normalized,
+                    roomNormal.normalized)) < MinimumAgreementNormalDot)
+            {
+                return false;
+            }
+
+            Vector3 safeRoomNormal = roomNormal.sqrMagnitude > 0.0001f
+                ? roomNormal.normalized
+                : Vector3.zero;
+            Vector3 environmentPoint = environment.HitPoint;
+            Vector3 roomPoint = roomGeometry.Available
+                ? roomGeometry.Center
+                : room.HitPoint;
+            if (safeRoomNormal.sqrMagnitude > 0.0001f
+                && Mathf.Abs(Vector3.Dot(
+                    environmentPoint - roomPoint,
+                    safeRoomNormal)) > MaximumAgreementPlaneOffsetMeters)
+            {
+                return false;
+            }
+
+            return !roomGeometry.Available
+                || IsPointInsideRoomBounds(
+                    environmentPoint,
+                    roomGeometry,
+                    RoomBoundsToleranceMeters);
+        }
+
         private bool ConfirmNearDepth(int index, float distanceMeters)
         {
             if (pendingDepthConfirmations[index] > 0
@@ -266,6 +336,7 @@ namespace TeamVR.AdaptivePassthrough
             SpatialProbeOwner owner,
             SpatialObstacleMeasurement selected,
             SpatialObstacleMeasurement environment,
+            SpatialObstacleMeasurement room,
             SpatialObstacleSource publishedSource,
             double timestampSeconds,
             float environmentDistance,
@@ -293,7 +364,14 @@ namespace TeamVR.AdaptivePassthrough
                 environmentDistance,
                 roomDistance,
                 environment.SelfRejected,
-                environment.RejectionReason);
+                environment.RejectionReason,
+                selected.ProbePurpose,
+                selected.SurfaceId,
+                SelectPresentationGeometry(
+                    selected,
+                    environment,
+                    room,
+                    publishedSource));
         }
 
         private static SpatialObstacleMeasurement CopyHeld(
@@ -330,7 +408,10 @@ namespace TeamVR.AdaptivePassthrough
                     ? roomDistance
                     : held.RoomSceneDistanceMeters,
                 environment.SelfRejected,
-                environment.RejectionReason);
+                environment.RejectionReason,
+                held.ProbePurpose,
+                held.SurfaceId,
+                held.PresentationGeometry);
         }
 
         private static SpatialObstacleMeasurement UnavailableWithDiagnostics(
@@ -361,7 +442,136 @@ namespace TeamVR.AdaptivePassthrough
                 environmentDistance,
                 roomDistance,
                 environment.SelfRejected,
-                environment.RejectionReason);
+                environment.RejectionReason,
+                environment.ProbePurpose,
+                environment.SurfaceId,
+                default);
+        }
+
+        private static HazardPresentationGeometry SelectPresentationGeometry(
+            SpatialObstacleMeasurement selected,
+            SpatialObstacleMeasurement environment,
+            SpatialObstacleMeasurement room,
+            SpatialObstacleSource publishedSource)
+        {
+            HazardPresentationGeometry geometry = selected.PresentationGeometry;
+            if (publishedSource == SpatialObstacleSource.Fused
+                && environment.PresentationGeometry.Available
+                && room.PresentationGeometry.Available
+                && Mathf.Abs(
+                    environment.DistanceMeters - room.DistanceMeters)
+                    <= AgreementDistanceMeters
+                && AreMeasurementsSpatiallyCompatible(environment, room))
+            {
+                HazardPresentationGeometry environmentGeometry =
+                    environment.PresentationGeometry;
+                HazardPresentationGeometry roomGeometry =
+                    room.PresentationGeometry;
+                Vector3 roomNormal = roomGeometry.SurfaceNormal;
+                float planeOffset = Vector3.Dot(
+                    environmentGeometry.Center - roomGeometry.Center,
+                    roomNormal);
+                geometry = ProjectIntoRoomBounds(
+                    environmentGeometry.Translated(
+                        -roomNormal * planeOffset),
+                    roomGeometry);
+            }
+
+            if (!geometry.Available
+                && publishedSource == SpatialObstacleSource.Fused)
+            {
+                geometry = environment.PresentationGeometry;
+            }
+
+            if (!geometry.Available || publishedSource != SpatialObstacleSource.Fused)
+            {
+                return geometry;
+            }
+
+            return new HazardPresentationGeometry(
+                geometry.StableId,
+                geometry.Kind,
+                geometry.BottomLeft,
+                geometry.BottomRight,
+                geometry.TopRight,
+                geometry.TopLeft,
+                geometry.SurfaceNormal,
+                geometry.CaptureTimestampSeconds,
+                geometry.Confidence,
+                geometry.Risk,
+                SpatialObstacleSource.Fused,
+                geometry.Owner,
+                geometry.ProbePurpose,
+                geometry.HasWorldVelocity,
+                geometry.WorldVelocity,
+                geometry.HasFreshFloor,
+                geometry.FloorHeight);
+        }
+
+        private static HazardPresentationGeometry ProjectIntoRoomBounds(
+            HazardPresentationGeometry projected,
+            HazardPresentationGeometry room)
+        {
+            Vector3 right = room.BottomRight - room.BottomLeft;
+            Vector3 up = room.TopLeft - room.BottomLeft;
+            if (right.sqrMagnitude <= 0.0001f || up.sqrMagnitude <= 0.0001f)
+            {
+                return room;
+            }
+
+            right.Normalize();
+            up.Normalize();
+            float halfWidth = Mathf.Min(projected.Width, room.Width) * 0.5f;
+            float halfHeight = Mathf.Min(projected.Height, room.Height) * 0.5f;
+            Vector3 centerOffset = projected.Center - room.Center;
+            float x = Mathf.Clamp(
+                Vector3.Dot(centerOffset, right),
+                -room.Width * 0.5f + halfWidth,
+                room.Width * 0.5f - halfWidth);
+            float y = Mathf.Clamp(
+                Vector3.Dot(centerOffset, up),
+                -room.Height * 0.5f + halfHeight,
+                room.Height * 0.5f - halfHeight);
+            Vector3 center = room.Center + right * x + up * y;
+            return new HazardPresentationGeometry(
+                projected.StableId,
+                projected.Kind,
+                center - right * halfWidth - up * halfHeight,
+                center + right * halfWidth - up * halfHeight,
+                center + right * halfWidth + up * halfHeight,
+                center - right * halfWidth + up * halfHeight,
+                room.SurfaceNormal,
+                projected.CaptureTimestampSeconds,
+                Mathf.Min(projected.Confidence, room.Confidence),
+                projected.Risk,
+                projected.Source,
+                projected.Owner,
+                projected.ProbePurpose,
+                projected.HasWorldVelocity,
+                projected.WorldVelocity,
+                projected.HasFreshFloor,
+                projected.FloorHeight);
+        }
+
+        private static bool IsPointInsideRoomBounds(
+            Vector3 point,
+            HazardPresentationGeometry room,
+            float toleranceMeters)
+        {
+            Vector3 right = room.BottomRight - room.BottomLeft;
+            Vector3 up = room.TopLeft - room.BottomLeft;
+            if (right.sqrMagnitude <= 0.0001f || up.sqrMagnitude <= 0.0001f)
+            {
+                return false;
+            }
+
+            float halfWidth = room.Width * 0.5f
+                + Mathf.Max(0f, toleranceMeters);
+            float halfHeight = room.Height * 0.5f
+                + Mathf.Max(0f, toleranceMeters);
+            Vector3 offset = point - room.Center;
+            return Mathf.Abs(Vector3.Dot(offset, right.normalized)) <= halfWidth
+                && Mathf.Abs(Vector3.Dot(offset, up.normalized)) <= halfHeight;
         }
     }
 }

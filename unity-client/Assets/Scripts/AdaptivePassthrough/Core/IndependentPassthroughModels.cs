@@ -187,6 +187,72 @@ namespace TeamVR.AdaptivePassthrough
                 && viewportPoint.y <= 1f - margin;
         }
 
+        public static bool TryStereoRects(
+            Rect trackedRect,
+            Rect bounds,
+            Vector3 leftViewportPoint,
+            Vector3 rightViewportPoint,
+            out Rect leftRect,
+            out Rect rightRect)
+        {
+            Rect safeBounds = ClampRect01(bounds);
+            if (!IsViewportDirectionVisible(leftViewportPoint)
+                || !IsViewportDirectionVisible(rightViewportPoint)
+                || safeBounds.width <= 0f
+                || safeBounds.height <= 0f)
+            {
+                leftRect = default;
+                rightRect = default;
+                return false;
+            }
+
+            leftRect = RecenterRect(
+                trackedRect,
+                safeBounds,
+                new Vector2(
+                    leftViewportPoint.x,
+                    leftViewportPoint.y));
+            rightRect = RecenterRect(
+                trackedRect,
+                safeBounds,
+                new Vector2(
+                    rightViewportPoint.x,
+                    rightViewportPoint.y));
+            return leftRect.width > 0f
+                && leftRect.height > 0f
+                && rightRect.width > 0f
+                && rightRect.height > 0f;
+        }
+
+        public static Rect RecenterRect(
+            Rect rect,
+            Rect bounds,
+            Vector2 center)
+        {
+            Rect safeBounds = ClampRect01(bounds);
+            float width = Mathf.Min(
+                Mathf.Max(0f, SanitizeFinite(rect.width)),
+                safeBounds.width);
+            float height = Mathf.Min(
+                Mathf.Max(0f, SanitizeFinite(rect.height)),
+                safeBounds.height);
+            float halfWidth = width * 0.5f;
+            float halfHeight = height * 0.5f;
+            float safeCenterX = Mathf.Clamp(
+                SanitizeFinite(center.x),
+                safeBounds.xMin + halfWidth,
+                safeBounds.xMax - halfWidth);
+            float safeCenterY = Mathf.Clamp(
+                SanitizeFinite(center.y),
+                safeBounds.yMin + halfHeight,
+                safeBounds.yMax - halfHeight);
+            return new Rect(
+                safeCenterX - halfWidth,
+                safeCenterY - halfHeight,
+                width,
+                height);
+        }
+
         public static Rect WallDirectionWindowRect(
             float viewportX,
             float risk,

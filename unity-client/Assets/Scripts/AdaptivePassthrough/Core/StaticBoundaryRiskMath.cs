@@ -292,6 +292,8 @@ namespace TeamVR.AdaptivePassthrough
             }
 
             float headRisk = frame.Head.Risk;
+            float lowObstacleRisk = frame.LowObstacle.Risk;
+            float primaryRisk = Mathf.Max(headRisk, lowObstacleRisk);
             float handRisk = frame.MaximumHandRisk;
             bool headApproachingForEmergency =
                 frame.Head.TowardBoundarySpeed
@@ -301,18 +303,30 @@ namespace TeamVR.AdaptivePassthrough
                 settings.emergencyDistance);
             float releaseMargin = StaticBoundaryRiskMath.NonNegative(
                 settings.emergencyReleaseMargin);
+            bool lowApproachingForEmergency =
+                frame.LowObstacle.TowardBoundarySpeed
+                > StaticBoundaryRiskMath.NonNegative(
+                    settings.emergencyApproachSpeed);
+            bool headEmergency = frame.Head.Available
+                && frame.Head.ClosestDistanceMeters <= emergencyDistance;
+            bool lowEmergency = frame.LowObstacle.Available
+                && frame.LowObstacle.ClosestDistanceMeters <= emergencyDistance;
             bool emergencyTrigger = frame.HeadSafetyOverlapEmergency
-                || frame.Head.Available
-                    && frame.Head.ClosestDistanceMeters <= emergencyDistance;
+                || headEmergency
+                || lowEmergency;
 
             if (emergencyTrigger)
             {
                 emergencyActive = true;
             }
-            else if (!frame.Head.Available
-                || !headApproachingForEmergency
-                || frame.Head.ClosestDistanceMeters
-                    > emergencyDistance + releaseMargin)
+            else if ((!frame.Head.Available
+                    || !headApproachingForEmergency
+                    || frame.Head.ClosestDistanceMeters
+                        > emergencyDistance + releaseMargin)
+                && (!frame.LowObstacle.Available
+                    || !lowApproachingForEmergency
+                    || frame.LowObstacle.ClosestDistanceMeters
+                        > emergencyDistance + releaseMargin))
             {
                 emergencyActive = false;
             }
@@ -326,9 +340,13 @@ namespace TeamVR.AdaptivePassthrough
                 {
                     Enable(now, StaticActivationCause.Emergency);
                 }
-                else if (headRisk >= onThreshold)
+                else if (primaryRisk >= onThreshold)
                 {
-                    Enable(now, StaticActivationCause.Head);
+                    Enable(
+                        now,
+                        lowObstacleRisk > headRisk
+                            ? StaticActivationCause.LowObstacle
+                            : StaticActivationCause.Head);
                 }
                 else if (handRisk >= handOn)
                 {
@@ -336,7 +354,7 @@ namespace TeamVR.AdaptivePassthrough
                 }
             }
             else if (!emergencyActive
-                && headRisk <= offThreshold
+                && primaryRisk <= offThreshold
                 && handRisk <= handOff)
             {
                 heldReason = HoldOrRelease(
@@ -346,13 +364,22 @@ namespace TeamVR.AdaptivePassthrough
             else
             {
                 CancelPendingRelease();
+                if (activeCause == StaticActivationCause.LowObstacle)
+                {
+                    activeCause = StaticActivationCause.Head;
+                }
                 UpdateActiveCause(
-                    headRisk,
+                    primaryRisk,
                     handRisk,
                     onThreshold,
                     offThreshold,
                     handOn,
                     handOff);
+                if (activeCause == StaticActivationCause.Head
+                    && lowObstacleRisk > headRisk)
+                {
+                    activeCause = StaticActivationCause.LowObstacle;
+                }
             }
 
             float combinedRisk = frame.CombinedRisk;
@@ -372,6 +399,9 @@ namespace TeamVR.AdaptivePassthrough
                 displayCause,
                 out Vector3 hazardDirection,
                 out bool hazardAvailable);
+            HazardPresentationGeometry presentationGeometry = SelectGeometry(
+                frame,
+                displayCause);
             if (enabled && hazardAvailable)
             {
                 lastHazardDirection = hazardDirection;
@@ -402,7 +432,8 @@ namespace TeamVR.AdaptivePassthrough
                 emergencyTrigger,
                 emergencyActive,
                 hazardDirection,
-                hazardAvailable);
+                hazardAvailable,
+                presentationGeometry);
         }
 
         private StaticPassthroughDecision BuildDecision(
@@ -419,12 +450,15 @@ namespace TeamVR.AdaptivePassthrough
             bool emergencyTrigger,
             bool emergencyHold,
             Vector3 hazardDirection,
-            bool hazardAvailable)
+            bool hazardAvailable,
+            HazardPresentationGeometry presentationGeometry = default)
         {
             bool available = frame != null && frame.Available;
-            float headRisk = available ? frame.Head.Risk : 0f;
+            float headRisk = available
+                ? Mathf.Max(frame.Head.Risk, frame.LowObstacle.Risk)
+                : 0f;
             float handRisk = available ? frame.MaximumHandRisk : 0f;
-            float combinedRisk = Mathf.Max(headRisk, handRisk);
+            float combinedRisk = available ? frame.CombinedRisk : 0f;
             float heldSeconds = isEnabled
                 ? (float)Math.Max(0.0, timestampSeconds - enabledSince)
                 : 0f;
@@ -455,7 +489,8 @@ namespace TeamVR.AdaptivePassthrough
                 emergencyTrigger,
                 emergencyHold,
                 hazardDirection,
-                hazardAvailable);
+                hazardAvailable,
+                presentationGeometry);
         }
 
         private void Enable(double timestampSeconds, StaticActivationCause cause)
@@ -549,8 +584,15 @@ namespace TeamVR.AdaptivePassthrough
         private static StaticActivationCause HighestRiskCause(
             StaticBoundaryRiskFrame frame)
         {
-            return frame.MaximumHandRisk > frame.Head.Risk
-                ? StaticActivationCause.Hand
+            if (frame.MaximumHandRisk > Mathf.Max(
+                    frame.Head.Risk,
+                    frame.LowObstacle.Risk))
+            {
+                return StaticActivationCause.Hand;
+            }
+
+            return frame.LowObstacle.Risk > frame.Head.Risk
+                ? StaticActivationCause.LowObstacle
                 : StaticActivationCause.Head;
         }
 
@@ -578,8 +620,59 @@ namespace TeamVR.AdaptivePassthrough
                 return;
             }
 
+            if (cause == StaticActivationCause.LowObstacle
+                || cause == StaticActivationCause.Emergency
+                    && frame.LowObstacle.Risk > frame.Head.Risk
+                    && frame.LowObstacle.Risk >= frame.MaximumHandRisk)
+            {
+                direction = frame.LowObstacleHazardDirectionWorld;
+                available = frame.LowObstacleHazardDirectionAvailable;
+                return;
+            }
+
             direction = frame.HeadHazardDirectionWorld;
             available = frame.HeadHazardDirectionAvailable;
+        }
+
+        private static HazardPresentationGeometry SelectGeometry(
+            StaticBoundaryRiskFrame frame,
+            StaticActivationCause cause)
+        {
+            if (frame == null)
+            {
+                return default;
+            }
+
+            if (cause == StaticActivationCause.LowObstacle)
+            {
+                return frame.LowObstaclePresentationGeometry;
+            }
+
+            if (cause == StaticActivationCause.Hand)
+            {
+                return frame.LeftHand.Risk >= frame.RightHand.Risk
+                    ? frame.LeftHandPresentationGeometry
+                    : frame.RightHandPresentationGeometry;
+            }
+
+            if (cause == StaticActivationCause.Emergency)
+            {
+                float lowRisk = frame.LowObstacle.Risk;
+                float handRisk = frame.MaximumHandRisk;
+                if (lowRisk >= frame.Head.Risk && lowRisk >= handRisk)
+                {
+                    return frame.LowObstaclePresentationGeometry;
+                }
+
+                if (handRisk > frame.Head.Risk)
+                {
+                    return frame.LeftHand.Risk >= frame.RightHand.Risk
+                        ? frame.LeftHandPresentationGeometry
+                        : frame.RightHandPresentationGeometry;
+                }
+            }
+
+            return frame.HeadPresentationGeometry;
         }
 
         private double SanitizeTimestamp(double timestampSeconds)

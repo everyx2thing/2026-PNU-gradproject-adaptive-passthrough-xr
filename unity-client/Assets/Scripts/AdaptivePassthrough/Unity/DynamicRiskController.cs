@@ -110,6 +110,7 @@ namespace TeamVR.AdaptivePassthrough
             LatestFrameSequence = 0;
             LatestFrameProcessedRealtimeSeconds = 0.0;
             LatestFrameCaptureRealtimeSeconds = 0.0;
+            PipelineReset?.Invoke();
         }
 
         private void RebuildPipeline()

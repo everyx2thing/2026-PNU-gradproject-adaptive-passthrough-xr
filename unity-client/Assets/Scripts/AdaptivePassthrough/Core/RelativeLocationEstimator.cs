@@ -107,7 +107,10 @@ namespace TeamVR.AdaptivePassthrough
                     && distance.HasWorldVelocity,
                 distance == null
                     ? UnityEngine.Vector3.zero
-                    : distance.WorldVelocity);
+                    : distance.WorldVelocity,
+                distance == null
+                    ? default
+                    : distance.PresentationGeometry);
         }
     }
 }

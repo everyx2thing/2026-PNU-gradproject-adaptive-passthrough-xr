@@ -66,6 +66,8 @@ namespace TeamVR.AdaptivePassthrough
         public readonly string FailureReason;
         public readonly bool IsMetricReliable;
         public readonly string DepthRejectedReason;
+        public readonly bool HasPresentationGeometry;
+        public readonly HazardPresentationGeometry PresentationGeometry;
 
         public PersonDistanceMeasurement(
             int trackId,
@@ -87,7 +89,8 @@ namespace TeamVR.AdaptivePassthrough
             bool? isMetricReliable = null,
             string depthRejectedReason = null,
             bool hasWorldVelocity = false,
-            Vector3 worldVelocity = default)
+            Vector3 worldVelocity = default,
+            HazardPresentationGeometry presentationGeometry = default)
         {
             TrackId = Math.Max(0, trackId);
             TimestampSeconds = Math.Max(0.0, timestampSeconds);
@@ -121,6 +124,11 @@ namespace TeamVR.AdaptivePassthrough
             WorldVelocity = HasWorldVelocity
                 ? worldVelocity
                 : Vector3.zero;
+            HasPresentationGeometry = IsMetricReliable
+                && presentationGeometry.Available;
+            PresentationGeometry = HasPresentationGeometry
+                ? presentationGeometry
+                : default;
         }
 
         public bool HasMetricDistance
@@ -150,7 +158,7 @@ namespace TeamVR.AdaptivePassthrough
             return WithWorldPoint(worldPoint, worldVelocity, true);
         }
 
-        private PersonDistanceMeasurement WithWorldPoint(
+        public PersonDistanceMeasurement WithWorldPoint(
             Vector3 worldPoint,
             Vector3 worldVelocity,
             bool hasWorldVelocity)
@@ -175,7 +183,35 @@ namespace TeamVR.AdaptivePassthrough
                 IsMetricReliable,
                 DepthRejectedReason,
                 hasWorldVelocity,
-                worldVelocity);
+                worldVelocity,
+                PresentationGeometry);
+        }
+
+        public PersonDistanceMeasurement WithPresentationGeometry(
+            HazardPresentationGeometry geometry)
+        {
+            return new PersonDistanceMeasurement(
+                TrackId,
+                TimestampSeconds,
+                Source,
+                Available,
+                RawDistanceMeters,
+                FilteredDistanceMeters,
+                Confidence,
+                RequestedSampleCount,
+                ValidSampleCount,
+                SourceAgeSeconds,
+                BoundingBoxArea,
+                FailureReason,
+                SampleDispersionMeters,
+                BoundingBoxDepthConflict,
+                HasWorldPoint,
+                WorldPoint,
+                IsMetricReliable,
+                DepthRejectedReason,
+                HasWorldVelocity,
+                WorldVelocity,
+                geometry);
         }
 
         public PersonDistanceMeasurement WithMetricReliability(
@@ -202,7 +238,8 @@ namespace TeamVR.AdaptivePassthrough
                 reliable,
                 reliable ? string.Empty : rejectedReason,
                 reliable && HasWorldVelocity,
-                WorldVelocity);
+                WorldVelocity,
+                reliable ? PresentationGeometry : default);
         }
 
         public static PersonDistanceMeasurement BoundingBoxFallback(

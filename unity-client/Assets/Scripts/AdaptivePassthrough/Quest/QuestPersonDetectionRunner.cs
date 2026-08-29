@@ -134,6 +134,9 @@ namespace TeamVR.AdaptivePassthrough
             }
 
             CancelInferenceAndWorker(false);
+            depthProvider?.ResetProvider();
+            controller?.ResetPipeline();
+            qualityController?.ResetRuntimeMeasurements();
             worker?.Dispose();
             worker = null;
             runtimeModel = null;
@@ -330,15 +333,16 @@ namespace TeamVR.AdaptivePassthrough
                             cameraTexture.height));
                 }
 
-                Pose cameraPoseAtCapture = cameraAccess.GetCameraPose();
-                activeCaptureRealtimeSeconds =
-                    Time.realtimeSinceStartupAsDouble;
-                // All runtime frames, markers and visibility events share the
-                // same monotonic clock. Keep the camera DateTime separately for
-                // capture-age diagnostics only.
-                activeCaptureTimestampSeconds = activeCaptureRealtimeSeconds;
                 DateTime captureTimestamp = cameraAccess.Timestamp;
+                Pose cameraPoseAtCapture = cameraAccess.GetCameraPose();
                 activeCaptureTimestamp = captureTimestamp;
+                double observedRealtimeSeconds =
+                    Time.realtimeSinceStartupAsDouble;
+                activeCaptureRealtimeSeconds = CaptureRealtimeSeconds(
+                    captureTimestamp,
+                    DateTime.UtcNow,
+                    observedRealtimeSeconds);
+                activeCaptureTimestampSeconds = activeCaptureRealtimeSeconds;
                 if (depthProvider != null)
                 {
                     depthProvider.BeginFrame(
@@ -748,6 +752,31 @@ namespace TeamVR.AdaptivePassthrough
             return Mathf.Max(
                 0f,
                 (float)(elapsed * 1000.0 / Stopwatch.Frequency));
+        }
+
+        public static double CaptureRealtimeSeconds(
+            DateTime captureTimestamp,
+            DateTime utcNow,
+            double realtimeNowSeconds)
+        {
+            double safeRealtimeNow = Math.Max(0.0, realtimeNowSeconds);
+            if (captureTimestamp == default || utcNow == default)
+            {
+                return safeRealtimeNow;
+            }
+
+            double ageSeconds = (utcNow.ToUniversalTime()
+                    - captureTimestamp.ToUniversalTime())
+                .TotalSeconds;
+            if (double.IsNaN(ageSeconds)
+                || double.IsInfinity(ageSeconds)
+                || ageSeconds < 0.0
+                || ageSeconds > 60.0)
+            {
+                return safeRealtimeNow;
+            }
+
+            return Math.Max(0.0, safeRealtimeNow - ageSeconds);
         }
 
         private void RecordBackendBenchmark(float elapsedMilliseconds)

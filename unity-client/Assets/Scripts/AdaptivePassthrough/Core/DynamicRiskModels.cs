@@ -309,6 +309,8 @@ namespace TeamVR.AdaptivePassthrough
         public readonly float DepthSampleDispersionMeters;
         public readonly bool IsMetricReliable;
         public readonly string DepthRejectedReason;
+        public readonly bool HasPresentationGeometry;
+        public readonly HazardPresentationGeometry PresentationGeometry;
 
         public RelativeLocationEstimate(
             HorizontalZone screenZone,
@@ -347,7 +349,8 @@ namespace TeamVR.AdaptivePassthrough
             bool isMetricReliable = false,
             string depthRejectedReason = null,
             bool hasWorldVelocity = false,
-            Vector3 worldVelocity = default)
+            Vector3 worldVelocity = default,
+            HazardPresentationGeometry presentationGeometry = default)
         {
             ScreenZone = screenZone;
             UserRelativeDirection = userRelativeDirection;
@@ -372,6 +375,11 @@ namespace TeamVR.AdaptivePassthrough
             DepthRejectedReason = isMetricReliable
                 ? string.Empty
                 : depthRejectedReason ?? string.Empty;
+            HasPresentationGeometry = isMetricReliable
+                && presentationGeometry.Available;
+            PresentationGeometry = HasPresentationGeometry
+                ? presentationGeometry
+                : default;
         }
 
         private static float NonNegativeFinite(float value)

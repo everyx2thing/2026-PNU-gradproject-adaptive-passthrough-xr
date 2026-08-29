@@ -17,15 +17,27 @@ public sealed class SelectivePassthroughController :
         public GameObject GameObject;
         public MeshRenderer Renderer;
         public MaterialPropertyBlock Properties;
+        public MeshRenderer CueRenderer;
+        public MaterialPropertyBlock CueProperties;
         public int TrackId;
     }
 
-    private static readonly int RectProperty =
-        Shader.PropertyToID("_Rect");
     private static readonly int FeatherProperty =
         Shader.PropertyToID("_Feather");
     private static readonly int RevealStrengthProperty =
         Shader.PropertyToID("_RevealStrength");
+    private static readonly int WorldBottomLeftProperty =
+        Shader.PropertyToID("_WorldBottomLeft");
+    private static readonly int WorldBottomRightProperty =
+        Shader.PropertyToID("_WorldBottomRight");
+    private static readonly int WorldTopRightProperty =
+        Shader.PropertyToID("_WorldTopRight");
+    private static readonly int WorldTopLeftProperty =
+        Shader.PropertyToID("_WorldTopLeft");
+    private static readonly int ShapeProperty = Shader.PropertyToID("_Shape");
+    private static readonly int AspectProperty = Shader.PropertyToID("_Aspect");
+    private static readonly int PulseProperty = Shader.PropertyToID("_Pulse");
+    private static readonly int CueModeProperty = Shader.PropertyToID("_CueMode");
 
     [Header("Independent Policies")]
     [SerializeField] private StaticPassthroughPolicyController staticPolicy;
@@ -39,10 +51,11 @@ public sealed class SelectivePassthroughController :
     [Header("Passthrough Rendering")]
     [SerializeField] private OVRPassthroughLayer passthroughLayer;
     [SerializeField] private Shader windowShader;
+    [SerializeField] private Shader cueShader;
     [SerializeField] private Camera presentationCamera;
     [SerializeField] private Rect cameraViewport =
         new Rect(0.05f, 0.18f, 0.90f, 0.72f);
-    [SerializeField, Range(0.001f, 0.5f)] private float personEdgeFeather = 0.08f;
+    [SerializeField, Range(0.001f, 0.5f)] private float personEdgeFeather = 0.065f;
     [SerializeField, Range(0f, 1f)] private float minimumPersonWindowRisk = 0.50f;
     [SerializeField, Range(1, 5)] private int maximumPersonWindows = 3;
     [SerializeField, Range(0.01f, 1f)] private float personMinimumWidth = 0.10f;
@@ -51,14 +64,11 @@ public sealed class SelectivePassthroughController :
     [SerializeField, Range(0.01f, 1f)] private float personMaximumHeight = 0.62f;
     [SerializeField, Range(0.05f, 1f)] private float maximumPersonRevealArea = 0.55f;
     [SerializeField, Min(0.001f)] private float personPositionSmoothingSeconds = 0.10f;
-    [SerializeField, Min(0.001f)] private float personSizeSmoothingSeconds = 0.15f;
-    [SerializeField, Min(0.001f)] private float personFadeInSeconds = 0.20f;
+    [SerializeField, Min(0.001f)] private float personSizeSmoothingSeconds = 0.10f;
+    [SerializeField, Min(0.001f)] private float personFadeInSeconds = 0.125f;
     [SerializeField, Min(0f)] private float personLostHoldSeconds = 1.50f;
     [SerializeField, Min(0.001f)] private float personFadeOutSeconds = 0.30f;
-    [SerializeField, Range(0.001f, 0.5f)] private float wallEdgeFeather = 0.16f;
-    [SerializeField, Range(0f, 0.49f)] private float wallViewportEdgeMargin = 0.02f;
-    [SerializeField, Range(0.05f, 1f)] private float wallMinimumWidth = 0.24f;
-    [SerializeField, Range(0.05f, 1f)] private float wallMaximumWidth = 0.52f;
+    [SerializeField, Range(0.001f, 0.5f)] private float wallEdgeFeather = 0.065f;
 
     private readonly List<WindowSlot> personSlots =
         new List<WindowSlot>();
@@ -67,15 +77,21 @@ public sealed class SelectivePassthroughController :
     private readonly HashSet<int> renderedPersonTrackIds =
         new HashSet<int>();
     private PersonWindowTracker personWindowTracker;
+    private readonly PassthroughPresentationState wallPresentation =
+        new PassthroughPresentationState();
     private WindowSlot wallSlot;
+    private WindowSlot corridorSlot;
     private Mesh sharedQuad;
     private Material runtimeMaterial;
+    private Material runtimeCueMaterial;
     private bool initialized;
     private bool visibilityStateInitialized;
     private bool lastPublishedVisibility;
     private string lastPublishedVisibilitySource = "none";
     private long lastObservedFrameSequence;
     private DynamicRiskController subscribedDynamicRiskController;
+    private bool stereoFallbackStaticRequested;
+    private bool stereoFallbackDynamicRequested;
 
     public event Action<bool, string, double> VisibilityChanged;
 
@@ -92,16 +108,21 @@ public sealed class SelectivePassthroughController :
     public SafetyFeedbackMode FeedbackMode => feedbackMode;
     public bool PassthroughOutputVisible =>
         feedbackMode == SafetyFeedbackMode.Passthrough
-        && AnyWindowVisible;
+        && AnyPassthroughWindowVisible;
     public bool AlertFeedbackActive =>
-        feedbackMode == SafetyFeedbackMode.RedBorderAndHaptics
-        && AnyWindowVisible;
+        AnyWindowVisible
+        && (feedbackMode == SafetyFeedbackMode.RedBorderAndHaptics
+            || stereoFallbackStaticRequested
+            || stereoFallbackDynamicRequested);
+    private bool AnyPassthroughWindowVisible =>
+        ActivePersonWindowCount > 0 || StaticWindowVisible;
     public bool AnyWindowVisible
     {
         get
         {
-            return ActivePersonWindowCount > 0
-                || StaticWindowVisible;
+            return AnyPassthroughWindowVisible
+                || stereoFallbackStaticRequested
+                || stereoFallbackDynamicRequested;
         }
     }
 
@@ -143,6 +164,8 @@ public sealed class SelectivePassthroughController :
             return;
         }
 
+        stereoFallbackStaticRequested = false;
+        stereoFallbackDynamicRequested = false;
         UpdatePersonWindows();
         UpdateWallWindow();
         ApplyFeedbackOutput();
@@ -160,6 +183,7 @@ public sealed class SelectivePassthroughController :
 
     private void OnDestroy()
     {
+        UnsubscribePipelineReset();
         DestroyRuntimeResources();
     }
 
@@ -187,30 +211,12 @@ public sealed class SelectivePassthroughController :
     public void SetStaticFeatureEnabled(bool enabled)
     {
         staticFeatureEnabled = enabled;
-        if (!enabled)
-        {
-            SetSlotActive(wallSlot, false);
-            StaticWindowVisible = false;
-        }
-
         PublishVisibilityState();
     }
 
     public void SetDynamicFeatureEnabled(bool enabled)
     {
         dynamicFeatureEnabled = enabled;
-        if (!enabled)
-        {
-            personWindowTracker?.Reset();
-            for (int i = 0; i < personSlots.Count; i++)
-            {
-                SetSlotActive(personSlots[i], false);
-                personSlots[i].TrackId = 0;
-            }
-
-            ActivePersonWindowCount = 0;
-        }
-
         PublishVisibilityState();
     }
 
@@ -268,6 +274,12 @@ public sealed class SelectivePassthroughController :
                 : dynamicPolicy.DynamicRiskController;
         DynamicRiskFrame frame =
             controller == null ? null : controller.LatestFrame;
+        bool dynamicPresentationActive = dynamicFeatureEnabled
+            && decision != null
+            && decision.Enabled;
+        personWindowTracker.SetPresentationPolicyActive(
+            dynamicPresentationActive,
+            now);
 
         bool hasNewFrame = controller != null
             && controller.LatestFrameSequence > 0
@@ -325,8 +337,11 @@ public sealed class SelectivePassthroughController :
                 assessment.Score,
                 captureRealtime,
                 presentedRealtime,
-                assessment.ForcePassthrough
-                    || assessment.Score >= minimumPersonWindowRisk);
+                decision != null
+                    && decision.Enabled
+                    && (assessment.ForcePassthrough
+                        || assessment.Score >= minimumPersonWindowRisk),
+                assessment.Location.PresentationGeometry);
         }
 
         ReprojectTrackedWorldPoints(frame);
@@ -340,17 +355,9 @@ public sealed class SelectivePassthroughController :
         EnsurePersonSlots(windows.Count);
         renderedPersonTrackIds.Clear();
         int activeCount = 0;
-        bool presentationEnabled = dynamicFeatureEnabled
-            && decision != null
-            && decision.Enabled;
         float renderedRevealArea = 0f;
         for (int i = 0; i < windows.Count; i++)
         {
-            if (!presentationEnabled)
-            {
-                break;
-            }
-
             PersonWindowSnapshot window = windows[i];
             float windowArea = window.Rect.width * window.Rect.height;
             if (renderedRevealArea + windowArea > maximumPersonRevealArea
@@ -358,6 +365,13 @@ public sealed class SelectivePassthroughController :
             {
                 continue;
             }
+
+            if (!window.PresentationGeometry.Available)
+            {
+                stereoFallbackDynamicRequested = true;
+                continue;
+            }
+
             WindowSlot slot = FindOrAssignPersonSlot(window.TrackId);
             if (slot == null)
             {
@@ -366,11 +380,13 @@ public sealed class SelectivePassthroughController :
 
             renderedPersonTrackIds.Add(window.TrackId);
             renderedRevealArea += windowArea;
-            SetSlotProperties(
+            SetSlotGeometry(
                 slot,
-                window.Rect,
+                window.PresentationGeometry,
                 personEdgeFeather,
-                window.Opacity);
+                window.Opacity,
+                window.Pulse01,
+                false);
             SetSlotActive(slot, true);
             activeCount++;
         }
@@ -403,7 +419,7 @@ public sealed class SelectivePassthroughController :
             DynamicRiskAssessment assessment = frame.Assessments[i];
             if (assessment == null
                 || !assessment.Location.HasWorldPoint
-                || !assessment.Location.HasWorldVelocity)
+                || !assessment.Location.IsMetricReliable)
             {
                 continue;
             }
@@ -418,9 +434,15 @@ public sealed class SelectivePassthroughController :
                 (float)Math.Max(
                     0.0,
                     Time.realtimeSinceStartupAsDouble - captureRealtime));
+            Vector3 predictedWorldPoint = assessment.Location.WorldPoint;
+            if (assessment.Location.HasWorldVelocity)
+            {
+                predictedWorldPoint += assessment.Location.WorldVelocity
+                    * predictionAge;
+            }
+
             Vector3 viewport = presentationCamera.WorldToViewportPoint(
-                assessment.Location.WorldPoint
-                    + assessment.Location.WorldVelocity * predictionAge);
+                predictedWorldPoint);
             if (viewport.z <= 0f)
             {
                 continue;
@@ -457,45 +479,108 @@ public sealed class SelectivePassthroughController :
 
     private void UpdateWallWindow()
     {
+        double now = Time.realtimeSinceStartupAsDouble;
+        wallPresentation.BeginFrame();
         StaticWindowVisible = false;
         StaticPassthroughDecision decision =
             staticPolicy == null ? null : staticPolicy.LatestStatic;
-        if (!staticFeatureEnabled
-            || decision == null
-            || !decision.Enabled
-            || !decision.HazardDirectionAvailable
-            || presentationCamera == null)
+        bool revealEligible = staticFeatureEnabled
+            && decision != null
+            && decision.Enabled;
+        wallPresentation.SetPresentationPolicyActive(revealEligible, now);
+        if (revealEligible)
+        {
+            double capturedAt = decision.PresentationGeometry
+                .CaptureTimestampSeconds;
+            double geometryTimestamp = decision.PresentationGeometry.Available
+                && capturedAt > 0.0
+                ? capturedAt
+                : now;
+            wallPresentation.Observe(
+                decision.PresentationGeometry,
+                decision.CombinedRisk,
+                geometryTimestamp,
+                now,
+                true);
+        }
+
+        wallPresentation.Update(now, Time.unscaledDeltaTime);
+        HazardPresentationGeometry geometry = wallPresentation.Geometry;
+        if (wallPresentation.Opacity <= 0f)
         {
             SetSlotActive(wallSlot, false);
+            SetSlotActive(corridorSlot, false);
             return;
         }
 
-        Vector3 direction = decision.HazardDirectionWorld;
-        Vector3 viewportPoint =
-            presentationCamera.WorldToViewportPoint(
-                presentationCamera.transform.position
-                + direction.normalized * 2f);
-        if (!SelectivePassthroughMath.IsViewportDirectionVisible(
-                viewportPoint,
-                wallViewportEdgeMargin))
+        if (!geometry.Available)
         {
-            // Rear/out-of-FOV wall handling is deliberately deferred.
             SetSlotActive(wallSlot, false);
+            SetSlotActive(corridorSlot, false);
+            stereoFallbackStaticRequested = true;
             return;
         }
 
-        Rect rect = SelectivePassthroughMath.WallDirectionWindowRect(
-            viewportPoint.x,
-            decision.CombinedRisk,
-            wallMinimumWidth,
-            wallMaximumWidth);
-        SetSlotProperties(
+        SetSlotGeometry(
             wallSlot,
-            rect,
+            geometry,
             wallEdgeFeather,
-            1f);
+            wallPresentation.Opacity,
+            wallPresentation.Pulse01,
+            false);
         SetSlotActive(wallSlot, true);
+        UpdateLowObstacleCorridor(
+            geometry,
+            wallPresentation.Opacity);
         StaticWindowVisible = true;
+    }
+
+    private void UpdateLowObstacleCorridor(
+        HazardPresentationGeometry obstacle,
+        float opacity)
+    {
+        if (corridorSlot == null
+            || presentationCamera == null
+            || obstacle.Kind != HazardVisualKind.LowObstaclePatch
+            || !obstacle.HasFreshFloor)
+        {
+            SetSlotActive(corridorSlot, false);
+            return;
+        }
+
+        Vector3 up = Vector3.up;
+        Vector3 forward = Vector3.ProjectOnPlane(
+            presentationCamera.transform.forward,
+            up);
+        forward = forward.sqrMagnitude > 0.0001f
+            ? forward.normalized
+            : Vector3.forward;
+        Vector3 nearCenter = presentationCamera.transform.position
+            + forward * 0.30f;
+        nearCenter.y = obstacle.FloorHeight + 0.015f;
+        Vector3 farCenter = obstacle.Center;
+        farCenter.y = obstacle.FloorHeight + 0.015f;
+        HazardPresentationGeometry corridor =
+            HazardPresentationGeometry.CreateFloorCorridor(
+                obstacle.StableId,
+                nearCenter,
+                farCenter,
+                up,
+                0.20f,
+                0.45f,
+                Time.realtimeSinceStartupAsDouble,
+                obstacle.Confidence,
+                obstacle.Risk,
+                obstacle.Source);
+        SetSlotGeometry(
+            corridorSlot,
+            corridor,
+            0.025f,
+            opacity,
+            0f,
+            true,
+            true);
+        SetSlotActive(corridorSlot, true, false, true);
     }
 
     private void ResolveReferences()
@@ -550,7 +635,16 @@ public sealed class SelectivePassthroughController :
                     "TeamVR/AdaptivePassthrough/PassthroughWindow");
         }
 
-        if (windowShader == null || !windowShader.isSupported)
+        if (cueShader == null)
+        {
+            cueShader = Shader.Find(
+                "TeamVR/AdaptivePassthrough/HazardCue");
+        }
+
+        if (windowShader == null
+            || !windowShader.isSupported
+            || cueShader == null
+            || !cueShader.isSupported)
         {
             Debug.LogError(
                 "[PassthroughWindow] Shader is missing or unsupported.");
@@ -562,9 +656,16 @@ public sealed class SelectivePassthroughController :
         {
             name = "Runtime Passthrough Window Material",
             hideFlags = HideFlags.DontSave,
-            renderQueue = 5000
+            renderQueue = 4998
+        };
+        runtimeCueMaterial = new Material(cueShader)
+        {
+            name = "Runtime Hazard Cue Material",
+            hideFlags = HideFlags.DontSave,
+            renderQueue = 4999
         };
         wallSlot = CreateSlot("Static Wall Passthrough Window");
+        corridorSlot = CreateSlot("Low Obstacle Floor Corridor");
         EnsurePersonSlots(Mathf.Max(1, maximumPersonWindows));
         DisableAllWindows();
         initialized = true;
@@ -632,11 +733,24 @@ public sealed class SelectivePassthroughController :
         renderer.lightProbeUsage = LightProbeUsage.Off;
         renderer.reflectionProbeUsage = ReflectionProbeUsage.Off;
 
+        var cueObject = new GameObject(slotName + " Cue");
+        cueObject.transform.SetParent(slotObject.transform, false);
+        MeshFilter cueFilter = cueObject.AddComponent<MeshFilter>();
+        MeshRenderer cueRenderer = cueObject.AddComponent<MeshRenderer>();
+        cueFilter.sharedMesh = sharedQuad;
+        cueRenderer.sharedMaterial = runtimeCueMaterial;
+        cueRenderer.shadowCastingMode = ShadowCastingMode.Off;
+        cueRenderer.receiveShadows = false;
+        cueRenderer.lightProbeUsage = LightProbeUsage.Off;
+        cueRenderer.reflectionProbeUsage = ReflectionProbeUsage.Off;
+
         return new WindowSlot
         {
             GameObject = slotObject,
             Renderer = renderer,
-            Properties = new MaterialPropertyBlock()
+            Properties = new MaterialPropertyBlock(),
+            CueRenderer = cueRenderer,
+            CueProperties = new MaterialPropertyBlock()
         };
     }
 
@@ -674,35 +788,91 @@ public sealed class SelectivePassthroughController :
         return right.Score.CompareTo(left.Score);
     }
 
-    private static void SetSlotProperties(
+    private static void SetSlotGeometry(
         WindowSlot slot,
-        Rect rect,
+        HazardPresentationGeometry geometry,
         float feather,
-        float revealStrength)
+        float revealStrength,
+        float pulse,
+        bool cueOnly,
+        bool corridorCue = false)
     {
-        if (slot == null || slot.Renderer == null)
+        if (slot == null
+            || slot.Renderer == null
+            || !geometry.Available)
         {
             return;
         }
 
         slot.Properties.Clear();
-        slot.Properties.SetVector(
-            RectProperty,
-            new Vector4(rect.x, rect.y, rect.width, rect.height));
-        slot.Properties.SetFloat(
-            FeatherProperty,
-            Mathf.Clamp(feather, 0.001f, 0.5f));
-        slot.Properties.SetFloat(
-            RevealStrengthProperty,
-            Mathf.Clamp01(revealStrength));
+        ApplyGeometryProperties(
+            slot.Properties,
+            geometry,
+            feather,
+            revealStrength,
+            pulse,
+            corridorCue);
         slot.Renderer.SetPropertyBlock(slot.Properties);
+        if (slot.CueRenderer != null)
+        {
+            slot.CueProperties.Clear();
+            ApplyGeometryProperties(
+                slot.CueProperties,
+                geometry,
+                feather,
+                revealStrength,
+                pulse,
+                corridorCue);
+            slot.CueRenderer.SetPropertyBlock(slot.CueProperties);
+            slot.CueRenderer.enabled = corridorCue || pulse > 0f;
+        }
+
+        slot.Renderer.enabled = !cueOnly;
     }
 
-    private static void SetSlotActive(WindowSlot slot, bool active)
+    private static void ApplyGeometryProperties(
+        MaterialPropertyBlock properties,
+        HazardPresentationGeometry geometry,
+        float feather,
+        float revealStrength,
+        float pulse,
+        bool corridorCue)
+    {
+        properties.SetVector(WorldBottomLeftProperty, geometry.BottomLeft);
+        properties.SetVector(WorldBottomRightProperty, geometry.BottomRight);
+        properties.SetVector(WorldTopRightProperty, geometry.TopRight);
+        properties.SetVector(WorldTopLeftProperty, geometry.TopLeft);
+        properties.SetFloat(
+            ShapeProperty,
+            geometry.Kind == HazardVisualKind.PersonCapsule ? 1f : 0f);
+        properties.SetFloat(
+            AspectProperty,
+            geometry.Width / Mathf.Max(0.001f, geometry.Height));
+        properties.SetFloat(
+            FeatherProperty,
+            Mathf.Clamp(feather, 0.001f, 0.5f));
+        properties.SetFloat(
+            RevealStrengthProperty,
+            Mathf.Clamp01(revealStrength));
+        properties.SetFloat(PulseProperty, Mathf.Clamp01(pulse));
+        properties.SetFloat(CueModeProperty, corridorCue ? 1f : 0f);
+    }
+
+    private static void SetSlotActive(
+        WindowSlot slot,
+        bool active,
+        bool mask = true,
+        bool cue = true)
     {
         if (slot != null && slot.Renderer != null)
         {
-            slot.Renderer.enabled = active;
+            slot.Renderer.enabled = active && mask;
+            if (slot.CueRenderer != null)
+            {
+                slot.CueRenderer.enabled = active
+                    && cue
+                    && slot.CueRenderer.enabled;
+            }
         }
     }
 
@@ -715,9 +885,13 @@ public sealed class SelectivePassthroughController :
         }
 
         SetSlotActive(wallSlot, false);
+        SetSlotActive(corridorSlot, false);
+        wallPresentation.Reset();
         personWindowTracker?.Reset();
         ActivePersonWindowCount = 0;
         StaticWindowVisible = false;
+        stereoFallbackStaticRequested = false;
+        stereoFallbackDynamicRequested = false;
     }
 
     private void SetLayerVisible(bool visible)
@@ -743,14 +917,18 @@ public sealed class SelectivePassthroughController :
             return;
         }
 
-        alertFeedback?.SetAlertActive(false, 0f);
-        SetLayerVisible(feedbackRequested);
+        bool stereoFallbackRequested = stereoFallbackStaticRequested
+            || stereoFallbackDynamicRequested;
+        alertFeedback?.SetAlertActive(
+            stereoFallbackRequested,
+            FeedbackRiskIntensity());
+        SetLayerVisible(AnyPassthroughWindowVisible);
     }
 
     private float FeedbackRiskIntensity()
     {
         float risk = 0f;
-        if (StaticWindowVisible
+        if ((StaticWindowVisible || stereoFallbackStaticRequested)
             && staticPolicy != null
             && staticPolicy.LatestStatic != null)
         {
@@ -759,7 +937,8 @@ public sealed class SelectivePassthroughController :
                 staticPolicy.LatestStatic.CombinedRisk);
         }
 
-        if (ActivePersonWindowCount > 0
+        if ((ActivePersonWindowCount > 0
+                || stereoFallbackDynamicRequested)
             && dynamicPolicy != null
             && dynamicPolicy.Latest != null)
         {
@@ -777,27 +956,36 @@ public sealed class SelectivePassthroughController :
         }
 
         SetSlotActive(wallSlot, false);
+        SetSlotActive(corridorSlot, false);
     }
 
     public PassthroughPresentationSnapshot GetPresentationSnapshot()
     {
         double now = Time.realtimeSinceStartupAsDouble;
+        bool staticVisible = StaticWindowVisible
+            || stereoFallbackStaticRequested;
+        bool dynamicVisible = ActivePersonWindowCount > 0
+            || stereoFallbackDynamicRequested;
         return new PassthroughPresentationSnapshot(
             AnyWindowVisible,
-            StaticWindowVisible,
-            ActivePersonWindowCount > 0,
+            staticVisible,
+            dynamicVisible,
             ActivePersonWindowCount,
             GetVisibilitySource(),
-            personWindowTracker == null
-                ? 0f
-                : personWindowTracker.GetMaximumHoldRemainingSeconds(now),
+            Mathf.Max(
+                wallPresentation.HoldRemainingSeconds,
+                personWindowTracker == null
+                    ? 0f
+                    : personWindowTracker.GetMaximumHoldRemainingSeconds(now)),
             now);
     }
 
     private string GetVisibilitySource()
     {
-        bool staticVisible = StaticWindowVisible;
-        bool dynamicVisible = ActivePersonWindowCount > 0;
+        bool staticVisible = StaticWindowVisible
+            || stereoFallbackStaticRequested;
+        bool dynamicVisible = ActivePersonWindowCount > 0
+            || stereoFallbackDynamicRequested;
         if (staticVisible && dynamicVisible)
         {
             return "static+dynamic";
@@ -845,9 +1033,13 @@ public sealed class SelectivePassthroughController :
         personSlots.Clear();
         DestroySlot(wallSlot);
         wallSlot = null;
+        DestroySlot(corridorSlot);
+        corridorSlot = null;
         DestroyRuntimeObject(runtimeMaterial);
+        DestroyRuntimeObject(runtimeCueMaterial);
         DestroyRuntimeObject(sharedQuad);
         runtimeMaterial = null;
+        runtimeCueMaterial = null;
         sharedQuad = null;
         personWindowTracker?.Reset();
         lastObservedFrameSequence = 0;

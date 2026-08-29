@@ -129,9 +129,7 @@ namespace TeamVR.AdaptivePassthrough
 
         private void OnDisable()
         {
-            hasFrameContext = false;
-            IsDepthReady = false;
-            distanceFilter.Reset();
+            ResetProvider();
         }
 
         public void Configure(
@@ -199,8 +197,11 @@ namespace TeamVR.AdaptivePassthrough
             if (!string.IsNullOrEmpty(preRaycastRejection))
             {
                 expandNextFrame.Remove(tracked.TrackId);
-                return Fallback(
-                    tracked,
+                IsDepthReady = false;
+                LastFailureReason = preRaycastRejection;
+                return PersonDistanceMeasurement.BoundingBoxFallback(
+                    tracked.TrackId,
+                    frameTimestampSeconds,
                     bboxArea,
                     preRaycastRejection);
             }
@@ -299,16 +300,53 @@ namespace TeamVR.AdaptivePassthrough
                     centerViewport,
                     cameraPoseAtCapture);
                 Vector3 worldVelocity;
+                bool hasWorldVelocity;
                 Vector3 worldPoint = FilterWorldPoint(
                     tracked.TrackId,
                     centerRay.origin
                         + centerRay.direction
                         * result.FilteredDistanceMeters,
                     frameTimestampSeconds,
-                    out worldVelocity);
+                    out worldVelocity,
+                    out hasWorldVelocity);
                 result = result.WithWorldPoint(
                     worldPoint,
-                    worldVelocity);
+                    worldVelocity,
+                    hasWorldVelocity);
+                NormalizedBoundingBox capsuleBox =
+                    HazardPresentationGeometry.UpperBodyExpandedBox(box);
+                Ray bottomLeftRay = cameraAccess.ViewportPointToRay(
+                    new Vector2(capsuleBox.Left, 1f - capsuleBox.Bottom),
+                    cameraPoseAtCapture);
+                Ray bottomRightRay = cameraAccess.ViewportPointToRay(
+                    new Vector2(capsuleBox.Right, 1f - capsuleBox.Bottom),
+                    cameraPoseAtCapture);
+                Ray topRightRay = cameraAccess.ViewportPointToRay(
+                    new Vector2(capsuleBox.Right, 1f - capsuleBox.Top),
+                    cameraPoseAtCapture);
+                Ray topLeftRay = cameraAccess.ViewportPointToRay(
+                    new Vector2(capsuleBox.Left, 1f - capsuleBox.Top),
+                    cameraPoseAtCapture);
+                Vector3 captureForward = cameraPoseAtCapture.rotation
+                    * Vector3.forward;
+                if (HazardPresentationGeometry.TryCreatePersonCapsule(
+                        tracked.TrackId,
+                        capsuleBox,
+                        bottomLeftRay,
+                        bottomRightRay,
+                        topRightRay,
+                        topLeftRay,
+                        worldPoint,
+                        captureForward,
+                        frameTimestampSeconds,
+                        result.Confidence,
+                        0f,
+                        worldVelocity,
+                        hasWorldVelocity,
+                        out HazardPresentationGeometry geometry))
+                {
+                    result = result.WithPresentationGeometry(geometry);
+                }
             }
             IsDepthReady = result.HasReliableMetricDistance;
             LastFailureReason = result.IsMetricReliable
@@ -580,7 +618,8 @@ namespace TeamVR.AdaptivePassthrough
             int trackId,
             Vector3 observation,
             double timestampSeconds,
-            out Vector3 worldVelocity)
+            out Vector3 worldVelocity,
+            out bool hasWorldVelocity)
         {
             WorldTrackState state;
             if (!worldTrackStates.TryGetValue(trackId, out state))
@@ -596,6 +635,7 @@ namespace TeamVR.AdaptivePassthrough
                 state.Velocity = Vector3.zero;
                 state.TimestampSeconds = timestampSeconds;
                 worldVelocity = Vector3.zero;
+                hasWorldVelocity = false;
                 return observation;
             }
 
@@ -610,6 +650,7 @@ namespace TeamVR.AdaptivePassthrough
             state.Velocity += beta * residual / elapsed;
             state.TimestampSeconds = timestampSeconds;
             worldVelocity = state.Velocity;
+            hasWorldVelocity = true;
             return state.Position;
         }
     }

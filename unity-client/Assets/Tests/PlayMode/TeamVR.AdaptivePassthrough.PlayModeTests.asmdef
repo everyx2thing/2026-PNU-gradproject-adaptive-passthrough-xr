@@ -1,0 +1,19 @@
+{
+  "name": "TeamVR.AdaptivePassthrough.PlayModeTests",
+  "rootNamespace": "TeamVR.AdaptivePassthrough.PlayModeTests",
+  "references": [
+    "TeamVR.AdaptivePassthrough.Runtime"
+  ],
+  "includePlatforms": [],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": false,
+  "defineConstraints": [],
+  "optionalUnityReferences": [
+    "TestAssemblies"
+  ],
+  "versionDefines": [],
+  "noEngineReferences": false
+}

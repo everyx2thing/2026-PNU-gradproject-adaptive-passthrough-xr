@@ -24,6 +24,8 @@ public static class AdaptivePassthroughSceneBuilder
         "Assets/Models/personalization_runtime.onnx";
     public const string PassthroughWindowShaderPath =
         "Assets/Shaders/AdaptivePassthrough/PassthroughWindow.shader";
+    public const string HazardCueShaderPath =
+        "Assets/Shaders/AdaptivePassthrough/HazardCue.shader";
     public const string SafetyAlertBorderShaderPath =
         "Assets/Shaders/AdaptivePassthrough/SafetyAlertBorder.shader";
     public const string OvrRayHelperPrefabPath =
@@ -185,6 +187,9 @@ public static class AdaptivePassthroughSceneBuilder
             Shader windowShader =
                 AssetDatabase.LoadAssetAtPath<Shader>(
                     PassthroughWindowShaderPath);
+            Shader hazardCueShader =
+                AssetDatabase.LoadAssetAtPath<Shader>(
+                    HazardCueShaderPath);
             Shader alertShader =
                 AssetDatabase.LoadAssetAtPath<Shader>(
                     SafetyAlertBorderShaderPath);
@@ -222,8 +227,11 @@ public static class AdaptivePassthroughSceneBuilder
                 passthroughLayer);
             var presentationObject = new SerializedObject(presentation);
             presentationObject
+                .FindProperty("cueShader")
+                .objectReferenceValue = hazardCueShader;
+            presentationObject
                 .FindProperty("personEdgeFeather")
-                .floatValue = 0.08f;
+                .floatValue = 0.065f;
             presentationObject
                 .FindProperty("personMinimumWidth")
                 .floatValue = 0.10f;
@@ -244,16 +252,19 @@ public static class AdaptivePassthroughSceneBuilder
                 .floatValue = 0.10f;
             presentationObject
                 .FindProperty("personSizeSmoothingSeconds")
-                .floatValue = 0.15f;
+                .floatValue = 0.10f;
             presentationObject
                 .FindProperty("personFadeInSeconds")
-                .floatValue = 0.20f;
+                .floatValue = 0.125f;
             presentationObject
                 .FindProperty("personLostHoldSeconds")
                 .floatValue = 1.50f;
             presentationObject
                 .FindProperty("personFadeOutSeconds")
                 .floatValue = 0.30f;
+            presentationObject
+                .FindProperty("wallEdgeFeather")
+                .floatValue = 0.065f;
             presentationObject.ApplyModifiedPropertiesWithoutUndo();
 
             RemoveComponents<QuestRiskSnapshotController>();

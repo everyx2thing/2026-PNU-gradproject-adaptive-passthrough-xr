@@ -2564,6 +2564,7 @@ MonoBehaviour:
   alertFeedback: {fileID: 458888780}
   passthroughLayer: {fileID: 947436444}
   windowShader: {fileID: 4800000, guid: 3f7d092ca5b0537458ebf48f1bcb5796, type: 3}
+  cueShader: {fileID: 4800000, guid: 192f95f17cad3fc44a44f5c6658c259c, type: 3}
   presentationCamera: {fileID: 999914985}
   cameraViewport:
     serializedVersion: 2
@@ -2571,7 +2572,7 @@ MonoBehaviour:
     y: 0.18
     width: 0.9
     height: 0.72
-  personEdgeFeather: 0.08
+  personEdgeFeather: 0.065
   minimumPersonWindowRisk: 0.5
   maximumPersonWindows: 3
   personMinimumWidth: 0.1
@@ -2580,11 +2581,11 @@ MonoBehaviour:
   personMaximumHeight: 0.62
   maximumPersonRevealArea: 0.55
   personPositionSmoothingSeconds: 0.1
-  personSizeSmoothingSeconds: 0.15
-  personFadeInSeconds: 0.2
+  personSizeSmoothingSeconds: 0.1
+  personFadeInSeconds: 0.125
   personLostHoldSeconds: 1.5
   personFadeOutSeconds: 0.3
-  wallEdgeFeather: 0.16
+  wallEdgeFeather: 0.065
   wallViewportEdgeMargin: 0.02
   wallMinimumWidth: 0.24
   wallMaximumWidth: 0.52
