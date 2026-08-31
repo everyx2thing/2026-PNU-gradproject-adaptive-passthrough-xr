@@ -51,6 +51,21 @@ namespace TeamVR.AdaptivePassthrough
             return Mathf.Clamp01(1f - ttc / Positive(safeTimeSeconds));
         }
 
+        public static float SpeedRisk(
+            float closingSpeedMetersPerSecond,
+            float startSpeedMetersPerSecond,
+            float fullSpeedMetersPerSecond)
+        {
+            float start = NonNegative(startSpeedMetersPerSecond);
+            float full = Mathf.Max(
+                start + MinimumPositiveValue,
+                NonNegative(fullSpeedMetersPerSecond));
+            float value = Mathf.Clamp01(
+                (NonNegative(closingSpeedMetersPerSecond) - start)
+                / (full - start));
+            return value * value * (3f - 2f * value);
+        }
+
         public static float AccelerationRisk(
             float towardBoundaryAcceleration,
             float maximumApproachAcceleration)
@@ -98,6 +113,33 @@ namespace TeamVR.AdaptivePassthrough
                 + wb * ClampRisk(blindSpotRisk)) / sum);
         }
 
+        public static float WeightedHeadRiskWithSpeed(
+            float distanceRisk,
+            float speedRisk,
+            float ttcRisk,
+            float blindSpotRisk,
+            float distanceWeight,
+            float speedWeight,
+            float ttcWeight,
+            float blindSpotWeight)
+        {
+            float wd = NonNegative(distanceWeight);
+            float ws = NonNegative(speedWeight);
+            float wt = NonNegative(ttcWeight);
+            float wb = NonNegative(blindSpotWeight);
+            float sum = wd + ws + wt + wb;
+            if (sum <= 0f)
+            {
+                return 0f;
+            }
+
+            return Mathf.Clamp01(
+                (wd * ClampRisk(distanceRisk)
+                + ws * ClampRisk(speedRisk)
+                + wt * ClampRisk(ttcRisk)
+                + wb * ClampRisk(blindSpotRisk)) / sum);
+        }
+
         public static float ReachGate(
             float wallDistanceMeters,
             float handExtensionMeters,
@@ -133,6 +175,31 @@ namespace TeamVR.AdaptivePassthrough
             return Mathf.Clamp01(
                 ClampRisk(reachGate)
                 * (wd * ClampRisk(distanceRisk)
+                + wt * ClampRisk(ttcRisk)) / sum);
+        }
+
+        public static float WeightedHandRiskWithSpeed(
+            float reachGate,
+            float distanceRisk,
+            float speedRisk,
+            float ttcRisk,
+            float distanceWeight,
+            float speedWeight,
+            float ttcWeight)
+        {
+            float wd = NonNegative(distanceWeight);
+            float ws = NonNegative(speedWeight);
+            float wt = NonNegative(ttcWeight);
+            float sum = wd + ws + wt;
+            if (sum <= 0f)
+            {
+                return 0f;
+            }
+
+            return Mathf.Clamp01(
+                ClampRisk(reachGate)
+                * (wd * ClampRisk(distanceRisk)
+                + ws * ClampRisk(speedRisk)
                 + wt * ClampRisk(ttcRisk)) / sum);
         }
 
@@ -190,7 +257,7 @@ namespace TeamVR.AdaptivePassthrough
         }
     }
 
-    public sealed class StaticBoundaryPolicy
+    internal sealed class LegacyStaticBoundaryPolicy
     {
         private readonly StaticBoundaryPolicySettings settings;
 
@@ -204,7 +271,7 @@ namespace TeamVR.AdaptivePassthrough
         private bool lastHazardDirectionAvailable;
         private double lastTimestamp;
 
-        public StaticBoundaryPolicy(
+        public LegacyStaticBoundaryPolicy(
             StaticBoundaryPolicySettings settings = null)
         {
             this.settings = settings ?? new StaticBoundaryPolicySettings();

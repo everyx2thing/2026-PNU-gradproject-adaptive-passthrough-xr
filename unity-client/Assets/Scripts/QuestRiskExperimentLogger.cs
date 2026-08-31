@@ -464,6 +464,10 @@ public class QuestRiskExperimentLogger : MonoBehaviour,
             headTowardSpeed,
             safeTimeSeconds,
             0.01f);
+        float speedRisk = StaticBoundaryRiskMath.SpeedRisk(
+            headTowardSpeed,
+            0.05f,
+            0.80f);
         float accelerationRisk =
             StaticBoundaryRiskMath.AccelerationRisk(
                 headTowardAcceleration,
@@ -473,15 +477,15 @@ public class QuestRiskExperimentLogger : MonoBehaviour,
             headDirection);
         float blindRisk = StaticBoundaryRiskMath.BlindSpotRisk(
             angleToWall);
-        float headRisk = StaticBoundaryRiskMath.WeightedHeadRisk(
+        float headRisk = StaticBoundaryRiskMath.WeightedHeadRiskWithSpeed(
             distanceRisk,
+            speedRisk,
             ttcRisk,
-            accelerationRisk,
             blindRisk,
-            weightDistance,
-            weightTTC,
-            weightApproachAcceleration,
-            weightBlind);
+            0.45f,
+            0.30f,
+            0.20f,
+            0.05f);
         CurrentStaticMeasurement = new StaticRiskMeasurement(
             true,
             headDistance,
@@ -490,6 +494,7 @@ public class QuestRiskExperimentLogger : MonoBehaviour,
             headTowardSpeed,
             headTowardAcceleration,
             distanceRisk,
+            speedRisk,
             ttcRisk,
             accelerationRisk,
             blindRisk,
@@ -695,14 +700,30 @@ public class QuestRiskExperimentLogger : MonoBehaviour,
                 safeHandTime,
                 handApproachSpeedMin)
             : 0f;
+        float speedRisk = enableHandRisk
+            ? StaticBoundaryRiskMath.SpeedRisk(
+                towardSpeed,
+                0.10f,
+                1.50f)
+            : 0f;
         float risk = enableHandRisk
-            ? StaticBoundaryRiskMath.WeightedHandRisk(
+            ? StaticBoundaryRiskMath.WeightedHandRiskWithSpeed(
                 reachGate,
                 distanceRisk,
+                speedRisk,
                 ttcRisk,
-                weightHandDistance,
-                weightHandTTC)
+                0.35f,
+                0.40f,
+                0.25f)
             : 0f;
+        if (enableHandRisk)
+        {
+            float directProximityRisk = Mathf.Clamp01(
+                distanceRisk * 0.60f
+                + speedRisk * 0.25f
+                + ttcRisk * 0.15f);
+            risk = Mathf.Max(risk, directProximityRisk);
+        }
 
         return new StaticHandRiskMeasurement(
             true,
@@ -713,6 +734,7 @@ public class QuestRiskExperimentLogger : MonoBehaviour,
             extension,
             reachGate,
             distanceRisk,
+            speedRisk,
             ttcRisk,
             risk,
             direction);
@@ -918,6 +940,14 @@ public class QuestRiskExperimentLogger : MonoBehaviour,
                 probe.Owner,
                 probe.Purpose)
             : default;
+        HazardPresentationGeometry surfaceBounds = hasSurface
+            ? CreateRoomSurfaceBoundsGeometry(
+                surface,
+                hitPoint,
+                now,
+                probe.Owner,
+                probe.Purpose)
+            : default;
         measurement = new SpatialObstacleMeasurement(
             SpatialObstacleSource.RoomScene,
             now,
@@ -941,7 +971,9 @@ public class QuestRiskExperimentLogger : MonoBehaviour,
             wallIndex >= 0 ? "" : "room-scene-unavailable",
             probe.Purpose,
             wallIndex,
-            geometry);
+            geometry,
+            0f,
+            surfaceBounds);
         return true;
     }
 
@@ -1058,6 +1090,98 @@ public class QuestRiskExperimentLogger : MonoBehaviour,
             purpose);
     }
 
+    private static long RoomVolumeFaceStableId(
+        int surfaceIndex,
+        Vector3 localNormal)
+    {
+        Vector3 normal = localNormal.sqrMagnitude > 0.0001f
+            ? localNormal.normalized
+            : Vector3.forward;
+        int axis;
+        float component;
+        if (Mathf.Abs(normal.x) >= Mathf.Abs(normal.y)
+            && Mathf.Abs(normal.x) >= Mathf.Abs(normal.z))
+        {
+            axis = 0;
+            component = normal.x;
+        }
+        else if (Mathf.Abs(normal.y) >= Mathf.Abs(normal.z))
+        {
+            axis = 1;
+            component = normal.y;
+        }
+        else
+        {
+            axis = 2;
+            component = normal.z;
+        }
+
+        int faceCode = 1 + axis * 2 + (component >= 0f ? 1 : 0);
+        return 0x100000000L
+            + ((long)Mathf.Max(0, surfaceIndex) << 3)
+            + faceCode;
+    }
+
+    private static HazardPresentationGeometry CreateRoomSurfaceBoundsGeometry(
+        WallSurface surface,
+        Vector3 hitPoint,
+        double timestampSeconds,
+        SpatialProbeOwner owner,
+        SpatialProbePurpose purpose)
+    {
+        if (surface.hasPlaneBounds)
+        {
+            Vector3 bl = surface.position + surface.rotation * new Vector3(
+                surface.planeBounds.xMin,
+                surface.planeBounds.yMin,
+                0f);
+            Vector3 br = surface.position + surface.rotation * new Vector3(
+                surface.planeBounds.xMax,
+                surface.planeBounds.yMin,
+                0f);
+            Vector3 tr = surface.position + surface.rotation * new Vector3(
+                surface.planeBounds.xMax,
+                surface.planeBounds.yMax,
+                0f);
+            Vector3 tl = surface.position + surface.rotation * new Vector3(
+                surface.planeBounds.xMin,
+                surface.planeBounds.yMax,
+                0f);
+            return new HazardPresentationGeometry(
+                surface.index,
+                purpose == SpatialProbePurpose.LocomotionCorridor
+                    ? HazardVisualKind.LowObstaclePatch
+                    : HazardVisualKind.WallPlane,
+                bl,
+                br,
+                tr,
+                tl,
+                surface.normal,
+                timestampSeconds,
+                0.70f,
+                0f,
+                SpatialObstacleSource.RoomScene,
+                owner,
+                purpose);
+        }
+
+        if (!surface.hasVolumeBounds)
+        {
+            return default;
+        }
+
+        Vector3 normal = ResolveFiniteSurfaceNormal(surface, hitPoint);
+        return CreateVolumeFaceGeometry(
+            surface,
+            hitPoint,
+            normal,
+            float.MaxValue,
+            float.MaxValue,
+            timestampSeconds,
+            owner,
+            purpose);
+    }
+
     private static HazardPresentationGeometry CreateVolumeFaceGeometry(
         WallSurface surface,
         Vector3 hitPoint,
@@ -1129,7 +1253,7 @@ public class QuestRiskExperimentLogger : MonoBehaviour,
         Vector3 tl = surface.position + surface.rotation
             * (localCenter - horizontal * halfWidth + vertical * halfHeight);
         return new HazardPresentationGeometry(
-            surface.index,
+            RoomVolumeFaceStableId(surface.index, localNormal),
             purpose == SpatialProbePurpose.LocomotionCorridor
                 ? HazardVisualKind.LowObstaclePatch
                 : HazardVisualKind.WallPlane,

@@ -3,6 +3,84 @@ using UnityEngine;
 
 namespace TeamVR.AdaptivePassthrough
 {
+    [Flags]
+    public enum StaticRiskChannelMask
+    {
+        None = 0,
+        Head = 1 << 0,
+        Hands = 1 << 1,
+        LowObstacle = 1 << 2,
+        All = Head | Hands | LowObstacle
+    }
+
+    public enum StaticHazardKey
+    {
+        None = 0,
+        Head = 1,
+        LeftHand = 2,
+        RightHand = 3,
+        LowObstacle = 4
+    }
+
+    [Serializable]
+    public class StaticRiskChannelPreferences
+    {
+        public bool HeadFeatureEnabled = true;
+        public bool HandsFeatureEnabled = true;
+        public bool LowObstacleFeatureEnabled = true;
+
+        public StaticRiskChannelMask ToMask()
+        {
+            StaticRiskChannelMask result = StaticRiskChannelMask.None;
+            if (HeadFeatureEnabled)
+            {
+                result |= StaticRiskChannelMask.Head;
+            }
+            if (HandsFeatureEnabled)
+            {
+                result |= StaticRiskChannelMask.Hands;
+            }
+            if (LowObstacleFeatureEnabled)
+            {
+                result |= StaticRiskChannelMask.LowObstacle;
+            }
+            return result;
+        }
+
+        public void PreserveAllOnForLegacyJson(string json)
+        {
+            if (!string.IsNullOrEmpty(json)
+                && json.IndexOf(
+                    "\"HeadFeatureEnabled\"",
+                    StringComparison.Ordinal) >= 0)
+            {
+                return;
+            }
+
+            HeadFeatureEnabled = true;
+            HandsFeatureEnabled = true;
+            LowObstacleFeatureEnabled = true;
+        }
+    }
+
+    public interface IStaticRiskDiagnosticsProvider
+    {
+        StaticBoundaryRiskFrame CurrentStaticBoundaryFrame { get; }
+
+        StaticPassthroughDecision CurrentStaticDecision { get; }
+    }
+
+    public interface IStaticPresentationDiagnosticsProvider
+    {
+        StaticRiskChannelMask EnabledStaticChannels { get; }
+
+        int ActiveStaticWindowCount { get; }
+
+        string VisibleStaticHazardKeys { get; }
+
+        string LastStaticReplacementReason { get; }
+    }
+
     public enum StaticWarningLevel
     {
         None,
@@ -29,6 +107,7 @@ namespace TeamVR.AdaptivePassthrough
         public readonly float ExtensionMeters;
         public readonly float ReachGate;
         public readonly float DistanceRisk;
+        public readonly float SpeedRisk;
         public readonly float TtcRisk;
         public readonly float Risk;
         public readonly Vector3 HazardDirectionWorld;
@@ -45,6 +124,35 @@ namespace TeamVR.AdaptivePassthrough
             float ttcRisk,
             float risk,
             Vector3 hazardDirectionWorld)
+            : this(
+                available,
+                wallIndex,
+                distanceMeters,
+                towardBoundarySpeed,
+                minimumObservedDistanceMeters,
+                extensionMeters,
+                reachGate,
+                distanceRisk,
+                0f,
+                ttcRisk,
+                risk,
+                hazardDirectionWorld)
+        {
+        }
+
+        public StaticHandRiskMeasurement(
+            bool available,
+            int wallIndex,
+            float distanceMeters,
+            float towardBoundarySpeed,
+            float minimumObservedDistanceMeters,
+            float extensionMeters,
+            float reachGate,
+            float distanceRisk,
+            float speedRisk,
+            float ttcRisk,
+            float risk,
+            Vector3 hazardDirectionWorld)
         {
             Available = available;
             WallIndex = available ? wallIndex : -1;
@@ -55,6 +163,7 @@ namespace TeamVR.AdaptivePassthrough
             ExtensionMeters = NonNegative(extensionMeters);
             ReachGate = Clamp01(reachGate);
             DistanceRisk = Clamp01(distanceRisk);
+            SpeedRisk = Clamp01(speedRisk);
             TtcRisk = Clamp01(ttcRisk);
             Risk = Clamp01(risk);
             HazardDirectionWorld =
@@ -348,6 +457,8 @@ namespace TeamVR.AdaptivePassthrough
         public readonly Vector3 HazardDirectionWorld;
         public readonly bool HazardDirectionAvailable;
         public readonly HazardPresentationGeometry PresentationGeometry;
+        public readonly StaticRiskChannelMask EnabledChannels;
+        public readonly StaticHazardDecision[] Hazards;
 
         public StaticPassthroughDecision(
             PassthroughSourceDecision sourceDecision,
@@ -365,6 +476,45 @@ namespace TeamVR.AdaptivePassthrough
             Vector3 hazardDirectionWorld,
             bool hazardDirectionAvailable,
             HazardPresentationGeometry presentationGeometry = default)
+            : this(
+                sourceDecision,
+                warningLevel,
+                cause,
+                headRisk,
+                handRisk,
+                combinedRisk,
+                userState01,
+                effectiveOnThreshold,
+                effectiveOffThreshold,
+                handReleaseThreshold,
+                emergencyTrigger,
+                emergencyHold,
+                hazardDirectionWorld,
+                hazardDirectionAvailable,
+                presentationGeometry,
+                StaticRiskChannelMask.All,
+                null)
+        {
+        }
+
+        public StaticPassthroughDecision(
+            PassthroughSourceDecision sourceDecision,
+            StaticWarningLevel warningLevel,
+            StaticActivationCause cause,
+            float headRisk,
+            float handRisk,
+            float combinedRisk,
+            float userState01,
+            float effectiveOnThreshold,
+            float effectiveOffThreshold,
+            float handReleaseThreshold,
+            bool emergencyTrigger,
+            bool emergencyHold,
+            Vector3 hazardDirectionWorld,
+            bool hazardDirectionAvailable,
+            HazardPresentationGeometry presentationGeometry,
+            StaticRiskChannelMask enabledChannels,
+            StaticHazardDecision[] hazards)
         {
             SourceDecision = sourceDecision;
             WarningLevel = warningLevel;
@@ -387,11 +537,88 @@ namespace TeamVR.AdaptivePassthrough
             PresentationGeometry = presentationGeometry.Available
                 ? presentationGeometry.WithRisk(CombinedRisk)
                 : default;
+            EnabledChannels = enabledChannels & StaticRiskChannelMask.All;
+            Hazards = hazards ?? Array.Empty<StaticHazardDecision>();
         }
 
         public bool Enabled
         {
             get { return SourceDecision != null && SourceDecision.Enabled; }
+        }
+    }
+
+    public sealed class StaticHazardDecision
+    {
+        public readonly StaticHazardKey Key;
+        public readonly StaticRiskChannelMask Channel;
+        public readonly bool ChannelEnabled;
+        public readonly bool Available;
+        public readonly bool Enabled;
+        public readonly bool EmergencyTrigger;
+        public readonly bool EmergencyHold;
+        public readonly float Risk;
+        public readonly float DistanceMeters;
+        public readonly float ClosingSpeedMetersPerSecond;
+        public readonly float DistanceRisk;
+        public readonly float SpeedRisk;
+        public readonly float TtcRisk;
+        public readonly float OnThreshold;
+        public readonly float OffThreshold;
+        public readonly float HeldSeconds;
+        public readonly PassthroughDecisionReason Reason;
+        public readonly Vector3 HazardDirectionWorld;
+        public readonly bool HazardDirectionAvailable;
+        public readonly HazardPresentationGeometry PresentationGeometry;
+
+        public StaticHazardDecision(
+            StaticHazardKey key,
+            StaticRiskChannelMask channel,
+            bool channelEnabled,
+            bool available,
+            bool enabled,
+            bool emergencyTrigger,
+            bool emergencyHold,
+            float risk,
+            float distanceMeters,
+            float closingSpeedMetersPerSecond,
+            float onThreshold,
+            float offThreshold,
+            float heldSeconds,
+            PassthroughDecisionReason reason,
+            Vector3 hazardDirectionWorld,
+            bool hazardDirectionAvailable,
+            HazardPresentationGeometry presentationGeometry,
+            float distanceRisk = 0f,
+            float speedRisk = 0f,
+            float ttcRisk = 0f)
+        {
+            Key = key;
+            Channel = channel;
+            ChannelEnabled = channelEnabled;
+            Available = available;
+            Enabled = enabled;
+            EmergencyTrigger = emergencyTrigger;
+            EmergencyHold = emergencyHold;
+            Risk = Mathf.Clamp01(risk);
+            DistanceMeters = Mathf.Max(0f, distanceMeters);
+            ClosingSpeedMetersPerSecond = Mathf.Max(
+                0f,
+                closingSpeedMetersPerSecond);
+            DistanceRisk = Mathf.Clamp01(distanceRisk);
+            SpeedRisk = Mathf.Clamp01(speedRisk);
+            TtcRisk = Mathf.Clamp01(ttcRisk);
+            OnThreshold = Mathf.Clamp01(onThreshold);
+            OffThreshold = Mathf.Clamp01(offThreshold);
+            HeldSeconds = Mathf.Max(0f, heldSeconds);
+            Reason = reason;
+            HazardDirectionWorld = hazardDirectionAvailable
+                ? hazardDirectionWorld.normalized
+                : Vector3.zero;
+            HazardDirectionAvailable = hazardDirectionAvailable
+                && HazardDirectionWorld.sqrMagnitude > 0.0001f;
+            PresentationGeometry = presentationGeometry.Available
+                ? presentationGeometry.WithRisk(Risk)
+                : default;
         }
     }
 }

@@ -4,12 +4,15 @@ using UnityEngine;
 
 [DefaultExecutionOrder(520)]
 [DisallowMultipleComponent]
-public sealed class StaticPassthroughPolicyController : MonoBehaviour
+public sealed class StaticPassthroughPolicyController : MonoBehaviour,
+    IStaticRiskDiagnosticsProvider
 {
     [SerializeField] private MonoBehaviour measurementProvider;
     [SerializeField, Min(1f)] private float evaluationRateHz = 20f;
     [SerializeField] private StaticBoundaryPolicySettings policySettings =
         new StaticBoundaryPolicySettings();
+    [SerializeField] private StaticRiskChannelMask enabledChannels =
+        StaticRiskChannelMask.All;
 
     private StaticBoundaryPolicy policy;
     private IStaticBoundaryFrameProvider frameProvider;
@@ -21,6 +24,21 @@ public sealed class StaticPassthroughPolicyController : MonoBehaviour
 
     public PassthroughSourceDecision Latest { get; private set; }
     public StaticPassthroughDecision LatestStatic { get; private set; }
+
+    public StaticBoundaryRiskFrame CurrentStaticBoundaryFrame
+    {
+        get
+        {
+            return frameProvider == null
+                ? null
+                : frameProvider.CurrentStaticBoundaryFrame;
+        }
+    }
+
+    public StaticPassthroughDecision CurrentStaticDecision
+    {
+        get { return LatestStatic; }
+    }
 
     public QuestRiskExperimentLogger MeasurementProvider
     {
@@ -102,6 +120,11 @@ public sealed class StaticPassthroughPolicyController : MonoBehaviour
         }
     }
 
+    public StaticRiskChannelMask EnabledChannels
+    {
+        get { return enabledChannels & StaticRiskChannelMask.All; }
+    }
+
     private void Awake()
     {
         ResolveReference();
@@ -166,6 +189,30 @@ public sealed class StaticPassthroughPolicyController : MonoBehaviour
             PersonalizationMath.DefaultHandFullThreshold);
     }
 
+    public void SetEnabledChannels(StaticRiskChannelMask channels)
+    {
+        enabledChannels = channels & StaticRiskChannelMask.All;
+        policy?.SetEnabledChannels(enabledChannels);
+    }
+
+    public void SetChannelEnabled(
+        StaticRiskChannelMask channel,
+        bool enabled)
+    {
+        channel &= StaticRiskChannelMask.All;
+        SetEnabledChannels(
+            enabled
+                ? enabledChannels | channel
+                : enabledChannels & ~channel);
+    }
+
+    public bool IsChannelEnabled(StaticRiskChannelMask channel)
+    {
+        channel &= StaticRiskChannelMask.All;
+        return channel != StaticRiskChannelMask.None
+            && (enabledChannels & channel) == channel;
+    }
+
     public PassthroughSourceDecision Evaluate(double timestampSeconds)
     {
         ResolveReference();
@@ -183,7 +230,8 @@ public sealed class StaticPassthroughPolicyController : MonoBehaviour
         LatestStatic = policy.Evaluate(
             sequence,
             timestampSeconds,
-            frame);
+            frame,
+            enabledChannels);
         Latest = LatestStatic.SourceDecision;
         StaticDecisionPublished?.Invoke(LatestStatic);
         DecisionPublished?.Invoke(Latest);
@@ -210,6 +258,7 @@ public sealed class StaticPassthroughPolicyController : MonoBehaviour
         }
 
         policy = new StaticBoundaryPolicy(policySettings);
+        policy.SetEnabledChannels(enabledChannels);
         sequence = 0;
         Latest = null;
         LatestStatic = null;

@@ -278,6 +278,9 @@ public static class AdaptivePassthroughSceneBuilder
             dynamicLoggerObject
                 .FindProperty("presentationBehaviour")
                 .objectReferenceValue = presentation;
+            dynamicLoggerObject
+                .FindProperty("staticPolicyBehaviour")
+                .objectReferenceValue = staticPolicy;
             dynamicLoggerObject.ApplyModifiedPropertiesWithoutUndo();
 
             InstallOrUpdateQuestHud(

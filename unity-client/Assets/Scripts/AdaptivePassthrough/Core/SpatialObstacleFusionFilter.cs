@@ -271,7 +271,8 @@ namespace TeamVR.AdaptivePassthrough
 
             HazardPresentationGeometry environmentGeometry =
                 environment.PresentationGeometry;
-            HazardPresentationGeometry roomGeometry = room.PresentationGeometry;
+            HazardPresentationGeometry roomGeometry =
+                RoomBoundsGeometry(room);
             Vector3 environmentNormal = environmentGeometry.Available
                 ? environmentGeometry.SurfaceNormal
                 : environment.HitNormal;
@@ -371,7 +372,11 @@ namespace TeamVR.AdaptivePassthrough
                     selected,
                     environment,
                     room,
-                    publishedSource));
+                    publishedSource),
+                selected.PresentationNormalChangeDegrees,
+                room.SurfaceBoundsGeometry.Available
+                    ? room.SurfaceBoundsGeometry
+                    : selected.SurfaceBoundsGeometry);
         }
 
         private static SpatialObstacleMeasurement CopyHeld(
@@ -411,7 +416,9 @@ namespace TeamVR.AdaptivePassthrough
                 environment.RejectionReason,
                 held.ProbePurpose,
                 held.SurfaceId,
-                held.PresentationGeometry);
+                held.PresentationGeometry,
+                held.PresentationNormalChangeDegrees,
+                held.SurfaceBoundsGeometry);
         }
 
         private static SpatialObstacleMeasurement UnavailableWithDiagnostics(
@@ -445,7 +452,8 @@ namespace TeamVR.AdaptivePassthrough
                 environment.RejectionReason,
                 environment.ProbePurpose,
                 environment.SurfaceId,
-                default);
+                default,
+                environment.PresentationNormalChangeDegrees);
         }
 
         private static HazardPresentationGeometry SelectPresentationGeometry(
@@ -466,7 +474,7 @@ namespace TeamVR.AdaptivePassthrough
                 HazardPresentationGeometry environmentGeometry =
                     environment.PresentationGeometry;
                 HazardPresentationGeometry roomGeometry =
-                    room.PresentationGeometry;
+                    RoomBoundsGeometry(room);
                 Vector3 roomNormal = roomGeometry.SurfaceNormal;
                 float planeOffset = Vector3.Dot(
                     environmentGeometry.Center - roomGeometry.Center,
@@ -480,7 +488,9 @@ namespace TeamVR.AdaptivePassthrough
             if (!geometry.Available
                 && publishedSource == SpatialObstacleSource.Fused)
             {
-                geometry = environment.PresentationGeometry;
+                geometry = environment.PresentationGeometry.Available
+                    ? environment.PresentationGeometry
+                    : room.PresentationGeometry;
             }
 
             if (!geometry.Available || publishedSource != SpatialObstacleSource.Fused)
@@ -534,7 +544,7 @@ namespace TeamVR.AdaptivePassthrough
                 room.Height * 0.5f - halfHeight);
             Vector3 center = room.Center + right * x + up * y;
             return new HazardPresentationGeometry(
-                projected.StableId,
+                room.StableId,
                 projected.Kind,
                 center - right * halfWidth - up * halfHeight,
                 center + right * halfWidth - up * halfHeight,
@@ -551,6 +561,14 @@ namespace TeamVR.AdaptivePassthrough
                 projected.WorldVelocity,
                 projected.HasFreshFloor,
                 projected.FloorHeight);
+        }
+
+        private static HazardPresentationGeometry RoomBoundsGeometry(
+            SpatialObstacleMeasurement room)
+        {
+            return room.SurfaceBoundsGeometry.Available
+                ? room.SurfaceBoundsGeometry
+                : room.PresentationGeometry;
         }
 
         private static bool IsPointInsideRoomBounds(

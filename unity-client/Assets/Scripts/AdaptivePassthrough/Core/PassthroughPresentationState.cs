@@ -24,6 +24,10 @@ namespace TeamVR.AdaptivePassthrough
         public const float DefaultHoldSeconds = 1.500f;
         public const float DefaultFadeSeconds = 0.300f;
         public const float DefaultPredictionSeconds = 0.500f;
+        public const float SurfaceHandoffSeconds = 0.250f;
+        public const float SurfaceHandoffMaximumObservationGapSeconds = 0.400f;
+        public const float SameSurfaceCenterDistanceMeters = 0.350f;
+        public const float SameSurfaceNormalAngleDegrees = 20f;
 
         private readonly float appearSeconds;
         private readonly float smoothingSeconds;
@@ -34,6 +38,10 @@ namespace TeamVR.AdaptivePassthrough
 
         private HazardPresentationGeometry currentGeometry;
         private HazardPresentationGeometry targetGeometry;
+        private HazardPresentationGeometry pendingGeometry;
+        private double pendingGeometrySince;
+        private double pendingGeometryLastSeen;
+        private int pendingGeometryConfirmations;
         private double firstQualifiedAt;
         private double lastQualifiedAt;
         private double lastGeometryAt;
@@ -149,6 +157,15 @@ namespace TeamVR.AdaptivePassthrough
             presentationPolicyActive = false;
         }
 
+        public void CancelHoldAndFade(double timestampSeconds)
+        {
+            SetPresentationPolicyActive(false, timestampSeconds);
+            qualifiedThisFrame = false;
+            hasQualifiedObservation = false;
+            firstQualifiedAt = 0.0;
+            lastQualifiedAt = 0.0;
+        }
+
         public void Observe(
             HazardPresentationGeometry geometry,
             float observationRisk,
@@ -178,14 +195,80 @@ namespace TeamVR.AdaptivePassthrough
                 qualificationTimestampSeconds);
             if (geometry.Available)
             {
-                if (!currentGeometry.Available
-                    || currentGeometry.StableId != geometry.StableId)
+                bool hasRenderableIncumbent = currentGeometry.Available
+                    && opacity > 0f
+                    && Phase != PassthroughAnimationPhase.Hidden
+                    && IsGeometryFresh(safeQualificationTimestamp);
+                if (currentGeometry.Available && !hasRenderableIncumbent)
                 {
-                    currentGeometry = geometry;
+                    // A stale or already hidden surface must never impose its
+                    // handoff dwell on the next trusted surface. Restart the
+                    // visual appearance as well, otherwise opacity and the
+                    // one-shot pulse can finish while no geometry is rendered.
+                    currentGeometry = default;
+                    targetGeometry = default;
+                    ClearPendingGeometry();
+                    hasQualifiedObservation = false;
+                    qualifiedThisFrame = false;
+                    firstQualifiedAt = 0.0;
+                    lastQualifiedAt = 0.0;
+                    pulseStartedAt = 0.0;
+                    opacity = 0f;
+                    Phase = PassthroughAnimationPhase.Hidden;
                 }
 
-                targetGeometry = geometry;
-                lastGeometryAt = safeGeometryTimestamp;
+                HazardPresentationGeometry acceptedGeometry = geometry;
+                if (currentGeometry.Available
+                    && currentGeometry.StableId != geometry.StableId
+                    && IsSamePhysicalSurface(currentGeometry, geometry))
+                {
+                    acceptedGeometry = geometry.WithStableId(
+                        currentGeometry.StableId);
+                }
+                else if (currentGeometry.Available
+                    && currentGeometry.StableId != geometry.StableId
+                    && observationRisk < 0.999f)
+                {
+                    if (!pendingGeometry.Available
+                        || pendingGeometry.StableId != geometry.StableId
+                        || safeQualificationTimestamp
+                            - pendingGeometryLastSeen
+                                > SurfaceHandoffMaximumObservationGapSeconds)
+                    {
+                        pendingGeometry = geometry;
+                        pendingGeometrySince = safeQualificationTimestamp;
+                        pendingGeometryLastSeen = safeQualificationTimestamp;
+                        pendingGeometryConfirmations = 1;
+                        acceptedGeometry = default;
+                    }
+                    else
+                    {
+                        pendingGeometry = geometry;
+                        pendingGeometryLastSeen = safeQualificationTimestamp;
+                        pendingGeometryConfirmations++;
+                        if (pendingGeometryConfirmations < 2
+                            || safeQualificationTimestamp
+                                - pendingGeometrySince
+                                    < SurfaceHandoffSeconds)
+                        {
+                            acceptedGeometry = default;
+                        }
+                    }
+                }
+
+                if (acceptedGeometry.Available)
+                {
+                    if (!currentGeometry.Available
+                        || currentGeometry.StableId
+                            != acceptedGeometry.StableId)
+                    {
+                        currentGeometry = acceptedGeometry;
+                    }
+
+                    targetGeometry = acceptedGeometry;
+                    lastGeometryAt = safeGeometryTimestamp;
+                    ClearPendingGeometry();
+                }
             }
 
             if (!revealEligible)
@@ -210,6 +293,12 @@ namespace TeamVR.AdaptivePassthrough
         public void Update(double timestampSeconds, float deltaTime)
         {
             LastUpdateSeconds = Math.Max(0.0, timestampSeconds);
+            if (pendingGeometry.Available
+                && LastUpdateSeconds - pendingGeometryLastSeen
+                    > SurfaceHandoffMaximumObservationGapSeconds)
+            {
+                ClearPendingGeometry();
+            }
             float safeDelta = Mathf.Max(0f, deltaTime);
             if (currentGeometry.Available && targetGeometry.Available)
             {
@@ -246,6 +335,9 @@ namespace TeamVR.AdaptivePassthrough
                 hasQualifiedObservation = false;
                 retainGeometryUntilHidden = false;
                 risk = 0f;
+                currentGeometry = default;
+                targetGeometry = default;
+                ClearPendingGeometry();
             }
         }
 
@@ -282,10 +374,44 @@ namespace TeamVR.AdaptivePassthrough
             return age <= predictionSeconds;
         }
 
+        private static bool IsSamePhysicalSurface(
+            HazardPresentationGeometry current,
+            HazardPresentationGeometry next)
+        {
+            if (!current.Available || !next.Available)
+            {
+                return false;
+            }
+
+            if (Vector3.Distance(current.Center, next.Center)
+                > SameSurfaceCenterDistanceMeters)
+            {
+                return false;
+            }
+
+            Vector3 a = current.SurfaceNormal;
+            Vector3 b = next.SurfaceNormal;
+            if (a.sqrMagnitude <= 0.0001f || b.sqrMagnitude <= 0.0001f)
+            {
+                return true;
+            }
+
+            return Vector3.Angle(a, b) <= SameSurfaceNormalAngleDegrees;
+        }
+
+        private void ClearPendingGeometry()
+        {
+            pendingGeometry = default;
+            pendingGeometrySince = 0.0;
+            pendingGeometryLastSeen = 0.0;
+            pendingGeometryConfirmations = 0;
+        }
+
         public void Reset()
         {
             currentGeometry = default;
             targetGeometry = default;
+            ClearPendingGeometry();
             firstQualifiedAt = 0.0;
             lastQualifiedAt = 0.0;
             lastGeometryAt = 0.0;

@@ -139,12 +139,74 @@ namespace TeamVR.AdaptivePassthrough
             public int classRejectedCount;
             public string inferenceWatchdogState;
             public float inferenceSliceBudgetMilliseconds;
+            public string staticEnabledChannels;
+            public int staticWindowCount;
+            public string staticHazardKeys;
+            public string staticReplacementReason;
+            public bool staticDiagnosticsAvailable;
+            public float headStaticRisk;
+            public bool headStaticAvailable;
+            public bool headChannelEnabled;
+            public bool headPolicyContributing;
+            public float headStaticDistanceMeters = -1f;
+            public float headClosingSpeedMetersPerSecond;
+            public float headDistanceRisk;
+            public float headSpeedRisk;
+            public float headTtcRisk;
+            public float leftHandStaticRisk;
+            public bool leftHandStaticAvailable;
+            public bool leftHandChannelEnabled;
+            public bool leftHandPolicyContributing;
+            public float leftHandStaticDistanceMeters = -1f;
+            public float leftHandClosingSpeedMetersPerSecond;
+            public float leftHandDistanceRisk;
+            public float leftHandSpeedRisk;
+            public float leftHandTtcRisk;
+            public float rightHandStaticRisk;
+            public bool rightHandStaticAvailable;
+            public bool rightHandChannelEnabled;
+            public bool rightHandPolicyContributing;
+            public float rightHandStaticDistanceMeters = -1f;
+            public float rightHandClosingSpeedMetersPerSecond;
+            public float rightHandDistanceRisk;
+            public float rightHandSpeedRisk;
+            public float rightHandTtcRisk;
+            public float lowObstacleStaticRisk;
+            public bool lowObstacleStaticAvailable;
+            public bool lowObstacleChannelEnabled;
+            public bool lowObstaclePolicyContributing;
+            public float lowObstacleStaticDistanceMeters = -1f;
+            public float lowObstacleClosingSpeedMetersPerSecond;
+            public float lowObstacleDistanceRisk;
+            public float lowObstacleSpeedRisk;
+            public float lowObstacleTtcRisk;
+            public int headSurfaceId;
+            public float headPresentationNormalChangeDegrees;
+            public int leftSurfaceId;
+            public float leftPresentationNormalChangeDegrees;
+            public int rightSurfaceId;
+            public float rightPresentationNormalChangeDegrees;
+            public int lowObstacleSurfaceId;
+            public string lowObstacleSelectedSource;
+            public float lowObstaclePresentationNormalChangeDegrees;
+            public long staticPresentationStableId;
+            public string staticPresentationSource;
+            public float staticPresentationNormalX;
+            public float staticPresentationNormalY;
+            public float staticPresentationNormalZ;
+            public bool primaryPolicyGeometryAvailable;
+            public long primaryPolicyGeometryStableId;
+            public string primaryPolicyGeometrySource;
+            public float primaryPolicyGeometryNormalX;
+            public float primaryPolicyGeometryNormalY;
+            public float primaryPolicyGeometryNormalZ;
         }
 
         [SerializeField] private DynamicRiskController controller;
         [SerializeField] private MonoBehaviour presentationBehaviour;
         [SerializeField] private MonoBehaviour snapshotSequenceProviderBehaviour;
         [SerializeField] private TrackingQualityController trackingQuality;
+        [SerializeField] private MonoBehaviour staticPolicyBehaviour;
 #if ADAPTIVE_PASSTHROUGH_QUEST_CAMERA
         [SerializeField] private QuestSpatialObstacleProvider spatialProvider;
 #endif
@@ -159,6 +221,7 @@ namespace TeamVR.AdaptivePassthrough
         private IPassthroughPresentationSnapshotProvider
             presentationSnapshotProvider;
         private IPassthroughVisibilityEventSource visibilityEventSource;
+        private IStaticRiskDiagnosticsProvider staticPolicy;
 
         public string CurrentLogPath { get; private set; }
 
@@ -423,6 +486,13 @@ namespace TeamVR.AdaptivePassthrough
                 record.spatialDispersionMeters =
                     spatial.SampleDispersionMeters;
                 record.spatialAgeSeconds = spatial.AgeSeconds;
+                SpatialObstacleMeasurement low =
+                    spatialProvider.LatestLocomotionMeasurement;
+                record.lowObstacleSurfaceId = low.SurfaceId;
+                record.lowObstacleSelectedSource =
+                    low.SelectedSource.ToString();
+                record.lowObstaclePresentationNormalChangeDegrees =
+                    low.PresentationNormalChangeDegrees;
             }
 #endif
             if (presentationSnapshotProvider != null)
@@ -438,7 +508,161 @@ namespace TeamVR.AdaptivePassthrough
                 record.holdRemainingSeconds =
                     presentationSnapshot.HoldRemainingSeconds;
             }
+            ApplyStaticDiagnostics(record);
             return record;
+        }
+
+        private void ApplyStaticDiagnostics(LogRecord record)
+        {
+            if (record == null)
+            {
+                return;
+            }
+
+            IStaticPresentationDiagnosticsProvider selective =
+                presentationBehaviour as IStaticPresentationDiagnosticsProvider;
+            if (selective != null)
+            {
+                record.staticEnabledChannels =
+                    selective.EnabledStaticChannels.ToString();
+                record.staticWindowCount = selective.ActiveStaticWindowCount;
+                record.staticHazardKeys = selective.VisibleStaticHazardKeys;
+                record.staticReplacementReason =
+                    selective.LastStaticReplacementReason;
+            }
+
+            StaticBoundaryRiskFrame frame = staticPolicy == null
+                ? null
+                : staticPolicy.CurrentStaticBoundaryFrame;
+            if (frame != null)
+            {
+                record.staticDiagnosticsAvailable = frame.Available;
+                record.headStaticRisk = frame.Head.Risk;
+                record.headStaticAvailable = frame.Head.Available;
+                if (frame.Head.Available)
+                {
+                    record.headStaticDistanceMeters =
+                        frame.Head.ClosestDistanceMeters;
+                }
+                record.headClosingSpeedMetersPerSecond =
+                    frame.Head.TowardBoundarySpeed;
+                record.headDistanceRisk = frame.Head.DistanceRisk;
+                record.headSpeedRisk = frame.Head.SpeedRisk;
+                record.headTtcRisk = frame.Head.TtcRisk;
+                record.leftHandStaticRisk = frame.LeftHand.Risk;
+                record.leftHandStaticAvailable = frame.LeftHand.Available;
+                if (frame.LeftHand.Available)
+                {
+                    record.leftHandStaticDistanceMeters =
+                        frame.LeftHand.DistanceMeters;
+                }
+                record.leftHandClosingSpeedMetersPerSecond =
+                    frame.LeftHand.TowardBoundarySpeed;
+                record.leftHandDistanceRisk = frame.LeftHand.DistanceRisk;
+                record.leftHandSpeedRisk = frame.LeftHand.SpeedRisk;
+                record.leftHandTtcRisk = frame.LeftHand.TtcRisk;
+                record.rightHandStaticRisk = frame.RightHand.Risk;
+                record.rightHandStaticAvailable = frame.RightHand.Available;
+                if (frame.RightHand.Available)
+                {
+                    record.rightHandStaticDistanceMeters =
+                        frame.RightHand.DistanceMeters;
+                }
+                record.rightHandClosingSpeedMetersPerSecond =
+                    frame.RightHand.TowardBoundarySpeed;
+                record.rightHandDistanceRisk = frame.RightHand.DistanceRisk;
+                record.rightHandSpeedRisk = frame.RightHand.SpeedRisk;
+                record.rightHandTtcRisk = frame.RightHand.TtcRisk;
+                record.lowObstacleStaticRisk = frame.LowObstacle.Risk;
+                record.lowObstacleStaticAvailable = frame.LowObstacle.Available;
+                if (frame.LowObstacle.Available)
+                {
+                    record.lowObstacleStaticDistanceMeters =
+                        frame.LowObstacle.ClosestDistanceMeters;
+                }
+                record.lowObstacleClosingSpeedMetersPerSecond =
+                    frame.LowObstacle.TowardBoundarySpeed;
+                record.lowObstacleDistanceRisk =
+                    frame.LowObstacle.DistanceRisk;
+                record.lowObstacleSpeedRisk = frame.LowObstacle.SpeedRisk;
+                record.lowObstacleTtcRisk = frame.LowObstacle.TtcRisk;
+            }
+
+            StaticPassthroughDecision decision = staticPolicy == null
+                ? null
+                : staticPolicy.CurrentStaticDecision;
+            ApplyHazardContribution(record, decision, StaticHazardKey.Head);
+            ApplyHazardContribution(
+                record,
+                decision,
+                StaticHazardKey.LeftHand);
+            ApplyHazardContribution(
+                record,
+                decision,
+                StaticHazardKey.RightHand);
+            ApplyHazardContribution(
+                record,
+                decision,
+                StaticHazardKey.LowObstacle);
+            HazardPresentationGeometry geometry = decision == null
+                ? default
+                : decision.PresentationGeometry;
+            if (geometry.Available)
+            {
+                record.staticPresentationStableId = geometry.StableId;
+                record.staticPresentationSource = geometry.Source.ToString();
+                record.staticPresentationNormalX = geometry.SurfaceNormal.x;
+                record.staticPresentationNormalY = geometry.SurfaceNormal.y;
+                record.staticPresentationNormalZ = geometry.SurfaceNormal.z;
+                record.primaryPolicyGeometryAvailable = true;
+                record.primaryPolicyGeometryStableId = geometry.StableId;
+                record.primaryPolicyGeometrySource = geometry.Source.ToString();
+                record.primaryPolicyGeometryNormalX = geometry.SurfaceNormal.x;
+                record.primaryPolicyGeometryNormalY = geometry.SurfaceNormal.y;
+                record.primaryPolicyGeometryNormalZ = geometry.SurfaceNormal.z;
+            }
+        }
+
+        private static void ApplyHazardContribution(
+            LogRecord record,
+            StaticPassthroughDecision decision,
+            StaticHazardKey key)
+        {
+            if (decision == null || decision.Hazards == null)
+            {
+                return;
+            }
+
+            for (int i = 0; i < decision.Hazards.Length; i++)
+            {
+                StaticHazardDecision hazard = decision.Hazards[i];
+                if (hazard == null || hazard.Key != key)
+                {
+                    continue;
+                }
+
+                switch (key)
+                {
+                    case StaticHazardKey.Head:
+                        record.headChannelEnabled = hazard.ChannelEnabled;
+                        record.headPolicyContributing = hazard.Enabled;
+                        break;
+                    case StaticHazardKey.LeftHand:
+                        record.leftHandChannelEnabled = hazard.ChannelEnabled;
+                        record.leftHandPolicyContributing = hazard.Enabled;
+                        break;
+                    case StaticHazardKey.RightHand:
+                        record.rightHandChannelEnabled = hazard.ChannelEnabled;
+                        record.rightHandPolicyContributing = hazard.Enabled;
+                        break;
+                    case StaticHazardKey.LowObstacle:
+                        record.lowObstacleChannelEnabled =
+                            hazard.ChannelEnabled;
+                        record.lowObstaclePolicyContributing = hazard.Enabled;
+                        break;
+                }
+                return;
+            }
         }
 
         private static void ApplySpatialOwner(
@@ -457,6 +681,9 @@ namespace TeamVR.AdaptivePassthrough
                 record.headSelfRejected = value.SelfRejected;
                 record.headSelfRejectionReason = value.RejectionReason;
                 record.headSpatialConfidence = value.Confidence;
+                record.headSurfaceId = value.SurfaceId;
+                record.headPresentationNormalChangeDegrees =
+                    value.PresentationNormalChangeDegrees;
                 return;
             }
 
@@ -471,6 +698,9 @@ namespace TeamVR.AdaptivePassthrough
                 record.leftSelfRejected = value.SelfRejected;
                 record.leftSelfRejectionReason = value.RejectionReason;
                 record.leftSpatialConfidence = value.Confidence;
+                record.leftSurfaceId = value.SurfaceId;
+                record.leftPresentationNormalChangeDegrees =
+                    value.PresentationNormalChangeDegrees;
                 return;
             }
 
@@ -483,6 +713,9 @@ namespace TeamVR.AdaptivePassthrough
             record.rightSelfRejected = value.SelfRejected;
             record.rightSelfRejectionReason = value.RejectionReason;
             record.rightSpatialConfidence = value.Confidence;
+            record.rightSurfaceId = value.SurfaceId;
+            record.rightPresentationNormalChangeDegrees =
+                value.PresentationNormalChangeDegrees;
         }
 
         private void OnScenarioMarker(TrackingTestMarker marker)
@@ -623,6 +856,29 @@ namespace TeamVR.AdaptivePassthrough
             {
                 trackingQuality =
                     FindAnyObjectByType<TrackingQualityController>();
+            }
+            if (staticPolicy == null)
+            {
+                staticPolicy = staticPolicyBehaviour
+                    as IStaticRiskDiagnosticsProvider;
+            }
+            if (staticPolicy == null)
+            {
+                MonoBehaviour[] behaviours =
+                    FindObjectsByType<MonoBehaviour>(FindObjectsSortMode.None);
+                for (int i = 0; i < behaviours.Length; i++)
+                {
+                    IStaticRiskDiagnosticsProvider candidate = behaviours[i]
+                        as IStaticRiskDiagnosticsProvider;
+                    if (candidate == null)
+                    {
+                        continue;
+                    }
+
+                    staticPolicyBehaviour = behaviours[i];
+                    staticPolicy = candidate;
+                    break;
+                }
             }
 #if ADAPTIVE_PASSTHROUGH_QUEST_CAMERA
             if (spatialProvider == null)

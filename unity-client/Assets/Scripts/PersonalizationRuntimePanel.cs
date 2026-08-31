@@ -19,7 +19,7 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
     private const int RuntimeSettingsVersion = 2;
 
     [Serializable]
-    private sealed class RuntimePanelSettings
+    private sealed class RuntimePanelSettings : StaticRiskChannelPreferences
     {
         public int Version = RuntimeSettingsVersion;
         public int SelectedPage;
@@ -432,8 +432,7 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
             "PanelPlacementPage");
         pages.Add(panelPage);
         BuildPanelPlacementPage(panelPage.transform);
-        currentPage = 0;
-        SetPage(0);
+        SetPage(currentPage);
     }
 
     private void BuildPanelPlacementPage(Transform parent)
@@ -558,6 +557,15 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
             new Vector2(0.015f, 0.49f),
             new Vector2(0.493f, 0.985f),
             "STATIC SAFETY");
+        TMP_Text staticTitle = staticCard.transform.Find("Title")
+            ?.GetComponent<TMP_Text>();
+        if (staticTitle != null)
+        {
+            staticTitle.text = "STATIC";
+            staticTitle.fontSize = 15f;
+            RectTransform titleRect = staticTitle.rectTransform;
+            titleRect.anchorMax = new Vector2(0.195f, 0.975f);
+        }
         staticStateChip = CreateStatusChip(
             staticCard.transform,
             "StaticState",
@@ -568,6 +576,28 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
             "Emergency",
             new Vector2(0.77f, 0.81f),
             new Vector2(0.97f, 0.965f));
+        CreateToggleButton(
+            staticCard.transform,
+            "HEAD",
+            new Vector2(0.20f, 0.81f),
+            new Vector2(0.315f, 0.965f),
+            () => presentation == null || presentation.HeadFeatureEnabled,
+            () => presentation?.ToggleHeadFeature());
+        CreateToggleButton(
+            staticCard.transform,
+            "HANDS",
+            new Vector2(0.32f, 0.81f),
+            new Vector2(0.445f, 0.965f),
+            () => presentation == null || presentation.HandsFeatureEnabled,
+            () => presentation?.ToggleHandsFeature());
+        CreateToggleButton(
+            staticCard.transform,
+            "LOW",
+            new Vector2(0.45f, 0.81f),
+            new Vector2(0.565f, 0.965f),
+            () => presentation == null
+                || presentation.LowObstacleFeatureEnabled,
+            () => presentation?.ToggleLowObstacleFeature());
         headRiskBar = CreateRiskBar(
             staticCard.transform,
             "HEAD",
@@ -595,6 +625,10 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
         staticCauseTile = CreateMetricTile(
             staticCard.transform, "StaticCause", "CAUSE",
             0.735f, 0.965f, 0.04f, 0.27f);
+        MakeCompact(staticUserTile);
+        staticUserTile.Value.fontSize = 12f;
+        MakeCompact(staticCauseTile);
+        staticCauseTile.Value.fontSize = 13f;
 
         GameObject dynamicCard = CreateCard(
             parent,
@@ -1213,20 +1247,21 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
             staticPolicy == null || staticPolicy.FrameProvider == null
                 ? null
                 : staticPolicy.FrameProvider.CurrentStaticBoundaryFrame;
-        float distance = staticFrame == null || !staticFrame.Available
-            ? -1f
-            : staticFrame.Head.ClosestDistanceMeters;
-        string ttc = staticFrame != null
-            && staticFrame.Available
-            && staticFrame.Head.HasTimeToCollision
-                ? staticFrame.Head.TimeToCollisionSeconds.ToString("F2") + " s"
-                : "--";
         bool staticAvailable = staticFrame != null && staticFrame.Available;
         bool staticEnabled = staticDetail != null && staticDetail.Enabled;
         bool staticVisible = presentation != null
             && presentation.StaticWindowVisible;
         bool emergency = staticDetail != null
             && (staticDetail.EmergencyTrigger || staticDetail.EmergencyHold);
+        GetPrimaryStaticContributions(
+            staticFrame,
+            staticDetail,
+            out float distance,
+            out float timeToCollision,
+            out float closingSpeed,
+            out float distanceRisk,
+            out float speedRisk,
+            out float ttcRisk);
         SetChip(
             staticStateChip,
             !staticAvailable
@@ -1255,18 +1290,140 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
         SetMetric(
             staticDistanceTile,
             distance < 0f ? "--" : distance.ToString("F2") + " m");
-        SetMetric(staticTtcTile, ttc);
+        SetMetric(
+            staticTtcTile,
+            timeToCollision < 0f
+                ? "--"
+                : timeToCollision.ToString("F2") + " s");
         SetMetric(
             staticUserTile,
             staticDetail == null
-                ? "--" : staticDetail.UserState01.ToString("F2"));
+                ? "--"
+                : "U" + staticDetail.UserState01.ToString("F2")
+                    + " V" + closingSpeed.ToString("F2")
+                    + "\nD" + distanceRisk.ToString("F2")
+                    + " S" + speedRisk.ToString("F2")
+                    + " T" + ttcRisk.ToString("F2"));
         SetMetric(
             staticCauseTile,
-            staticDetail == null ? "--" : staticDetail.Cause.ToString(),
+            staticDetail == null
+                ? "--"
+                : staticDetail.Cause + "\n"
+                    + FormatStaticChannels(staticDetail.EnabledChannels),
             emergency ? new Color(1f, 0.58f, 0.52f) : Color.white);
 
         RefreshDynamicCard();
         RefreshTrackingQualityCard();
+    }
+
+    private static void GetPrimaryStaticContributions(
+        StaticBoundaryRiskFrame frame,
+        StaticPassthroughDecision decision,
+        out float distance,
+        out float timeToCollision,
+        out float closingSpeed,
+        out float distanceRisk,
+        out float speedRisk,
+        out float ttcRisk)
+    {
+        distance = -1f;
+        timeToCollision = -1f;
+        closingSpeed = 0f;
+        distanceRisk = 0f;
+        speedRisk = 0f;
+        ttcRisk = 0f;
+        if (frame == null || decision == null)
+        {
+            return;
+        }
+
+        StaticHazardDecision primary = FindPrimaryStaticHazard(decision);
+        if (primary != null)
+        {
+            if (primary.Available)
+            {
+                distance = primary.DistanceMeters;
+                closingSpeed = primary.ClosingSpeedMetersPerSecond;
+                if (closingSpeed > 0.0001f)
+                {
+                    timeToCollision = distance / closingSpeed;
+                }
+            }
+            distanceRisk = primary.DistanceRisk;
+            speedRisk = primary.SpeedRisk;
+            ttcRisk = primary.TtcRisk;
+            return;
+        }
+
+        if (decision.Cause == StaticActivationCause.Hand)
+        {
+            StaticHandRiskMeasurement hand = frame.LeftHand.Risk
+                    >= frame.RightHand.Risk
+                ? frame.LeftHand
+                : frame.RightHand;
+            distance = hand.Available ? hand.DistanceMeters : -1f;
+            closingSpeed = hand.TowardBoundarySpeed;
+            if (hand.Available && closingSpeed > 0.0001f)
+            {
+                timeToCollision = distance / closingSpeed;
+            }
+            distanceRisk = hand.DistanceRisk;
+            speedRisk = hand.SpeedRisk;
+            ttcRisk = hand.TtcRisk;
+            return;
+        }
+
+        StaticRiskMeasurement measurement =
+            decision.Cause == StaticActivationCause.LowObstacle
+                ? frame.LowObstacle
+                : frame.Head;
+        distance = measurement.Available
+            ? measurement.ClosestDistanceMeters
+            : -1f;
+        timeToCollision = measurement.Available
+            && measurement.HasTimeToCollision
+                ? measurement.TimeToCollisionSeconds
+                : -1f;
+        closingSpeed = measurement.TowardBoundarySpeed;
+        distanceRisk = measurement.DistanceRisk;
+        speedRisk = measurement.SpeedRisk;
+        ttcRisk = measurement.TtcRisk;
+    }
+
+    private static StaticHazardDecision FindPrimaryStaticHazard(
+        StaticPassthroughDecision decision)
+    {
+        if (decision == null || decision.Hazards == null)
+        {
+            return null;
+        }
+
+        StaticHazardDecision selected = null;
+        for (int i = 0; i < decision.Hazards.Length; i++)
+        {
+            StaticHazardDecision candidate = decision.Hazards[i];
+            if (candidate == null || !candidate.Enabled)
+            {
+                continue;
+            }
+
+            if (selected == null
+                || StaticBoundaryPolicy.Compare(candidate, selected) < 0)
+            {
+                selected = candidate;
+            }
+        }
+
+        return selected;
+    }
+
+    private static string FormatStaticChannels(StaticRiskChannelMask channels)
+    {
+        return "H" + (((channels & StaticRiskChannelMask.Head) != 0) ? "1" : "0")
+            + " A" + (((channels & StaticRiskChannelMask.Hands) != 0) ? "1" : "0")
+            + " L" + (((channels & StaticRiskChannelMask.LowObstacle) != 0)
+                ? "1"
+                : "0");
     }
 
     private void RefreshTrackingQualityCard()
@@ -1369,6 +1526,8 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
             + " hit" + value.ValidRayHitCount
             + " o" + (value.ConfirmedOverlap ? "1" : "0")
             + " c" + value.Confidence.ToString("F2")
+            + " id" + value.SurfaceId
+            + " dN" + value.PresentationNormalChangeDegrees.ToString("F0")
             + rejection;
     }
 
@@ -2055,6 +2214,12 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
             SelectedPage = currentPage,
             StaticFeatureEnabled = presentation == null
                 || presentation.StaticFeatureEnabled,
+            HeadFeatureEnabled = presentation == null
+                || presentation.HeadFeatureEnabled,
+            HandsFeatureEnabled = presentation == null
+                || presentation.HandsFeatureEnabled,
+            LowObstacleFeatureEnabled = presentation == null
+                || presentation.LowObstacleFeatureEnabled,
             DynamicFeatureEnabled = presentation == null
                 || presentation.DynamicFeatureEnabled,
             MlEnabled = personalization != null
@@ -2088,9 +2253,11 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
 
         try
         {
+            string settingsJson = PlayerPrefs.GetString(
+                RuntimeSettingsPreferenceKey);
             RuntimePanelSettings settings =
                 JsonUtility.FromJson<RuntimePanelSettings>(
-                    PlayerPrefs.GetString(RuntimeSettingsPreferenceKey));
+                    settingsJson);
             if (settings == null
                 || settings.Version != RuntimeSettingsVersion)
             {
@@ -2099,9 +2266,20 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
                 return;
             }
 
-            currentPage = 0;
+            // v2 existed before the independent channel fields were added.
+            // Missing additive fields must preserve the historical all-on
+            // behavior instead of deserializing as false.
+            settings.PreserveAllOnForLegacyJson(settingsJson);
+
+            currentPage = Mathf.Max(0, settings.SelectedPage);
             presentation?.SetStaticFeatureEnabled(
                 settings.StaticFeatureEnabled);
+            presentation?.SetHeadFeatureEnabled(
+                settings.HeadFeatureEnabled);
+            presentation?.SetHandsFeatureEnabled(
+                settings.HandsFeatureEnabled);
+            presentation?.SetLowObstacleFeatureEnabled(
+                settings.LowObstacleFeatureEnabled);
             presentation?.SetDynamicFeatureEnabled(
                 settings.DynamicFeatureEnabled);
             presentation?.SetFeedbackMode(
@@ -2140,6 +2318,9 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
         panelOpacity = 1f;
         currentPage = 0;
         presentation?.SetStaticFeatureEnabled(true);
+        presentation?.SetHeadFeatureEnabled(true);
+        presentation?.SetHandsFeatureEnabled(true);
+        presentation?.SetLowObstacleFeatureEnabled(true);
         presentation?.SetDynamicFeatureEnabled(true);
         presentation?.SetFeedbackMode(SafetyFeedbackMode.Passthrough);
         personalization?.SetMlEnabled(false);

@@ -40,6 +40,7 @@ namespace TeamVR.AdaptivePassthrough
         public readonly float TowardBoundarySpeed;
         public readonly float TowardBoundaryAcceleration;
         public readonly float DistanceRisk;
+        public readonly float SpeedRisk;
         public readonly float TtcRisk;
         public readonly float AccelerationRisk;
         public readonly float BlindSpotRisk;
@@ -57,6 +58,35 @@ namespace TeamVR.AdaptivePassthrough
             float accelerationRisk,
             float blindSpotRisk,
             float risk)
+            : this(
+                available,
+                closestDistanceMeters,
+                timeToCollisionSeconds,
+                hasTimeToCollision,
+                towardBoundarySpeed,
+                towardBoundaryAcceleration,
+                distanceRisk,
+                0f,
+                ttcRisk,
+                accelerationRisk,
+                blindSpotRisk,
+                risk)
+        {
+        }
+
+        public StaticRiskMeasurement(
+            bool available,
+            float closestDistanceMeters,
+            float timeToCollisionSeconds,
+            bool hasTimeToCollision,
+            float towardBoundarySpeed,
+            float towardBoundaryAcceleration,
+            float distanceRisk,
+            float speedRisk,
+            float ttcRisk,
+            float accelerationRisk,
+            float blindSpotRisk,
+            float risk)
         {
             Available = available;
             ClosestDistanceMeters = closestDistanceMeters;
@@ -65,6 +95,7 @@ namespace TeamVR.AdaptivePassthrough
             TowardBoundarySpeed = towardBoundarySpeed;
             TowardBoundaryAcceleration = towardBoundaryAcceleration;
             DistanceRisk = distanceRisk;
+            SpeedRisk = speedRisk;
             TtcRisk = ttcRisk;
             AccelerationRisk = accelerationRisk;
             BlindSpotRisk = blindSpotRisk;

@@ -104,6 +104,103 @@ namespace TeamVR.AdaptivePassthrough.PlayModeTests
         }
 
         [UnityTest]
+        public IEnumerator LabAlternating_AdvancesManualTimeAndKeepsMaskContinuous()
+        {
+            var root = new GameObject("Alternating Fusion Continuity Test");
+            SpatialTrackingVisualLab lab =
+                root.AddComponent<SpatialTrackingVisualLab>();
+            lab.EnableManualClock(30.0);
+            lab.SetPlayback(false);
+            lab.SetScenario(SpatialTrackingVisualLab.LabScenario.FrontWall);
+            lab.SetFusionMode(
+                SpatialTrackingVisualLab.LabFusionMode.Alternating);
+
+            AdvancePresentation(lab, 0.20f);
+            Assert.That(lab.CurrentAlternatingPhase, Is.EqualTo(0));
+            Assert.That(lab.CurrentFusionMeasurement.Source,
+                Is.EqualTo(SpatialObstacleSource.RoomScene));
+            Assert.That(lab.CurrentFusionConflictReason,
+                Is.EqualTo("alternating_room_only"));
+            long presentationId = lab.CurrentGeometry.StableId;
+            AssertEyeHasVisibleMask(lab.LeftCamera, lab.LeftTexture);
+
+            AdvancePresentation(lab, 0.35f);
+            Assert.That(lab.CurrentAlternatingPhase, Is.EqualTo(1),
+                "Manual presentation time must advance while playback is paused.");
+            Assert.That(lab.CurrentFusionMeasurement.Source,
+                Is.EqualTo(SpatialObstacleSource.EnvironmentDepth));
+            Assert.That(lab.CurrentFusionConflictReason,
+                Is.EqualTo("alternating_environment_only"));
+            Assert.That(lab.CurrentGeometry.StableId, Is.EqualTo(presentationId),
+                "Same-wall source ID churn must retain the presentation surface.");
+            AssertEyeHasVisibleMask(lab.LeftCamera, lab.LeftTexture);
+
+            AdvancePresentation(lab, 0.50f);
+            Assert.That(lab.CurrentAlternatingPhase, Is.EqualTo(2));
+            Assert.That(lab.CurrentFusionMeasurement.Source,
+                Is.EqualTo(SpatialObstacleSource.Fused));
+            Assert.That(lab.CurrentFusionConflictReason,
+                Is.EqualTo("alternating_fused"));
+            Assert.That(lab.CurrentGeometry.StableId, Is.EqualTo(presentationId));
+            Assert.That(lab.CurrentPulse01, Is.EqualTo(0f).Within(0.001f),
+                "Source alternation on one wall must not retrigger the warning pulse.");
+            AssertEyeHasVisibleMask(lab.LeftCamera, lab.LeftTexture);
+
+            AdvancePresentation(lab, 0.50f);
+            Assert.That(lab.CurrentAlternatingPhase, Is.EqualTo(3));
+            Assert.That(lab.CurrentFusionMeasurement.Source,
+                Is.EqualTo(SpatialObstacleSource.RoomScene));
+            Assert.That(lab.CurrentFusionConflictReason,
+                Is.EqualTo("alternating_normal_conflict"));
+            Assert.That(lab.CurrentGeometry.StableId, Is.EqualTo(presentationId));
+            AssertEyeHasVisibleMask(lab.LeftCamera, lab.LeftTexture);
+
+            Object.Destroy(root);
+            yield return null;
+        }
+
+        [UnityTest]
+        public IEnumerator LabWallJitter_AffectsDepthButKeepsRoomPlaneFixed()
+        {
+            var root = new GameObject("Independent Room Depth Normal Test");
+            SpatialTrackingVisualLab lab =
+                root.AddComponent<SpatialTrackingVisualLab>();
+            lab.EnableManualClock(40.0);
+            lab.SetPlayback(false);
+            lab.SetScenario(SpatialTrackingVisualLab.LabScenario.FrontWall);
+            lab.SetFusionMode(
+                SpatialTrackingVisualLab.LabFusionMode.Agreement);
+            lab.SetWallNormalJitter(20f);
+
+            AdvancePresentation(lab, 0.10f);
+            SpatialObstacleMeasurement jittered = lab.CurrentFusionMeasurement;
+            Assert.That(jittered.Source, Is.EqualTo(SpatialObstacleSource.Fused));
+            Assert.That(Vector3.Angle(jittered.HitNormal, Vector3.back),
+                Is.GreaterThan(0.5f),
+                "Jitter must be injected into the Environment measurement.");
+            Assert.That(Vector3.Angle(
+                    jittered.PresentationGeometry.SurfaceNormal,
+                    Vector3.back),
+                Is.LessThan(0.1f),
+                "The independent Room plane must remain fixed.");
+
+            lab.SetWallNormalJitter(0f);
+            lab.SetFusionMode(
+                SpatialTrackingVisualLab.LabFusionMode.Agreement);
+            AdvancePresentation(lab, 0.05f);
+            lab.InjectWallNormalOutlierOnce();
+            lab.AdvancePresentation(1f / 60f);
+            Assert.That(Vector3.Angle(
+                    lab.CurrentFusionMeasurement.HitNormal,
+                    Vector3.back),
+                Is.LessThan(0.1f),
+                "One 40 degree Environment outlier must be rejected by the stabilizer.");
+
+            Object.Destroy(root);
+            yield return null;
+        }
+
+        [UnityTest]
         public IEnumerator ProductionShader_RendersWorldMaskInBothEyes()
         {
             const int testLayer = 30;

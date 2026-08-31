@@ -361,6 +361,11 @@ namespace TeamVR.AdaptivePassthrough.Tests
                 var serializedStaticPolicy = new SerializedObject(staticPolicy);
                 Assert.That(
                     serializedStaticPolicy
+                        .FindProperty("enabledChannels")
+                        .intValue,
+                    Is.EqualTo((int)StaticRiskChannelMask.All));
+                Assert.That(
+                    serializedStaticPolicy
                         .FindProperty("measurementProvider")
                         .objectReferenceValue,
                     Is.SameAs(spatialProvider));
@@ -376,6 +381,18 @@ namespace TeamVR.AdaptivePassthrough.Tests
                         .FindProperty("qualityController")
                         .objectReferenceValue,
                     Is.SameAs(trackingQuality));
+                var serializedStaticPresentation =
+                    new SerializedObject(presentation);
+                Assert.That(
+                    serializedStaticPresentation
+                        .FindProperty("enabledStaticChannels")
+                        .intValue,
+                    Is.EqualTo((int)StaticRiskChannelMask.All));
+                Assert.That(
+                    serializedStaticPresentation
+                        .FindProperty("maximumStaticWindows")
+                        .intValue,
+                    Is.EqualTo(2));
                 SerializedProperty staticSettings =
                     serializedStaticPolicy.FindProperty("policySettings");
                 Assert.That(staticSettings, Is.Not.Null);
@@ -813,9 +830,84 @@ namespace TeamVR.AdaptivePassthrough.Tests
                         .FindProperty("snapshotSequenceProviderBehaviour")
                         .objectReferenceValue,
                     Is.Null);
+                Assert.That(
+                    new SerializedObject(dynamicLogger)
+                        .FindProperty("staticPolicyBehaviour")
+                        .objectReferenceValue,
+                    Is.SameAs(staticPolicy));
             }
             finally
             {
+                EditorSceneManager.CloseScene(scene, true);
+            }
+        }
+
+        [Test]
+        public void RuntimePanelRestoresSelectedPageFromVersionTwoSettings()
+        {
+            const string key =
+                "TeamVR.AdaptivePassthrough.RuntimePanelSettings.v2";
+            bool hadPrevious = PlayerPrefs.HasKey(key);
+            string previous = hadPrevious ? PlayerPrefs.GetString(key) : null;
+            Scene scene = EditorSceneManager.OpenScene(
+                QuestScenePath,
+                OpenSceneMode.Additive);
+            try
+            {
+                MonoBehaviour panel = null;
+                foreach (GameObject root in scene.GetRootGameObjects())
+                {
+                    MonoBehaviour[] behaviours =
+                        root.GetComponentsInChildren<MonoBehaviour>(true);
+                    for (int i = 0; i < behaviours.Length; i++)
+                    {
+                        if (behaviours[i] != null
+                            && behaviours[i].GetType().Name
+                                == "PersonalizationRuntimePanel")
+                        {
+                            panel = behaviours[i];
+                            break;
+                        }
+                    }
+
+                    if (panel != null)
+                    {
+                        break;
+                    }
+                }
+
+                Assert.That(panel, Is.Not.Null);
+                PlayerPrefs.SetString(
+                    key,
+                    "{\"Version\":2,\"SelectedPage\":1,"
+                    + "\"StaticFeatureEnabled\":true,"
+                    + "\"DynamicFeatureEnabled\":true,"
+                    + "\"HeadFeatureEnabled\":true,"
+                    + "\"HandsFeatureEnabled\":true,"
+                    + "\"LowObstacleFeatureEnabled\":true}");
+                MethodInfo load = panel.GetType().GetMethod(
+                    "LoadRuntimeSettings",
+                    BindingFlags.Instance | BindingFlags.NonPublic);
+                FieldInfo currentPage = panel.GetType().GetField(
+                    "currentPage",
+                    BindingFlags.Instance | BindingFlags.NonPublic);
+
+                Assert.That(load, Is.Not.Null);
+                Assert.That(currentPage, Is.Not.Null);
+                load.Invoke(panel, null);
+
+                Assert.That((int)currentPage.GetValue(panel), Is.EqualTo(1));
+            }
+            finally
+            {
+                if (hadPrevious)
+                {
+                    PlayerPrefs.SetString(key, previous);
+                }
+                else
+                {
+                    PlayerPrefs.DeleteKey(key);
+                }
                 EditorSceneManager.CloseScene(scene, true);
             }
         }

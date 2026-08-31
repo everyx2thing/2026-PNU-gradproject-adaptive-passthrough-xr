@@ -169,6 +169,8 @@ namespace TeamVR.AdaptivePassthrough
         public readonly SpatialProbePurpose ProbePurpose;
         public readonly int SurfaceId;
         public readonly HazardPresentationGeometry PresentationGeometry;
+        public readonly float PresentationNormalChangeDegrees;
+        public readonly HazardPresentationGeometry SurfaceBoundsGeometry;
 
         public SpatialObstacleMeasurement(
             SpatialObstacleSource source,
@@ -194,7 +196,9 @@ namespace TeamVR.AdaptivePassthrough
             string rejectionReason = null,
             SpatialProbePurpose probePurpose = SpatialProbePurpose.Standard,
             int surfaceId = -1,
-            HazardPresentationGeometry presentationGeometry = default)
+            HazardPresentationGeometry presentationGeometry = default,
+            float presentationNormalChangeDegrees = 0f,
+            HazardPresentationGeometry surfaceBoundsGeometry = default)
         {
             Source = source;
             TimestampSeconds = Math.Max(0.0, timestampSeconds);
@@ -230,6 +234,13 @@ namespace TeamVR.AdaptivePassthrough
             PresentationGeometry = available
                 && presentationGeometry.Available
                 ? presentationGeometry
+                : default;
+            PresentationNormalChangeDegrees = Mathf.Max(
+                0f,
+                presentationNormalChangeDegrees);
+            SurfaceBoundsGeometry = available
+                && surfaceBoundsGeometry.Available
+                ? surfaceBoundsGeometry
                 : default;
         }
 
@@ -286,6 +297,9 @@ namespace TeamVR.AdaptivePassthrough
         public readonly int ValidRayHitCount;
         public readonly bool SelfRejected;
         public readonly string RejectionReason;
+        public readonly int SurfaceId;
+        public readonly Vector3 PresentationNormal;
+        public readonly float PresentationNormalChangeDegrees;
 
         public SpatialOwnerDiagnostics(
             SpatialProbeOwner owner,
@@ -304,6 +318,12 @@ namespace TeamVR.AdaptivePassthrough
             ValidRayHitCount = measurement.ValidRayHitCount;
             SelfRejected = measurement.SelfRejected;
             RejectionReason = measurement.RejectionReason ?? string.Empty;
+            SurfaceId = measurement.SurfaceId;
+            PresentationNormal = measurement.PresentationGeometry.Available
+                ? measurement.PresentationGeometry.SurfaceNormal
+                : measurement.HitNormal;
+            PresentationNormalChangeDegrees =
+                measurement.PresentationNormalChangeDegrees;
         }
     }
 

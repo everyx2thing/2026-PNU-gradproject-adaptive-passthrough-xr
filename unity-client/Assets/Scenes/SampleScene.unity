@@ -2421,6 +2421,7 @@ MonoBehaviour:
   presentationBehaviour: {fileID: 458888770}
   snapshotSequenceProviderBehaviour: {fileID: 0}
   trackingQuality: {fileID: 0}
+  staticPolicyBehaviour: {fileID: 458888772}
   spatialProvider: {fileID: 0}
   enableLogging: 1
   flushEveryRecords: 10

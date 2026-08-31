@@ -28,6 +28,9 @@ namespace TeamVR.AdaptivePassthrough
         private const float MaximumWallAngularWidthDegrees = 45f;
         private const float MinimumWallAngularHeightDegrees = 18f;
         private const float MaximumWallAngularHeightDegrees = 60f;
+        private const int MaximumPlaneCandidates = 32;
+        private const float PlaneInlierDistanceMeters = 0.04f;
+        private const float PlaneMinimumInlierRatio = 0.60f;
         public const int SafetyBoxEdgeCount = 12;
         public const int MaximumSafetyEdgeRaycastsPerMeasurement = 4;
         private const int AllSafetyEdgesSampledMask =
@@ -58,6 +61,9 @@ namespace TeamVR.AdaptivePassthrough
             public int nextSafetyEdgeIndex;
             public int safetyEdgeHitMask;
             public int safetyEdgeSampledMask;
+            public readonly PresentationNormalStabilizer normalStabilizer =
+                new PresentationNormalStabilizer();
+            public float presentationNormalChangeDegrees;
         }
 
         [SerializeField] private EnvironmentRaycastManager raycastManager;
@@ -82,6 +88,11 @@ namespace TeamVR.AdaptivePassthrough
             new SpatialProbeOwner[MaximumProbeCount];
         private readonly int[] sortedMeasurementIndices =
             new int[MaximumProbeCount];
+        private readonly bool[] planeInliers = new bool[MaximumProbeCount];
+        private readonly Vector3[] planePoints =
+            new Vector3[MaximumProbeCount];
+        private readonly Vector3[] planeNormals =
+            new Vector3[MaximumProbeCount];
         private readonly BodyState headState = new BodyState();
         private readonly BodyState locomotionState = new BodyState();
         private readonly BodyState leftState = new BodyState();
@@ -378,6 +389,7 @@ namespace TeamVR.AdaptivePassthrough
                 + Vector3.Distance(rayOrigin, hit.point);
             Vector3 hitPoint = hit.point;
             Vector3 normal = hit.normal;
+            float normalConfidence = Mathf.Clamp01(hit.normalConfidence);
             float closingSpeed = Mathf.Max(
                 0f,
                 Vector3.Dot(probe.Velocity, probe.Direction));
@@ -392,7 +404,7 @@ namespace TeamVR.AdaptivePassthrough
                 hitPoint,
                 normal,
                 closingSpeed,
-                0.75f,
+                normalConfidence,
                 1,
                 0f,
                 0f,
@@ -413,7 +425,7 @@ namespace TeamVR.AdaptivePassthrough
                     normal,
                     distance,
                     now,
-                    0.75f));
+                    normalConfidence));
             return true;
         }
 
@@ -609,23 +621,25 @@ namespace TeamVR.AdaptivePassthrough
                     : forward,
                 headState.velocity,
                 headSafetyRadius);
+            AddHandProbe(ref count, requestedCount,
+                SpatialProbeOwner.LeftHand, leftHand, leftState, 12f);
+            AddHandProbe(ref count, requestedCount,
+                SpatialProbeOwner.RightHand, rightHand, rightState, 12f);
+            // Balanced reserves three hits per static presentation family:
+            // head, each hand, and the locomotion corridor. The two lateral
+            // corridor rays must therefore precede optional head extras.
+            AddSupplementalLocomotionCorridorProbes(
+                ref count,
+                requestedCount,
+                forward,
+                headState.velocity);
+
             AddProbe(ref count, requestedCount, SpatialProbeOwner.Head,
                 head.position, Rotate(forward, right, -10f), headState.velocity,
                 headSafetyRadius);
             AddProbe(ref count, requestedCount, SpatialProbeOwner.Head,
                 head.position, Rotate(forward, right, 10f), headState.velocity,
                 headSafetyRadius);
-            AddHandProbe(ref count, requestedCount,
-                SpatialProbeOwner.LeftHand, leftHand, leftState, 12f);
-            AddHandProbe(ref count, requestedCount,
-                SpatialProbeOwner.RightHand, rightHand, rightState, 12f);
-            // Balanced receives one supplemental centre ray. Accuracy also
-            // receives lateral corridor coverage before extra head rays.
-            AddSupplementalLocomotionCorridorProbes(
-                ref count,
-                requestedCount,
-                forward,
-                headState.velocity);
 
             AddProbe(ref count, requestedCount, SpatialProbeOwner.Head,
                 head.position, Rotate(forward, up, -10f), headState.velocity,
@@ -778,15 +792,6 @@ namespace TeamVR.AdaptivePassthrough
                 ref count,
                 requestedCount,
                 SpatialProbeOwner.Head,
-                centerOrigin,
-                LocomotionCorridorDirection(horizontalForward, 55f),
-                headVelocity,
-                headSafetyRadius,
-                SpatialProbePurpose.LocomotionCorridor);
-            AddProbe(
-                ref count,
-                requestedCount,
-                SpatialProbeOwner.Head,
                 centerOrigin - horizontalRight * locomotionCorridorHalfWidth,
                 LocomotionCorridorDirection(horizontalForward, 42f),
                 headVelocity,
@@ -908,11 +913,22 @@ namespace TeamVR.AdaptivePassthrough
             float filteredDistance = state.hasDistance
                 ? Mathf.Min(rawDistance, smoothedDistance)
                 : rawDistance;
-            float distanceClosingSpeed = state.hasDistance && elapsed > 0.0001
-                ? Mathf.Max(
-                    0f,
-                    (previousDistance - filteredDistance) / (float)elapsed)
+            float directionChangeDegrees = state.hasHazardDirection
+                && hazardDirection.sqrMagnitude > 0.0001f
+                ? Vector3.Angle(
+                    state.previousHazardDirection,
+                    hazardDirection.normalized)
                 : 0f;
+            float kinematicClosingSpeed = Mathf.Max(
+                0f,
+                selected.ClosingSpeedMetersPerSecond);
+            float supportedClosingSpeed = CalculateSupportedClosingSpeed(
+                previousDistance,
+                filteredDistance,
+                (float)elapsed,
+                kinematicClosingSpeed,
+                directionChangeDegrees,
+                resetDistanceHistory || !state.hasDistance);
             state.hasDistance = true;
             state.filteredDistance = filteredDistance;
             state.lastMeasurementAt = now;
@@ -931,24 +947,33 @@ namespace TeamVR.AdaptivePassthrough
             float sampleRatio = clusterCount
                 / (float)Mathf.Max(1, attemptedProbeCount);
             bool confirmedOverlap = state.confirmedSafetyOverlap;
+            float normalConfidenceSum = 0f;
+            for (int i = 0; i < clusterCount; i++)
+            {
+                normalConfidenceSum += source[sortedMeasurementIndices[i]]
+                    .Confidence;
+            }
+            float meanNormalConfidence = normalConfidenceSum
+                / Mathf.Max(1, clusterCount);
             float confidence = confirmedOverlap
                 ? 1f
-                : Mathf.Clamp01(0.35f + 0.65f * sampleRatio * consistency);
+                : Mathf.Clamp01(
+                    (0.35f + 0.65f * sampleRatio * consistency)
+                    * Mathf.Lerp(0.50f, 1f, meanNormalConfidence));
             HazardPresentationGeometry presentationGeometry =
                 BuildClusterGeometry(
                     source,
                     clusterCount,
                     selected,
+                    state,
                     owner,
                     purpose,
                     filteredDistance,
                     now,
                     confidence);
-            int surfaceId = ResolveEnvironmentSurfaceId(
-                state,
-                presentationGeometry.Center,
-                presentationGeometry.SurfaceNormal);
-            presentationGeometry = presentationGeometry.WithStableId(surfaceId);
+            int surfaceId = presentationGeometry.Available
+                ? (int)presentationGeometry.StableId
+                : -1;
             return new SpatialObstacleMeasurement(
                 SpatialObstacleSource.EnvironmentDepth,
                 now,
@@ -958,11 +983,7 @@ namespace TeamVR.AdaptivePassthrough
                 selected.HitNormal,
                 Mathf.Min(
                     MaximumClosingSpeedMetersPerSecond,
-                    Mathf.Max(
-                        resetDistanceHistory
-                            ? 0f
-                            : selected.ClosingSpeedMetersPerSecond,
-                        distanceClosingSpeed)),
+                    supportedClosingSpeed),
                 confidence,
                 clusterCount,
                 dispersion,
@@ -978,13 +999,15 @@ namespace TeamVR.AdaptivePassthrough
                 string.Empty,
                 purpose,
                 surfaceId,
-                presentationGeometry);
+                presentationGeometry,
+                state.presentationNormalChangeDegrees);
         }
 
         private int ResolveEnvironmentSurfaceId(
             BodyState state,
             Vector3 point,
-            Vector3 normal)
+            Vector3 normal,
+            out bool surfaceChanged)
         {
             Vector3 safeNormal = normal.sqrMagnitude > 0.0001f
                 ? normal.normalized
@@ -995,7 +1018,8 @@ namespace TeamVR.AdaptivePassthrough
                     state.presentationSurfaceNormal,
                     point,
                     safeNormal);
-            if (!sameSurface)
+            surfaceChanged = !sameSurface;
+            if (surfaceChanged)
             {
                 state.presentationSurfaceId = nextEnvironmentSurfaceId++;
             }
@@ -1076,47 +1100,66 @@ namespace TeamVR.AdaptivePassthrough
             SpatialObstacleMeasurement[] source,
             int clusterCount,
             SpatialObstacleMeasurement selected,
+            BodyState state,
             SpatialProbeOwner owner,
             SpatialProbePurpose purpose,
             float distanceMeters,
             double timestampSeconds,
             float confidence)
         {
-            if (clusterCount <= 0)
+            if (clusterCount < 3)
             {
-                return selected.PresentationGeometry;
+                return BuildSparseClusterGeometry(
+                    selected,
+                    state,
+                    owner,
+                    purpose,
+                    distanceMeters,
+                    timestampSeconds,
+                    confidence);
             }
 
-            Vector3 normal = Vector3.zero;
-            Vector3 center = Vector3.zero;
-            for (int i = 0; i < clusterCount; i++)
+            if (!TryFitRobustPlane(
+                    source,
+                    clusterCount,
+                    out Vector3 center,
+                    out Vector3 normal,
+                    out _))
             {
-                SpatialObstacleMeasurement sample =
-                    source[sortedMeasurementIndices[i]];
-                center += sample.HitPoint;
-                Vector3 sampleNormal = sample.HitNormal;
-                if (sampleNormal.sqrMagnitude > 0.0001f)
-                {
-                    if (normal.sqrMagnitude > 0.0001f
-                        && Vector3.Dot(normal, sampleNormal) < 0f)
-                    {
-                        sampleNormal = -sampleNormal;
-                    }
-
-                    normal += sampleNormal.normalized;
-                }
+                state.presentationNormalChangeDegrees = 0f;
+                return default;
             }
-
-            center /= clusterCount;
-            normal = normal.sqrMagnitude > 0.0001f
-                ? normal.normalized
-                : selected.HitNormal;
             Transform tracked = TransformFor(owner);
             if (tracked != null
                 && Vector3.Dot(normal, tracked.position - center) < 0f)
             {
                 normal = -normal;
             }
+            if (purpose == SpatialProbePurpose.Standard
+                && Mathf.Abs(Vector3.Dot(normal, Vector3.up)) <= 0.35f)
+            {
+                Vector3 verticalWallNormal = Vector3.ProjectOnPlane(
+                    normal,
+                    Vector3.up);
+                if (verticalWallNormal.sqrMagnitude > 0.0001f)
+                {
+                    normal = verticalWallNormal.normalized;
+                }
+            }
+
+            // Surface identity must be decided from the robust raw plane.
+            // Reusing the previous surface's normal filter before this check
+            // can make an adjacent wall inherit the old wall orientation.
+            int surfaceId = ResolveEnvironmentSurfaceId(
+                state,
+                center,
+                normal,
+                out bool surfaceChanged);
+            normal = StabilizePresentationNormal(
+                state,
+                surfaceId,
+                normal,
+                timestampSeconds);
 
             HazardPresentationGeometry.ResolvePlaneBasis(
                 normal,
@@ -1130,6 +1173,10 @@ namespace TeamVR.AdaptivePassthrough
             float maxUp = 0f;
             for (int i = 0; i < clusterCount; i++)
             {
+                if (!planeInliers[i])
+                {
+                    continue;
+                }
                 Vector3 offset = source[sortedMeasurementIndices[i]].HitPoint
                     - center;
                 float x = Vector3.Dot(offset, right);
@@ -1169,9 +1216,7 @@ namespace TeamVR.AdaptivePassthrough
                 && timestampSeconds - lastFloorEstimateAt
                     <= FloorEstimateMaximumAgeSeconds;
             return HazardPresentationGeometry.CreatePlanePatch(
-                selected.SurfaceId >= 0
-                    ? selected.SurfaceId
-                    : EnvironmentSurfaceId(owner, purpose),
+                surfaceId,
                 purpose == SpatialProbePurpose.LocomotionCorridor
                     ? HazardVisualKind.LowObstaclePatch
                     : HazardVisualKind.WallPlane,
@@ -1188,6 +1233,134 @@ namespace TeamVR.AdaptivePassthrough
                 0f,
                 floorFresh,
                 floorFresh ? filteredFloorHeight : 0f);
+        }
+
+        private HazardPresentationGeometry BuildSparseClusterGeometry(
+            SpatialObstacleMeasurement selected,
+            BodyState state,
+            SpatialProbeOwner owner,
+            SpatialProbePurpose purpose,
+            float distanceMeters,
+            double timestampSeconds,
+            float confidence)
+        {
+            if (selected.Confidence < 0.50f
+                || selected.HitNormal.sqrMagnitude <= 0.0001f)
+            {
+                state.presentationNormalChangeDegrees = 0f;
+                return default;
+            }
+
+            Vector3 center = selected.HitPoint;
+            Vector3 normal = selected.HitNormal.normalized;
+            Transform tracked = TransformFor(owner);
+            if (tracked != null
+                && Vector3.Dot(normal, tracked.position - center) < 0f)
+            {
+                normal = -normal;
+            }
+            if (purpose == SpatialProbePurpose.Standard
+                && Mathf.Abs(Vector3.Dot(normal, Vector3.up)) <= 0.35f)
+            {
+                Vector3 vertical = Vector3.ProjectOnPlane(normal, Vector3.up);
+                if (vertical.sqrMagnitude > 0.0001f)
+                {
+                    normal = vertical.normalized;
+                }
+            }
+
+            int surfaceId = ResolveEnvironmentSurfaceId(
+                state,
+                center,
+                normal,
+                out _);
+            normal = StabilizePresentationNormal(
+                state,
+                surfaceId,
+                normal,
+                timestampSeconds);
+            bool low = purpose == SpatialProbePurpose.LocomotionCorridor;
+            float width = AngularSpanMeters(
+                distanceMeters,
+                MinimumWallAngularWidthDegrees);
+            float height = low
+                ? Mathf.Max(0.12f, minimumLowObstacleHeight)
+                : AngularSpanMeters(
+                    distanceMeters,
+                    MinimumWallAngularHeightDegrees);
+            bool floorFresh = hasFloorEstimate
+                && timestampSeconds - lastFloorEstimateAt
+                    <= FloorEstimateMaximumAgeSeconds;
+            return HazardPresentationGeometry.CreatePlanePatch(
+                surfaceId,
+                low
+                    ? HazardVisualKind.LowObstaclePatch
+                    : HazardVisualKind.WallPlane,
+                center,
+                normal,
+                Vector3.up,
+                width,
+                height,
+                timestampSeconds,
+                confidence,
+                SpatialObstacleSource.EnvironmentDepth,
+                owner,
+                purpose,
+                0f,
+                floorFresh,
+                floorFresh ? filteredFloorHeight : 0f);
+        }
+
+        private bool TryFitRobustPlane(
+            SpatialObstacleMeasurement[] source,
+            int clusterCount,
+            out Vector3 center,
+            out Vector3 normal,
+            out int inlierCount)
+        {
+            if (source == null || clusterCount < 3)
+            {
+                center = Vector3.zero;
+                normal = Vector3.zero;
+                inlierCount = 0;
+                return false;
+            }
+            for (int i = 0; i < clusterCount; i++)
+            {
+                SpatialObstacleMeasurement sample =
+                    source[sortedMeasurementIndices[i]];
+                planePoints[i] = sample.HitPoint;
+                planeNormals[i] = sample.Confidence >= 0.50f
+                    ? sample.HitNormal
+                    : Vector3.zero;
+            }
+            return RobustSpatialPlaneEstimator.TryFit(
+                planePoints,
+                planeNormals,
+                clusterCount,
+                planeInliers,
+                out center,
+                out normal,
+                out inlierCount,
+                MaximumPlaneCandidates,
+                PlaneInlierDistanceMeters,
+                30f,
+                PlaneMinimumInlierRatio);
+        }
+
+        private static Vector3 StabilizePresentationNormal(
+            BodyState state,
+            int surfaceId,
+            Vector3 measuredNormal,
+            double timestampSeconds)
+        {
+            Vector3 result = state.normalStabilizer.UpdateForSurface(
+                surfaceId,
+                measuredNormal,
+                timestampSeconds);
+            state.presentationNormalChangeDegrees =
+                state.normalStabilizer.LastInputAngleDegrees;
+            return result;
         }
 
         private HazardPresentationGeometry CreateEnvironmentPatch(
@@ -1262,15 +1435,19 @@ namespace TeamVR.AdaptivePassthrough
                 measurement.ClosingSpeedMetersPerSecond,
                 2f,
                 0.01f);
-            float risk = StaticBoundaryRiskMath.WeightedHeadRisk(
+            float speedRisk = StaticBoundaryRiskMath.SpeedRisk(
+                measurement.ClosingSpeedMetersPerSecond,
+                0.05f,
+                0.80f);
+            float risk = StaticBoundaryRiskMath.WeightedHeadRiskWithSpeed(
                 distanceRisk,
+                speedRisk,
                 ttcRisk,
-                0f,
                 0.2f,
-                0.55f,
-                0.35f,
-                0f,
-                0.10f);
+                0.45f,
+                0.30f,
+                0.20f,
+                0.05f);
             if (ShouldForceStaticEmergency(measurement))
             {
                 risk = 1f;
@@ -1286,6 +1463,7 @@ namespace TeamVR.AdaptivePassthrough
                 measurement.ClosingSpeedMetersPerSecond,
                 0f,
                 distanceRisk,
+                speedRisk,
                 ttcRisk,
                 0f,
                 0.2f,
@@ -1313,19 +1491,27 @@ namespace TeamVR.AdaptivePassthrough
                 measurement.ClosingSpeedMetersPerSecond,
                 1.25f,
                 0.01f);
+            float speedRisk = StaticBoundaryRiskMath.SpeedRisk(
+                measurement.ClosingSpeedMetersPerSecond,
+                0.10f,
+                1.50f);
             float reachGate = StaticBoundaryRiskMath.ReachGate(
                 measurement.DistanceMeters,
                 extension,
                 0.75f,
                 0.15f);
-            float risk = StaticBoundaryRiskMath.WeightedHandRisk(
+            float risk = StaticBoundaryRiskMath.WeightedHandRiskWithSpeed(
                 reachGate,
                 distanceRisk,
+                speedRisk,
                 ttcRisk,
-                0.55f,
-                0.45f);
+                0.35f,
+                0.40f,
+                0.25f);
             float directProximityRisk = Mathf.Clamp01(
-                distanceRisk * 0.70f + ttcRisk * 0.30f);
+                distanceRisk * 0.60f
+                + speedRisk * 0.25f
+                + ttcRisk * 0.15f);
             risk = Mathf.Max(risk, directProximityRisk);
             if (ShouldForceStaticEmergency(measurement))
             {
@@ -1342,6 +1528,7 @@ namespace TeamVR.AdaptivePassthrough
                 extension,
                 reachGate,
                 distanceRisk,
+                speedRisk,
                 ttcRisk,
                 risk,
                 direction);
@@ -1457,11 +1644,15 @@ namespace TeamVR.AdaptivePassthrough
                 int edgeBit = 1 << edgeIndex;
                 state.safetyEdgeSampledMask |= edgeBit;
                 state.safetyEdgeHitMask &= ~edgeBit;
-                if (distance > 0.01f)
+                if (TryCreateNormalizedRay(
+                    start,
+                    end,
+                    out Ray edgeRay,
+                    out distance))
                 {
                     EnvironmentRaycastHit hit;
                     bool hasHit = raycastManager.Raycast(
-                            new Ray(start, direction),
+                            edgeRay,
                             out hit,
                             distance)
                         && IsSafetyOverlapStatus(hit.status);
@@ -1489,6 +1680,24 @@ namespace TeamVR.AdaptivePassthrough
                 SafetyBoxEdgeCount - 1);
             int safeCount = Mathf.Max(0, sampledEdgeCount);
             return (safeIndex + safeCount) % SafetyBoxEdgeCount;
+        }
+
+        public static bool TryCreateNormalizedRay(
+            Vector3 start,
+            Vector3 end,
+            out Ray ray,
+            out float distanceMeters)
+        {
+            Vector3 direction = end - start;
+            distanceMeters = direction.magnitude;
+            if (distanceMeters <= 0.01f)
+            {
+                ray = default;
+                return false;
+            }
+
+            ray = new Ray(start, direction / distanceMeters);
+            return true;
         }
 
         private static int CountSetBits(int value)
@@ -1797,9 +2006,9 @@ namespace TeamVR.AdaptivePassthrough
 
             if (!hasFreshFloorEstimate)
             {
-                // A horizontal hit without a floor reference is more likely
-                // to be the floor itself than a safe low-obstacle signal.
-                return true;
+                // Keep the obstacle patch; its repeated-depth confirmation
+                // remains active while the floor-dependent wedge is omitted.
+                return false;
             }
 
             float requiredHeight = Mathf.Max(
@@ -1823,6 +2032,34 @@ namespace TeamVR.AdaptivePassthrough
                     headVelocity,
                     hazardDirection.normalized));
             return Mathf.Clamp01((approachSpeed - 0.10f) / 0.90f);
+        }
+
+        public static float CalculateSupportedClosingSpeed(
+            float previousDistanceMeters,
+            float currentDistanceMeters,
+            float elapsedSeconds,
+            float kinematicClosingSpeedMetersPerSecond,
+            float hazardDirectionChangeDegrees,
+            bool resetDistanceHistory)
+        {
+            float kinematic = Mathf.Max(
+                0f,
+                kinematicClosingSpeedMetersPerSecond);
+            if (resetDistanceHistory
+                || elapsedSeconds <= 0.0001f
+                || hazardDirectionChangeDegrees > 5f
+                || kinematic < 0.05f)
+            {
+                return kinematic;
+            }
+
+            float derivative = Mathf.Max(
+                0f,
+                (previousDistanceMeters - currentDistanceMeters)
+                / elapsedSeconds);
+            return Mathf.Max(
+                kinematic,
+                Mathf.Min(derivative, kinematic + 0.25f));
         }
 
         public static float CalculatePrimaryDirectionalHeadUserState(
@@ -2022,6 +2259,8 @@ namespace TeamVR.AdaptivePassthrough
             state.presentationSurfaceId = 0;
             state.presentationSurfacePoint = Vector3.zero;
             state.presentationSurfaceNormal = Vector3.zero;
+            state.normalStabilizer.Reset();
+            state.presentationNormalChangeDegrees = 0f;
             ResetSafetyEdgeSweep(state);
         }
 

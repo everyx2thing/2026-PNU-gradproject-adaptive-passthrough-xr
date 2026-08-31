@@ -105,6 +105,76 @@ namespace TeamVR.AdaptivePassthrough.Tests
         }
 
         [Test]
+        public void BalancedRayPlan_ProvidesThreeSamplesPerPresentationFamily()
+        {
+            var root = new GameObject("Balanced Ray Probe Plan");
+            var head = new GameObject("Head");
+            var left = new GameObject("Left");
+            var right = new GameObject("Right");
+            try
+            {
+                QuestSpatialObstacleProvider provider =
+                    root.AddComponent<QuestSpatialObstacleProvider>();
+                provider.Configure(
+                    null,
+                    null,
+                    null,
+                    head.transform,
+                    left.transform,
+                    right.transform);
+                MethodInfo build = typeof(QuestSpatialObstacleProvider)
+                    .GetMethod(
+                        "BuildProbes",
+                        BindingFlags.Instance | BindingFlags.NonPublic);
+                FieldInfo probeField = typeof(QuestSpatialObstacleProvider)
+                    .GetField(
+                        "probes",
+                        BindingFlags.Instance | BindingFlags.NonPublic);
+
+                int count = (int)build.Invoke(provider, new object[] { 12 });
+                var probes = (SpatialProbe[])probeField.GetValue(provider);
+                int headStandardCount = 0;
+                int leftCount = 0;
+                int rightCount = 0;
+                int corridorCount = 0;
+                for (int i = 0; i < count; i++)
+                {
+                    headStandardCount += probes[i].Owner
+                                == SpatialProbeOwner.Head
+                            && probes[i].Purpose
+                                == SpatialProbePurpose.Standard
+                        ? 1
+                        : 0;
+                    leftCount += probes[i].Owner
+                            == SpatialProbeOwner.LeftHand
+                        ? 1
+                        : 0;
+                    rightCount += probes[i].Owner
+                            == SpatialProbeOwner.RightHand
+                        ? 1
+                        : 0;
+                    corridorCount += probes[i].Purpose
+                            == SpatialProbePurpose.LocomotionCorridor
+                        ? 1
+                        : 0;
+                }
+
+                Assert.That(count, Is.EqualTo(12));
+                Assert.That(headStandardCount, Is.EqualTo(3));
+                Assert.That(leftCount, Is.EqualTo(3));
+                Assert.That(rightCount, Is.EqualTo(3));
+                Assert.That(corridorCount, Is.EqualTo(3));
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(root);
+                UnityEngine.Object.DestroyImmediate(head);
+                UnityEngine.Object.DestroyImmediate(left);
+                UnityEngine.Object.DestroyImmediate(right);
+            }
+        }
+
+        [Test]
         public void AdaptiveSecondStageKeepsHandsAndThreeHzInference()
         {
             TrackingQualitySettings degraded =
@@ -497,6 +567,26 @@ namespace TeamVR.AdaptivePassthrough.Tests
             Assert.That(recordType.GetField("frameSequence"), Is.Not.Null);
             Assert.That(recordType.GetField("visibilitySource"), Is.Not.Null);
             Assert.That(recordType.GetField("scenarioId"), Is.Not.Null);
+            Assert.That(
+                (float)recordType.GetField("headStaticDistanceMeters")
+                    .GetValue(record),
+                Is.EqualTo(-1f));
+            Assert.That(
+                (float)recordType.GetField("leftHandStaticDistanceMeters")
+                    .GetValue(record),
+                Is.EqualTo(-1f));
+            Assert.That(
+                (float)recordType.GetField("rightHandStaticDistanceMeters")
+                    .GetValue(record),
+                Is.EqualTo(-1f));
+            Assert.That(
+                (float)recordType.GetField("lowObstacleStaticDistanceMeters")
+                    .GetValue(record),
+                Is.EqualTo(-1f));
+            Assert.That(recordType.GetField("headStaticAvailable"), Is.Not.Null);
+            Assert.That(
+                recordType.GetField("primaryPolicyGeometryAvailable"),
+                Is.Not.Null);
         }
 
         [Test]

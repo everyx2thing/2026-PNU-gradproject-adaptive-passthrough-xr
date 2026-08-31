@@ -8,6 +8,7 @@ using UnityEngine.Rendering;
 [DisallowMultipleComponent]
 public sealed class SelectivePassthroughController :
     MonoBehaviour,
+    IStaticPresentationDiagnosticsProvider,
     IPersonWindowSnapshotProvider,
     IPassthroughPresentationSnapshotProvider,
     IPassthroughVisibilityEventSource
@@ -20,6 +21,30 @@ public sealed class SelectivePassthroughController :
         public MeshRenderer CueRenderer;
         public MaterialPropertyBlock CueProperties;
         public int TrackId;
+        public StaticHazardKey StaticKey;
+        public bool HasPendingStaticReplacement;
+        public StaticHazardKey PendingStaticKey;
+        public double StaticTransitionStartedAt;
+        public float StaticTransitionStartOpacity;
+        public double StaticPulseStartedAt;
+        public float StaticVisualOpacity;
+        public bool StaticEmergencyAssignment;
+        public bool HasRenderedCurrentStaticAssignment;
+        public bool StaticRenderedGeometryAvailable;
+        public float StaticRenderedOpacity;
+    }
+
+    private sealed class StaticPresentationEntry
+    {
+        public readonly StaticHazardKey Key;
+        public readonly PassthroughPresentationState State =
+            new PassthroughPresentationState();
+        public StaticHazardDecision Decision;
+
+        public StaticPresentationEntry(StaticHazardKey key)
+        {
+            Key = key;
+        }
     }
 
     private static readonly int FeatherProperty =
@@ -38,11 +63,15 @@ public sealed class SelectivePassthroughController :
     private static readonly int AspectProperty = Shader.PropertyToID("_Aspect");
     private static readonly int PulseProperty = Shader.PropertyToID("_Pulse");
     private static readonly int CueModeProperty = Shader.PropertyToID("_CueMode");
+    private const float StaticSlotReplacementFadeSeconds = 0.15f;
+    private const float EmergencyReplacementMinimumOpacity = 0.35f;
 
     [Header("Independent Policies")]
     [SerializeField] private StaticPassthroughPolicyController staticPolicy;
     [SerializeField] private DynamicPassthroughPolicyController dynamicPolicy;
     [SerializeField] private bool staticFeatureEnabled = true;
+    [SerializeField] private StaticRiskChannelMask enabledStaticChannels =
+        StaticRiskChannelMask.All;
     [SerializeField] private bool dynamicFeatureEnabled = true;
     [SerializeField] private SafetyFeedbackMode feedbackMode =
         SafetyFeedbackMode.Passthrough;
@@ -69,6 +98,9 @@ public sealed class SelectivePassthroughController :
     [SerializeField, Min(0f)] private float personLostHoldSeconds = 1.50f;
     [SerializeField, Min(0.001f)] private float personFadeOutSeconds = 0.30f;
     [SerializeField, Range(0.001f, 0.5f)] private float wallEdgeFeather = 0.065f;
+    [SerializeField, Range(1, 2)] private int maximumStaticWindows = 2;
+    [SerializeField, Range(0f, 0.5f)] private float staticReplacementRiskMargin = 0.10f;
+    [SerializeField, Min(0f)] private float staticReplacementConfirmSeconds = 0.30f;
 
     private readonly List<WindowSlot> personSlots =
         new List<WindowSlot>();
@@ -76,10 +108,20 @@ public sealed class SelectivePassthroughController :
         new List<DynamicRiskAssessment>();
     private readonly HashSet<int> renderedPersonTrackIds =
         new HashSet<int>();
+    private readonly List<WindowSlot> staticSlots =
+        new List<WindowSlot>();
+    private readonly List<StaticPresentationEntry> staticCandidates =
+        new List<StaticPresentationEntry>(4);
+    private readonly StaticHazardSlotCandidate[] staticSlotCandidates =
+        new StaticHazardSlotCandidate[4];
+    private readonly StaticPresentationEntry[] staticPresentations =
+    {
+        new StaticPresentationEntry(StaticHazardKey.Head),
+        new StaticPresentationEntry(StaticHazardKey.LeftHand),
+        new StaticPresentationEntry(StaticHazardKey.RightHand),
+        new StaticPresentationEntry(StaticHazardKey.LowObstacle)
+    };
     private PersonWindowTracker personWindowTracker;
-    private readonly PassthroughPresentationState wallPresentation =
-        new PassthroughPresentationState();
-    private WindowSlot wallSlot;
     private WindowSlot corridorSlot;
     private Mesh sharedQuad;
     private Material runtimeMaterial;
@@ -89,6 +131,8 @@ public sealed class SelectivePassthroughController :
     private bool lastPublishedVisibility;
     private string lastPublishedVisibilitySource = "none";
     private long lastObservedFrameSequence;
+    private long lastObservedStaticDecisionSequence;
+    private StaticHazardSlotArbiter staticSlotArbiter;
     private DynamicRiskController subscribedDynamicRiskController;
     private bool stereoFallbackStaticRequested;
     private bool stereoFallbackDynamicRequested;
@@ -97,6 +141,10 @@ public sealed class SelectivePassthroughController :
 
     public int ActivePersonWindowCount { get; private set; }
     public bool StaticWindowVisible { get; private set; }
+    public int ActiveStaticWindowCount { get; private set; }
+    public string LastStaticReplacementReason { get; private set; } = "none";
+    public StaticPassthroughDecision LatestStaticDecision =>
+        staticPolicy == null ? null : staticPolicy.LatestStatic;
     public bool StaticFeatureEnabled
     {
         get { return staticFeatureEnabled; }
@@ -186,6 +234,14 @@ public sealed class SelectivePassthroughController :
         UnsubscribePipelineReset();
         DestroyRuntimeResources();
     }
+    public StaticRiskChannelMask EnabledStaticChannels =>
+        enabledStaticChannels & StaticRiskChannelMask.All;
+    public bool HeadFeatureEnabled => IsStaticChannelEnabled(
+        StaticRiskChannelMask.Head);
+    public bool HandsFeatureEnabled => IsStaticChannelEnabled(
+        StaticRiskChannelMask.Hands);
+    public bool LowObstacleFeatureEnabled => IsStaticChannelEnabled(
+        StaticRiskChannelMask.LowObstacle);
 
     public void Configure(
         StaticPassthroughPolicyController staticController,
@@ -211,7 +267,73 @@ public sealed class SelectivePassthroughController :
     public void SetStaticFeatureEnabled(bool enabled)
     {
         staticFeatureEnabled = enabled;
+        if (!enabled)
+        {
+            CancelAllStaticPresentationHolds();
+        }
         PublishVisibilityState();
+    }
+
+    public bool IsStaticChannelEnabled(StaticRiskChannelMask channel)
+    {
+        channel &= StaticRiskChannelMask.All;
+        return channel != StaticRiskChannelMask.None
+            && (enabledStaticChannels & channel) == channel;
+    }
+
+    public void SetStaticChannelEnabled(
+        StaticRiskChannelMask channel,
+        bool enabled)
+    {
+        channel &= StaticRiskChannelMask.All;
+        enabledStaticChannels = enabled
+            ? enabledStaticChannels | channel
+            : enabledStaticChannels & ~channel;
+        enabledStaticChannels &= StaticRiskChannelMask.All;
+        staticPolicy?.SetEnabledChannels(enabledStaticChannels);
+        if (!enabled)
+        {
+            CancelStaticPresentationHolds(channel);
+        }
+
+        PublishVisibilityState();
+    }
+
+    public void ToggleStaticChannel(StaticRiskChannelMask channel)
+    {
+        SetStaticChannelEnabled(
+            channel,
+            !IsStaticChannelEnabled(channel));
+    }
+
+    public void SetHeadFeatureEnabled(bool enabled)
+    {
+        SetStaticChannelEnabled(StaticRiskChannelMask.Head, enabled);
+    }
+
+    public void SetHandsFeatureEnabled(bool enabled)
+    {
+        SetStaticChannelEnabled(StaticRiskChannelMask.Hands, enabled);
+    }
+
+    public void SetLowObstacleFeatureEnabled(bool enabled)
+    {
+        SetStaticChannelEnabled(StaticRiskChannelMask.LowObstacle, enabled);
+    }
+
+    public void ToggleHeadFeature()
+    {
+        ToggleStaticChannel(StaticRiskChannelMask.Head);
+    }
+
+    public void ToggleHandsFeature()
+    {
+        ToggleStaticChannel(StaticRiskChannelMask.Hands);
+    }
+
+    public void ToggleLowObstacleFeature()
+    {
+        ToggleStaticChannel(StaticRiskChannelMask.LowObstacle);
     }
 
     public void SetDynamicFeatureEnabled(bool enabled)
@@ -480,59 +602,522 @@ public sealed class SelectivePassthroughController :
     private void UpdateWallWindow()
     {
         double now = Time.realtimeSinceStartupAsDouble;
-        wallPresentation.BeginFrame();
         StaticWindowVisible = false;
+        ActiveStaticWindowCount = 0;
         StaticPassthroughDecision decision =
             staticPolicy == null ? null : staticPolicy.LatestStatic;
-        bool revealEligible = staticFeatureEnabled
-            && decision != null
-            && decision.Enabled;
-        wallPresentation.SetPresentationPolicyActive(revealEligible, now);
-        if (revealEligible)
+        bool hasNewDecision = decision != null
+            && decision.SourceDecision != null
+            && decision.SourceDecision.Sequence > 0
+            && decision.SourceDecision.Sequence
+                != lastObservedStaticDecisionSequence;
+        if (hasNewDecision)
         {
-            double capturedAt = decision.PresentationGeometry
-                .CaptureTimestampSeconds;
-            double geometryTimestamp = decision.PresentationGeometry.Available
-                && capturedAt > 0.0
-                ? capturedAt
-                : now;
-            wallPresentation.Observe(
-                decision.PresentationGeometry,
-                decision.CombinedRisk,
-                geometryTimestamp,
+            lastObservedStaticDecisionSequence =
+                decision.SourceDecision.Sequence;
+        }
+
+        for (int i = 0; i < staticPresentations.Length; i++)
+        {
+            StaticPresentationEntry entry = staticPresentations[i];
+            entry.State.BeginFrame();
+            entry.Decision = FindHazardDecision(decision, entry.Key);
+            bool channelActive = staticFeatureEnabled
+                && entry.Decision != null
+                && entry.Decision.ChannelEnabled;
+            bool policyActive = channelActive
+                && entry.Decision.Enabled;
+            entry.State.SetPresentationPolicyActive(policyActive, now);
+            if (hasNewDecision && entry.Decision != null)
+            {
+                HazardPresentationGeometry observedGeometry =
+                    entry.Decision.PresentationGeometry;
+                double capturedAt = observedGeometry.CaptureTimestampSeconds;
+                double geometryTimestamp = observedGeometry.Available
+                    && capturedAt > 0.0
+                    ? capturedAt
+                    : now;
+                bool rawEligible = policyActive
+                    && entry.Decision.Available
+                    && (entry.Decision.EmergencyTrigger
+                        || entry.Decision.Risk
+                            > entry.Decision.OffThreshold);
+                entry.State.Observe(
+                    observedGeometry,
+                    entry.Decision.Risk,
+                    geometryTimestamp,
+                    now,
+                    rawEligible);
+            }
+
+            entry.State.Update(now, Time.unscaledDeltaTime);
+        }
+
+        AssignStaticSlots(now);
+        SetSlotActive(corridorSlot, false);
+        for (int i = 0; i < staticSlots.Count; i++)
+        {
+            WindowSlot slot = staticSlots[i];
+            AdvanceStaticSlotTransition(
+                slot,
                 now,
-                true);
+                Time.unscaledDeltaTime);
+            StaticPresentationEntry entry = FindStaticPresentation(
+                slot.StaticKey);
+            if ((entry == null || entry.State.Opacity <= 0f)
+                && slot.HasPendingStaticReplacement)
+            {
+                CompleteStaticSlotReplacement(slot, now);
+                entry = FindStaticPresentation(slot.StaticKey);
+            }
+
+            if (entry == null || entry.State.Opacity <= 0f)
+            {
+                SetSlotActive(slot, false);
+                MarkStaticSlotNotRendered(slot);
+                continue;
+            }
+
+            HazardPresentationGeometry geometry = entry.State.Geometry;
+            if (!geometry.Available)
+            {
+                SetSlotActive(slot, false);
+                MarkStaticSlotNotRendered(slot);
+                stereoFallbackStaticRequested = true;
+                continue;
+            }
+
+            if (!slot.HasRenderedCurrentStaticAssignment)
+            {
+                RestartStaticSlotAppearance(slot, now);
+            }
+
+            float visualOpacity = Mathf.Min(
+                entry.State.Opacity,
+                slot.StaticVisualOpacity);
+            if (visualOpacity <= 0f)
+            {
+                SetSlotActive(slot, false);
+                MarkStaticSlotNotRendered(slot);
+                continue;
+            }
+
+            SetSlotGeometry(
+                slot,
+                geometry,
+                wallEdgeFeather,
+                visualOpacity,
+                StaticSlotPulse01(slot, now),
+                false);
+            SetSlotActive(slot, true);
+            slot.HasRenderedCurrentStaticAssignment = true;
+            slot.StaticRenderedGeometryAvailable = true;
+            slot.StaticRenderedOpacity = visualOpacity;
+            StaticWindowVisible = true;
+            ActiveStaticWindowCount++;
+            if (entry.Key == StaticHazardKey.LowObstacle)
+            {
+                UpdateLowObstacleCorridor(
+                    geometry,
+                    visualOpacity);
+            }
+        }
+    }
+
+    private void AssignStaticSlots(double now)
+    {
+        int slotCount = Mathf.Clamp(maximumStaticWindows, 1, 2);
+        EnsureStaticSlots(slotCount);
+        if (staticSlotArbiter == null
+            || staticSlotArbiter.SlotCount != slotCount)
+        {
+            staticSlotArbiter = new StaticHazardSlotArbiter(
+                slotCount,
+                staticReplacementRiskMargin,
+                staticReplacementConfirmSeconds);
+        }
+        staticCandidates.Clear();
+        for (int i = 0; i < staticPresentations.Length; i++)
+        {
+            StaticPresentationEntry entry = staticPresentations[i];
+            if (entry.State.Opacity > 0f
+                || entry.Decision != null && entry.Decision.Enabled)
+            {
+                staticCandidates.Add(entry);
+            }
         }
 
-        wallPresentation.Update(now, Time.unscaledDeltaTime);
-        HazardPresentationGeometry geometry = wallPresentation.Geometry;
-        if (wallPresentation.Opacity <= 0f)
+        for (int i = 0; i < staticCandidates.Count; i++)
         {
-            SetSlotActive(wallSlot, false);
-            SetSlotActive(corridorSlot, false);
+            StaticPresentationEntry entry = staticCandidates[i];
+            StaticHazardDecision hazard = entry.Decision;
+            staticSlotCandidates[i] = new StaticHazardSlotCandidate(
+                entry.Key,
+                true,
+                IsEmergency(entry),
+                PresentationRisk(entry),
+                hazard == null ? 0f : hazard.TtcRisk,
+                hazard == null
+                    ? 0f
+                    : hazard.ClosingSpeedMetersPerSecond);
+        }
+        staticSlotArbiter.Update(
+            staticSlotCandidates,
+            staticCandidates.Count,
+            now);
+        LastStaticReplacementReason =
+            staticSlotArbiter.LastReplacementReason;
+        for (int i = 0; i < staticSlots.Count; i++)
+        {
+            StaticHazardKey next = staticSlotArbiter.GetKey(i);
+            RequestStaticSlotKey(
+                staticSlots[i],
+                next,
+                now,
+                IsEmergency(FindStaticPresentation(next)));
+        }
+    }
+
+    private static bool IsEmergency(StaticPresentationEntry entry)
+    {
+        return entry != null
+            && entry.Decision != null
+            && (entry.Decision.EmergencyTrigger
+                || entry.Decision.EmergencyHold);
+    }
+
+    private static float PresentationRisk(StaticPresentationEntry entry)
+    {
+        return entry == null
+            ? 0f
+            : entry.Decision == null
+                ? entry.State.Risk
+                : entry.Decision.Risk;
+    }
+
+    private static StaticHazardDecision FindHazardDecision(
+        StaticPassthroughDecision decision,
+        StaticHazardKey key)
+    {
+        if (decision == null || decision.Hazards == null)
+        {
+            return null;
+        }
+
+        for (int i = 0; i < decision.Hazards.Length; i++)
+        {
+            StaticHazardDecision hazard = decision.Hazards[i];
+            if (hazard != null && hazard.Key == key)
+            {
+                return hazard;
+            }
+        }
+
+        return null;
+    }
+
+    private StaticPresentationEntry FindStaticPresentation(
+        StaticHazardKey key)
+    {
+        if (key == StaticHazardKey.None)
+        {
+            return null;
+        }
+
+        for (int i = 0; i < staticPresentations.Length; i++)
+        {
+            if (staticPresentations[i].Key == key)
+            {
+                return staticPresentations[i];
+            }
+        }
+
+        return null;
+    }
+
+    private static void RequestStaticSlotKey(
+        WindowSlot slot,
+        StaticHazardKey key,
+        double now,
+        bool emergency)
+    {
+        if (slot == null)
+        {
             return;
         }
 
-        if (!geometry.Available)
+        if (slot.StaticKey == key)
         {
-            SetSlotActive(wallSlot, false);
-            SetSlotActive(corridorSlot, false);
-            stereoFallbackStaticRequested = true;
+            if (slot.HasPendingStaticReplacement)
+            {
+                slot.HasPendingStaticReplacement = false;
+                slot.PendingStaticKey = StaticHazardKey.None;
+                slot.StaticTransitionStartedAt = 0.0;
+            }
             return;
         }
 
-        SetSlotGeometry(
-            wallSlot,
-            geometry,
-            wallEdgeFeather,
-            wallPresentation.Opacity,
-            wallPresentation.Pulse01,
-            false);
-        SetSlotActive(wallSlot, true);
-        UpdateLowObstacleCorridor(
-            geometry,
-            wallPresentation.Opacity);
-        StaticWindowVisible = true;
+        if (slot.HasPendingStaticReplacement
+            && slot.PendingStaticKey == key)
+        {
+            if (emergency && key != StaticHazardKey.None)
+            {
+                AssignStaticSlotKey(
+                    slot,
+                    key,
+                    now,
+                    EmergencyReplacementMinimumOpacity);
+            }
+            return;
+        }
+
+        if (slot.StaticKey == StaticHazardKey.None)
+        {
+            AssignStaticSlotKey(slot, key, now, 0f);
+            return;
+        }
+
+        if (emergency && key != StaticHazardKey.None)
+        {
+            AssignStaticSlotKey(
+                slot,
+                key,
+                now,
+                EmergencyReplacementMinimumOpacity);
+            return;
+        }
+
+        slot.HasPendingStaticReplacement = true;
+        slot.PendingStaticKey = key;
+        slot.StaticTransitionStartedAt = now;
+        slot.StaticTransitionStartOpacity = slot.StaticVisualOpacity;
+    }
+
+    private static void AdvanceStaticSlotTransition(
+        WindowSlot slot,
+        double now,
+        float deltaTime)
+    {
+        if (slot == null)
+        {
+            return;
+        }
+
+        if (slot.HasPendingStaticReplacement)
+        {
+            float elapsed = Mathf.Max(
+                0f,
+                (float)(now - slot.StaticTransitionStartedAt));
+            float progress = Mathf.Clamp01(
+                elapsed / StaticSlotReplacementFadeSeconds);
+            slot.StaticVisualOpacity = Mathf.Lerp(
+                slot.StaticTransitionStartOpacity,
+                0f,
+                progress);
+            if (progress >= 1f)
+            {
+                CompleteStaticSlotReplacement(slot, now);
+            }
+            return;
+        }
+
+        if (slot.StaticKey == StaticHazardKey.None)
+        {
+            slot.StaticVisualOpacity = 0f;
+            return;
+        }
+
+        slot.StaticVisualOpacity = Mathf.MoveTowards(
+            slot.StaticVisualOpacity,
+            1f,
+            Mathf.Max(0f, deltaTime)
+                / PassthroughPresentationState.DefaultAppearSeconds);
+    }
+
+    private static void CompleteStaticSlotReplacement(
+        WindowSlot slot,
+        double now)
+    {
+        if (slot == null || !slot.HasPendingStaticReplacement)
+        {
+            return;
+        }
+
+        StaticHazardKey pendingKey = slot.PendingStaticKey;
+        AssignStaticSlotKey(slot, pendingKey, now, 0f);
+    }
+
+    private static void AssignStaticSlotKey(
+        WindowSlot slot,
+        StaticHazardKey key,
+        double now,
+        float startingOpacity)
+    {
+        SetSlotActive(slot, false);
+        slot.StaticKey = key;
+        slot.HasPendingStaticReplacement = false;
+        slot.PendingStaticKey = StaticHazardKey.None;
+        slot.StaticTransitionStartedAt = 0.0;
+        slot.StaticTransitionStartOpacity = 0f;
+        slot.StaticVisualOpacity = key == StaticHazardKey.None
+            ? 0f
+            : Mathf.Clamp01(startingOpacity);
+        slot.StaticPulseStartedAt = key == StaticHazardKey.None ? 0.0 : now;
+        slot.StaticEmergencyAssignment = key != StaticHazardKey.None
+            && startingOpacity > 0f;
+        slot.HasRenderedCurrentStaticAssignment = false;
+        MarkStaticSlotNotRendered(slot);
+    }
+
+    private static void RestartStaticSlotAppearance(
+        WindowSlot slot,
+        double now)
+    {
+        if (slot == null || slot.StaticKey == StaticHazardKey.None)
+        {
+            return;
+        }
+
+        slot.StaticVisualOpacity = slot.StaticEmergencyAssignment
+            ? EmergencyReplacementMinimumOpacity
+            : 0f;
+        slot.StaticPulseStartedAt = now;
+        slot.HasRenderedCurrentStaticAssignment = true;
+    }
+
+    private static float StaticSlotPulse01(WindowSlot slot, double now)
+    {
+        if (slot == null
+            || slot.StaticPulseStartedAt <= 0.0
+            || now < slot.StaticPulseStartedAt)
+        {
+            return 0f;
+        }
+
+        float age = (float)(now - slot.StaticPulseStartedAt);
+        return age < PassthroughPresentationState.DefaultPulseSeconds
+            ? Mathf.Clamp01(
+                age / PassthroughPresentationState.DefaultPulseSeconds)
+            : 0f;
+    }
+
+    private static void MarkStaticSlotNotRendered(WindowSlot slot)
+    {
+        if (slot == null)
+        {
+            return;
+        }
+
+        slot.StaticRenderedGeometryAvailable = false;
+        slot.StaticRenderedOpacity = 0f;
+    }
+
+    private static bool IsStaticSlotActuallyVisible(WindowSlot slot)
+    {
+        return slot != null
+            && slot.StaticKey != StaticHazardKey.None
+            && slot.Renderer != null
+            && slot.Renderer.enabled
+            && slot.StaticRenderedGeometryAvailable
+            && slot.StaticRenderedOpacity > 0f;
+    }
+
+    public StaticHazardKey GetStaticSlotKey(int index)
+    {
+        return index >= 0 && index < staticSlots.Count
+            ? staticSlots[index].StaticKey
+            : StaticHazardKey.None;
+    }
+
+    public string VisibleStaticHazardKeys
+    {
+        get
+        {
+            string value = string.Empty;
+            for (int i = 0; i < staticSlots.Count; i++)
+            {
+                if (!IsStaticSlotActuallyVisible(staticSlots[i]))
+                {
+                    continue;
+                }
+
+                value += value.Length == 0 ? string.Empty : ",";
+                value += staticSlots[i].StaticKey.ToString();
+            }
+
+            return value;
+        }
+    }
+
+    public string AssignedStaticHazardKeys
+    {
+        get
+        {
+            string value = string.Empty;
+            for (int i = 0; i < staticSlots.Count; i++)
+            {
+                if (staticSlots[i].StaticKey == StaticHazardKey.None)
+                {
+                    continue;
+                }
+
+                value += value.Length == 0 ? string.Empty : ",";
+                value += staticSlots[i].StaticKey.ToString();
+            }
+
+            return value;
+        }
+    }
+
+    private void EnsureStaticSlots(int count)
+    {
+        while (staticSlots.Count < count)
+        {
+            staticSlots.Add(
+                CreateSlot(
+                    "Static Hazard Passthrough Window "
+                    + (staticSlots.Count + 1)));
+        }
+    }
+
+    private void CancelAllStaticPresentationHolds()
+    {
+        for (int i = 0; i < staticPresentations.Length; i++)
+        {
+            staticPresentations[i].State.CancelHoldAndFade(
+                Time.realtimeSinceStartupAsDouble);
+        }
+    }
+
+    private void CancelStaticPresentationHolds(
+        StaticRiskChannelMask channel)
+    {
+        double now = Time.realtimeSinceStartupAsDouble;
+        for (int i = 0; i < staticPresentations.Length; i++)
+        {
+            StaticPresentationEntry entry = staticPresentations[i];
+            StaticRiskChannelMask entryChannel = ChannelFor(entry.Key);
+            if ((entryChannel & channel) != 0)
+            {
+                entry.State.CancelHoldAndFade(now);
+            }
+        }
+    }
+
+    private static StaticRiskChannelMask ChannelFor(StaticHazardKey key)
+    {
+        switch (key)
+        {
+            case StaticHazardKey.LeftHand:
+            case StaticHazardKey.RightHand:
+                return StaticRiskChannelMask.Hands;
+            case StaticHazardKey.LowObstacle:
+                return StaticRiskChannelMask.LowObstacle;
+            case StaticHazardKey.Head:
+                return StaticRiskChannelMask.Head;
+            default:
+                return StaticRiskChannelMask.None;
+        }
     }
 
     private void UpdateLowObstacleCorridor(
@@ -590,6 +1175,7 @@ public sealed class SelectivePassthroughController :
             staticPolicy =
                 FindAnyObjectByType<StaticPassthroughPolicyController>();
         }
+        staticPolicy?.SetEnabledChannels(enabledStaticChannels);
 
         if (dynamicPolicy == null)
         {
@@ -664,7 +1250,7 @@ public sealed class SelectivePassthroughController :
             hideFlags = HideFlags.DontSave,
             renderQueue = 4999
         };
-        wallSlot = CreateSlot("Static Wall Passthrough Window");
+        EnsureStaticSlots(Mathf.Clamp(maximumStaticWindows, 1, 2));
         corridorSlot = CreateSlot("Low Obstacle Floor Corridor");
         EnsurePersonSlots(Mathf.Max(1, maximumPersonWindows));
         DisableAllWindows();
@@ -884,14 +1470,28 @@ public sealed class SelectivePassthroughController :
             personSlots[i].TrackId = 0;
         }
 
-        SetSlotActive(wallSlot, false);
+        for (int i = 0; i < staticSlots.Count; i++)
+        {
+            AssignStaticSlotKey(
+                staticSlots[i],
+                StaticHazardKey.None,
+                Time.realtimeSinceStartupAsDouble,
+                0f);
+        }
         SetSlotActive(corridorSlot, false);
-        wallPresentation.Reset();
+        for (int i = 0; i < staticPresentations.Length; i++)
+        {
+            staticPresentations[i].State.Reset();
+            staticPresentations[i].Decision = null;
+        }
         personWindowTracker?.Reset();
         ActivePersonWindowCount = 0;
+        ActiveStaticWindowCount = 0;
         StaticWindowVisible = false;
         stereoFallbackStaticRequested = false;
         stereoFallbackDynamicRequested = false;
+        lastObservedStaticDecisionSequence = 0;
+        staticSlotArbiter?.Reset();
     }
 
     private void SetLayerVisible(bool visible)
@@ -955,7 +1555,10 @@ public sealed class SelectivePassthroughController :
             SetSlotActive(personSlots[i], false);
         }
 
-        SetSlotActive(wallSlot, false);
+        for (int i = 0; i < staticSlots.Count; i++)
+        {
+            SetSlotActive(staticSlots[i], false);
+        }
         SetSlotActive(corridorSlot, false);
     }
 
@@ -973,11 +1576,24 @@ public sealed class SelectivePassthroughController :
             ActivePersonWindowCount,
             GetVisibilitySource(),
             Mathf.Max(
-                wallPresentation.HoldRemainingSeconds,
+                GetMaximumStaticHoldRemainingSeconds(),
                 personWindowTracker == null
                     ? 0f
                     : personWindowTracker.GetMaximumHoldRemainingSeconds(now)),
             now);
+    }
+
+    private float GetMaximumStaticHoldRemainingSeconds()
+    {
+        float maximum = 0f;
+        for (int i = 0; i < staticPresentations.Length; i++)
+        {
+            maximum = Mathf.Max(
+                maximum,
+                staticPresentations[i].State.HoldRemainingSeconds);
+        }
+
+        return maximum;
     }
 
     private string GetVisibilitySource()
@@ -1031,8 +1647,11 @@ public sealed class SelectivePassthroughController :
         }
 
         personSlots.Clear();
-        DestroySlot(wallSlot);
-        wallSlot = null;
+        for (int i = 0; i < staticSlots.Count; i++)
+        {
+            DestroySlot(staticSlots[i]);
+        }
+        staticSlots.Clear();
         DestroySlot(corridorSlot);
         corridorSlot = null;
         DestroyRuntimeObject(runtimeMaterial);

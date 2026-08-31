@@ -180,6 +180,208 @@ namespace TeamVR.AdaptivePassthrough.Tests
         }
 
         [Test]
+        public void PresentationState_SourceIdChangeOnSameSurfaceKeepsGeometry()
+        {
+            var state = new PassthroughPresentationState();
+            HazardPresentationGeometry first = CreateGeometry(100, 1.0);
+            HazardPresentationGeometry next =
+                HazardPresentationGeometry.CreatePlanePatch(
+                    200,
+                    HazardVisualKind.WallPlane,
+                    first.Center + Vector3.right * 0.1f,
+                    Quaternion.AngleAxis(10f, Vector3.up) * Vector3.back,
+                    Vector3.up,
+                    first.Width,
+                    first.Height,
+                    1.1,
+                    1f,
+                    SpatialObstacleSource.Fused,
+                    SpatialProbeOwner.Head,
+                    SpatialProbePurpose.Standard);
+
+            state.BeginFrame();
+            state.Observe(first, 0.8f, 1.0, true);
+            state.Update(1.0, 0.125f);
+            state.BeginFrame();
+            state.Observe(next, 0.8f, 1.1, true);
+            state.Update(1.1, 0.1f);
+
+            Assert.That(state.HasRenderableGeometry, Is.True);
+            Assert.That(state.Geometry.StableId, Is.EqualTo(100));
+            Assert.That(state.Phase, Is.Not.EqualTo(
+                PassthroughAnimationPhase.Hidden));
+        }
+
+        [Test]
+        public void PresentationState_DifferentSurfaceNeedsQuarterSecondConfirmation()
+        {
+            var state = new PassthroughPresentationState();
+            HazardPresentationGeometry first = CreateGeometry(101, 2.0);
+            HazardPresentationGeometry next =
+                HazardPresentationGeometry.CreatePlanePatch(
+                    202,
+                    HazardVisualKind.WallPlane,
+                    first.Center + Vector3.right,
+                    Vector3.left,
+                    Vector3.up,
+                    first.Width,
+                    first.Height,
+                    2.1,
+                    1f,
+                    SpatialObstacleSource.EnvironmentDepth,
+                    SpatialProbeOwner.Head,
+                    SpatialProbePurpose.Standard);
+
+            state.BeginFrame();
+            state.Observe(first, 0.8f, 2.0, true);
+            state.Update(2.0, 0.125f);
+            state.BeginFrame();
+            state.Observe(next, 0.8f, 2.1, true);
+            state.Update(2.1, 0.1f);
+            Assert.That(state.Geometry.StableId, Is.EqualTo(101));
+
+            state.BeginFrame();
+            state.Observe(next, 0.8f, 2.36, true);
+            state.Update(2.36, 0.1f);
+            Assert.That(state.Geometry.StableId, Is.EqualTo(202));
+        }
+
+        [Test]
+        public void PresentationState_StaleIncumbentDoesNotDelayOrHideNewSurface()
+        {
+            var state = new PassthroughPresentationState();
+            HazardPresentationGeometry first = CreateGeometry(401, 10.0);
+            HazardPresentationGeometry next =
+                HazardPresentationGeometry.CreatePlanePatch(
+                    402,
+                    HazardVisualKind.WallPlane,
+                    first.Center + Vector3.right,
+                    Vector3.left,
+                    Vector3.up,
+                    first.Width,
+                    first.Height,
+                    10.60,
+                    1f,
+                    SpatialObstacleSource.EnvironmentDepth,
+                    SpatialProbeOwner.Head,
+                    SpatialProbePurpose.Standard);
+
+            state.BeginFrame();
+            state.Observe(first, 0.8f, 10.0, true);
+            state.Update(10.125, 0.125f);
+            state.BeginFrame();
+            state.Update(10.60, 0f);
+            Assert.That(state.HasRenderableGeometry, Is.False,
+                "The incumbent is capture-stale while its policy hold remains active.");
+
+            state.BeginFrame();
+            state.Observe(next, 0.8f, 10.60, true);
+            state.Update(10.6625, 0.0625f);
+
+            Assert.That(state.Geometry.StableId, Is.EqualTo(402),
+                "A stale incumbent must not impose the surface handoff dwell.");
+            Assert.That(state.Opacity, Is.EqualTo(0.5f).Within(0.001f),
+                "The replacement must run its visible 125 ms appearance.");
+            Assert.That(state.Pulse01, Is.EqualTo(0.2083f).Within(0.002f),
+                "The warning pulse must start when the replacement becomes renderable.");
+        }
+
+        [Test]
+        public void PresentationState_HiddenIncumbentIsClearedBeforeNewSurface()
+        {
+            var state = new PassthroughPresentationState();
+            HazardPresentationGeometry first = CreateGeometry(451, 30.0);
+            HazardPresentationGeometry next =
+                HazardPresentationGeometry.CreatePlanePatch(
+                    452,
+                    HazardVisualKind.WallPlane,
+                    first.Center + Vector3.right,
+                    Vector3.left,
+                    Vector3.up,
+                    first.Width,
+                    first.Height,
+                    31.60,
+                    1f,
+                    SpatialObstacleSource.EnvironmentDepth,
+                    SpatialProbeOwner.Head,
+                    SpatialProbePurpose.Standard);
+
+            state.BeginFrame();
+            state.Observe(first, 0.8f, 30.0, true);
+            state.Update(30.125, 0.125f);
+            state.BeginFrame();
+            state.Update(31.80, 1.675f);
+            Assert.That(state.Phase, Is.EqualTo(
+                PassthroughAnimationPhase.Hidden));
+            Assert.That(state.HasRenderableGeometry, Is.False);
+
+            state.BeginFrame();
+            state.Observe(next, 0.8f, 31.80, true);
+            state.Update(31.8625, 0.0625f);
+
+            Assert.That(state.Geometry.StableId, Is.EqualTo(452));
+            Assert.That(state.Opacity, Is.EqualTo(0.5f).Within(0.001f));
+            Assert.That(state.Pulse01, Is.GreaterThan(0f));
+        }
+
+        [Test]
+        public void PresentationState_PendingSurfaceGapBreaksContinuousConfirmation()
+        {
+            var state = new PassthroughPresentationState();
+            HazardPresentationGeometry first = CreateGeometry(501, 20.0);
+            HazardPresentationGeometry next =
+                HazardPresentationGeometry.CreatePlanePatch(
+                    502,
+                    HazardVisualKind.WallPlane,
+                    first.Center + Vector3.right,
+                    Vector3.left,
+                    Vector3.up,
+                    first.Width,
+                    first.Height,
+                    20.05,
+                    1f,
+                    SpatialObstacleSource.EnvironmentDepth,
+                    SpatialProbeOwner.Head,
+                    SpatialProbePurpose.Standard);
+
+            state.BeginFrame();
+            state.Observe(first, 0.8f, 20.0, true);
+            state.Update(20.0, 0.125f);
+            state.BeginFrame();
+            state.Observe(next, 0.8f, 20.05, true);
+            state.Update(20.05, 0.05f);
+            Assert.That(state.Geometry.StableId, Is.EqualTo(501));
+
+            state.BeginFrame();
+            state.Update(20.46, 0f);
+            state.BeginFrame();
+            state.Observe(next, 0.8f, 20.46, true);
+            state.Update(20.46, 0f);
+
+            Assert.That(state.Geometry.StableId, Is.EqualTo(501),
+                "A candidate returning after the maximum observation gap must restart confirmation.");
+        }
+
+        [Test]
+        public void PresentationState_ChannelOffCancelsHoldAndUsesFadeOnly()
+        {
+            var state = new PassthroughPresentationState();
+            state.BeginFrame();
+            state.Observe(CreateGeometry(303, 3.0), 0.9f, 3.0, true);
+            state.Update(3.125, 0.125f);
+            Assert.That(state.Opacity, Is.EqualTo(1f).Within(0.001f));
+
+            state.BeginFrame();
+            state.CancelHoldAndFade(3.2);
+            state.Update(3.35, 0.15f);
+
+            Assert.That(state.HoldRemainingSeconds, Is.Zero);
+            Assert.That(state.Phase, Is.EqualTo(
+                PassthroughAnimationPhase.Fading));
+            Assert.That(state.Opacity, Is.EqualTo(0.5f).Within(0.001f));
+        }
+
+        [Test]
         public void FloorCorridor_HasSpecifiedNearAndFarWidths()
         {
             HazardPresentationGeometry geometry =
@@ -371,6 +573,58 @@ namespace TeamVR.AdaptivePassthrough.Tests
             Assert.That(
                 result.PresentationGeometry.Center.z,
                 Is.EqualTo(roomGeometry.Center.z).Within(0.001f));
+        }
+
+        [Test]
+        public void Fusion_UsesFiniteRoomBoundsAndPreservesZeroAnchorId()
+        {
+            HazardPresentationGeometry environmentGeometry =
+                HazardPresentationGeometry.CreatePlanePatch(
+                    41, HazardVisualKind.WallPlane,
+                    new Vector3(0.45f, 1f, 1.10f), Vector3.back, Vector3.up,
+                    0.20f, 0.50f, 1.0, 0.9f,
+                    SpatialObstacleSource.EnvironmentDepth,
+                    SpatialProbeOwner.Head, SpatialProbePurpose.Standard);
+            HazardPresentationGeometry localRoomPatch =
+                HazardPresentationGeometry.CreatePlanePatch(
+                    0, HazardVisualKind.WallPlane,
+                    new Vector3(0f, 1f, 1.20f), Vector3.back, Vector3.up,
+                    0.20f, 0.50f, 1.0, 0.8f,
+                    SpatialObstacleSource.RoomScene,
+                    SpatialProbeOwner.Head, SpatialProbePurpose.Standard);
+            HazardPresentationGeometry finiteRoomBounds =
+                HazardPresentationGeometry.CreatePlanePatch(
+                    0, HazardVisualKind.WallPlane,
+                    new Vector3(0f, 1f, 1.20f), Vector3.back, Vector3.up,
+                    2.00f, 2.00f, 1.0, 0.8f,
+                    SpatialObstacleSource.RoomScene,
+                    SpatialProbeOwner.Head, SpatialProbePurpose.Standard);
+            SpatialObstacleMeasurement room = Measurement(
+                SpatialObstacleSource.RoomScene,
+                1.20f,
+                localRoomPatch,
+                finiteRoomBounds);
+
+            Assert.That(SpatialObstacleFusionFilter
+                .AreMeasurementsSpatiallyCompatible(
+                    Measurement(
+                        SpatialObstacleSource.EnvironmentDepth,
+                        1.10f,
+                        environmentGeometry),
+                    room), Is.True);
+
+            SpatialObstacleMeasurement result =
+                new SpatialObstacleFusionFilter().Fuse(
+                    SpatialProbeOwner.Head,
+                    Measurement(
+                        SpatialObstacleSource.EnvironmentDepth,
+                        1.10f,
+                        environmentGeometry),
+                    room,
+                    1.0);
+
+            Assert.That(result.Source, Is.EqualTo(SpatialObstacleSource.Fused));
+            Assert.That(result.PresentationGeometry.StableId, Is.EqualTo(0));
         }
 
         [Test]
@@ -715,7 +969,8 @@ namespace TeamVR.AdaptivePassthrough.Tests
         private static SpatialObstacleMeasurement Measurement(
             SpatialObstacleSource source,
             float distance,
-            HazardPresentationGeometry geometry)
+            HazardPresentationGeometry geometry,
+            HazardPresentationGeometry surfaceBounds = default)
         {
             return new SpatialObstacleMeasurement(
                 source, 1.0, true, distance, geometry.Center,
@@ -724,7 +979,7 @@ namespace TeamVR.AdaptivePassthrough.Tests
                 source == SpatialObstacleSource.EnvironmentDepth ? distance : -1f,
                 source == SpatialObstacleSource.RoomScene ? distance : -1f,
                 false, string.Empty, SpatialProbePurpose.Standard,
-                (int)geometry.StableId, geometry);
+                (int)geometry.StableId, geometry, 0f, surfaceBounds);
         }
 
         private static SpatialObstacleMeasurement MeasurementWithoutGeometry(

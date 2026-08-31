@@ -409,6 +409,62 @@ namespace TeamVR.AdaptivePassthrough.Tests
                     0f,
                     0.08f),
                 Is.False);
+            Assert.That(
+                QuestSpatialObstacleProvider.ShouldRejectLocomotionFloorHit(
+                    new Vector3(0f, 0.25f, 1f),
+                    Vector3.up,
+                    false,
+                    0f,
+                    0.08f),
+                Is.False,
+                "A stale floor estimate must only suppress the floor wedge, not the obstacle patch.");
+        }
+
+        [Test]
+        public void RaySelectionDistanceChangeNeedsKinematicSupport()
+        {
+            float stationary = QuestSpatialObstacleProvider
+                .CalculateSupportedClosingSpeed(
+                    1.06f,
+                    1.00f,
+                    0.05f,
+                    0f,
+                    4f,
+                    false);
+            float moving = QuestSpatialObstacleProvider
+                .CalculateSupportedClosingSpeed(
+                    1.06f,
+                    1.00f,
+                    0.05f,
+                    0.60f,
+                    4f,
+                    false);
+            float rayHandoff = QuestSpatialObstacleProvider
+                .CalculateSupportedClosingSpeed(
+                    1.06f,
+                    1.00f,
+                    0.05f,
+                    0.60f,
+                    10f,
+                    false);
+
+            Assert.That(stationary, Is.EqualTo(0f));
+            Assert.That(moving, Is.InRange(0.60f, 0.85f));
+            Assert.That(rayHandoff, Is.EqualTo(0.60f));
+        }
+
+        [Test]
+        public void HeadSafetyEdgeRayUsesUnitDirectionAndSeparateLength()
+        {
+            bool created = QuestSpatialObstacleProvider.TryCreateNormalizedRay(
+                new Vector3(1f, 2f, 3f),
+                new Vector3(1.32f, 2f, 3f),
+                out Ray ray,
+                out float distance);
+
+            Assert.That(created, Is.True);
+            Assert.That(ray.direction.magnitude, Is.EqualTo(1f).Within(0.0001f));
+            Assert.That(distance, Is.EqualTo(0.32f).Within(0.0001f));
         }
 
         [Test]

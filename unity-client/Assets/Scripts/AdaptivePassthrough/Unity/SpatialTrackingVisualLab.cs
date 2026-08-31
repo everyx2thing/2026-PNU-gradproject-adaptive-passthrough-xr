@@ -17,6 +17,7 @@ namespace TeamVR.AdaptivePassthrough
             PersonApproach,
             PersonCrossing,
             PersonOcclusion,
+            StaticChannels,
             LowBox,
             Chair,
             Step
@@ -26,7 +27,8 @@ namespace TeamVR.AdaptivePassthrough
         {
             Agreement,
             DepthUnavailable,
-            Conflict
+            Conflict,
+            Alternating
         }
 
         private static readonly int WorldBottomLeft = Shader.PropertyToID("_WorldBottomLeft");
@@ -51,6 +53,8 @@ namespace TeamVR.AdaptivePassthrough
         [SerializeField, Range(-20f, 70f)] private float hmdPitch;
         [SerializeField, Range(0f, 1f)] private float risk = 0.85f;
         [SerializeField, Range(0f, 1f)] private float confidence = 0.90f;
+        [SerializeField, Range(0f, 20f)] private float wallNormalJitterDegrees;
+        [SerializeField, Range(0f, 1.2f)] private float mockClosingSpeed = 0.6f;
         [SerializeField] private bool policyEnabled = true;
         [SerializeField] private bool floorAvailable = true;
         [SerializeField] private bool playing = true;
@@ -76,6 +80,13 @@ namespace TeamVR.AdaptivePassthrough
         private PassthroughPresentationState state;
         private readonly SpatialObstacleFusionFilter fusionFilter =
             new SpatialObstacleFusionFilter();
+        private readonly PresentationNormalStabilizer wallNormalStabilizer =
+            new PresentationNormalStabilizer();
+        private readonly StaticHazardSlotArbiter staticSlotArbiter =
+            new StaticHazardSlotArbiter();
+        private readonly StaticHazardSlotCandidate[] staticSlotCandidates =
+            new StaticHazardSlotCandidate[4];
+        private bool injectWallNormalOutlier;
         private double timelineSeconds;
         private double previousRealtime;
         private double manualRealtime;
@@ -88,6 +99,7 @@ namespace TeamVR.AdaptivePassthrough
         private float measuredCornerErrorPixels = -1f;
         private SpatialObstacleMeasurement latestFusionMeasurement;
         private string latestFusionConflictReason = string.Empty;
+        private int latestAlternatingPhase = -1;
 
         public Camera LeftCamera => leftCamera;
         public Camera RightCamera => rightCamera;
@@ -105,6 +117,11 @@ namespace TeamVR.AdaptivePassthrough
             latestFusionMeasurement;
         public string CurrentFusionConflictReason =>
             latestFusionConflictReason ?? string.Empty;
+        public int CurrentAlternatingPhase => latestAlternatingPhase;
+        public string SelectedStaticHazards => string.Format(
+            "{0},{1}",
+            staticSlotArbiter.GetKey(0),
+            staticSlotArbiter.GetKey(1));
 
         private void OnEnable()
         {
@@ -134,12 +151,15 @@ namespace TeamVR.AdaptivePassthrough
             double now = Time.realtimeSinceStartupAsDouble;
             float delta = (float)Math.Max(0.0, now - previousRealtime);
             previousRealtime = now;
-            AdvanceFrame(now, delta);
+            AdvanceFrame(now, delta, false);
         }
 
-        private void AdvanceFrame(double now, float delta)
+        private void AdvanceFrame(
+            double now,
+            float delta,
+            bool advanceTimelineWhilePaused)
         {
-            if (playing)
+            if (playing || advanceTimelineWhilePaused)
             {
                 timelineSeconds += delta;
             }
@@ -148,6 +168,7 @@ namespace TeamVR.AdaptivePassthrough
             HazardPresentationGeometry measured = BuildScenarioGeometry(
                 timelineSeconds,
                 now);
+            UpdateStaticSlotSimulation(now);
             state.BeginFrame();
             state.SetPresentationPolicyActive(policyEnabled);
             if (policyEnabled && DepthGeometryAvailable(timelineSeconds))
@@ -179,6 +200,16 @@ namespace TeamVR.AdaptivePassthrough
         {
             wallDistance = Mathf.Clamp(distanceMeters, 0.25f, 1.50f);
             wallYaw = Mathf.Clamp(yawDegrees, -60f, 60f);
+        }
+
+        public void InjectWallNormalOutlierOnce()
+        {
+            injectWallNormalOutlier = true;
+        }
+
+        public void SetWallNormalJitter(float degrees)
+        {
+            wallNormalJitterDegrees = Mathf.Clamp(degrees, 0f, 20f);
         }
 
         public void SetHmdPose(float lateralMeters, float yawDegrees)
@@ -240,7 +271,7 @@ namespace TeamVR.AdaptivePassthrough
 
             float delta = Mathf.Max(0f, seconds);
             manualRealtime += delta;
-            AdvanceFrame(manualRealtime, delta);
+            AdvanceFrame(manualRealtime, delta, true);
         }
 
         public void ResetTimeline()
@@ -248,11 +279,15 @@ namespace TeamVR.AdaptivePassthrough
             timelineSeconds = 0.0;
             state?.Reset();
             fusionFilter.Reset();
+            wallNormalStabilizer.Reset();
+            staticSlotArbiter.Reset();
             latestFusionMeasurement = SpatialObstacleMeasurement.Unavailable(
                 manualClockEnabled
                     ? manualRealtime
                     : Time.realtimeSinceStartupAsDouble);
             latestFusionConflictReason = string.Empty;
+            latestAlternatingPhase = -1;
+            injectWallNormalOutlier = false;
         }
 
         private void EnsureLab()
@@ -366,6 +401,8 @@ namespace TeamVR.AdaptivePassthrough
                         new Vector3(0.42f, 0f, 0f));
                 case LabScenario.PersonOcclusion:
                     return BuildPerson(1.25f, 0f, observationTime);
+                case LabScenario.StaticChannels:
+                    return BuildWall(wallDistance, wallYaw, observationTime);
                 case LabScenario.LowBox:
                     return BuildLowObstacle(
                         0.28f, 0.70f, 0.55f, observationTime);
@@ -386,12 +423,31 @@ namespace TeamVR.AdaptivePassthrough
             double observationTime)
         {
             Vector3 center = new Vector3(0f, 1.55f, distanceMeters);
-            Vector3 normal = Quaternion.Euler(0f, yawDegrees, 0f) * -Vector3.forward;
+            Vector3 roomNormal = Quaternion.Euler(
+                0f,
+                yawDegrees,
+                0f) * -Vector3.forward;
+            float measuredYaw = yawDegrees
+                + Mathf.Sin((float)timelineSeconds * 19f)
+                    * wallNormalJitterDegrees;
+            if (injectWallNormalOutlier)
+            {
+                measuredYaw += 40f;
+                injectWallNormalOutlier = false;
+            }
+            Vector3 measuredNormal = Quaternion.Euler(
+                0f,
+                measuredYaw,
+                0f) * -Vector3.forward;
+            Vector3 environmentNormal = wallNormalStabilizer.Update(
+                measuredNormal,
+                observationTime);
             return BuildSpatialFusionGeometry(
                 10,
                 HazardVisualKind.WallPlane,
                 center,
-                normal,
+                roomNormal,
+                environmentNormal,
                 Mathf.Clamp(distanceMeters * 0.62f, 0.22f, 1.35f),
                 Mathf.Clamp(distanceMeters * 0.85f, 0.30f, 1.65f),
                 distanceMeters,
@@ -407,6 +463,7 @@ namespace TeamVR.AdaptivePassthrough
             double observationTime,
             Vector3 velocity = default)
         {
+            latestAlternatingPhase = -1;
             Vector3 center = new Vector3(lateral, 1.38f, distanceMeters);
             HazardPresentationGeometry plane = HazardPresentationGeometry.CreatePlanePatch(
                 20, HazardVisualKind.PersonCapsule, center, -Vector3.forward,
@@ -460,6 +517,7 @@ namespace TeamVR.AdaptivePassthrough
                 HazardVisualKind.LowObstaclePatch,
                 new Vector3(0f, height * 0.65f, distanceMeters),
                 -Vector3.forward,
+                -Vector3.forward,
                 width * HazardPresentationGeometry.DefaultPaddingScale,
                 height * HazardPresentationGeometry.DefaultPaddingScale,
                 distanceMeters,
@@ -474,6 +532,7 @@ namespace TeamVR.AdaptivePassthrough
             HazardVisualKind kind,
             Vector3 roomCenter,
             Vector3 roomNormal,
+            Vector3 environmentNormal,
             float width,
             float height,
             float roomDistanceMeters,
@@ -508,6 +567,7 @@ namespace TeamVR.AdaptivePassthrough
                 observationTime);
 
             SpatialObstacleMeasurement environment;
+            latestAlternatingPhase = -1;
             switch (fusionMode)
             {
                 case LabFusionMode.DepthUnavailable:
@@ -546,13 +606,70 @@ namespace TeamVR.AdaptivePassthrough
                         observationTime);
                     latestFusionConflictReason = "normal_mismatch";
                     break;
-                default:
-                    HazardPresentationGeometry environmentGeometry =
+                case LabFusionMode.Alternating:
+                    latestAlternatingPhase = Mathf.FloorToInt(
+                        (float)timelineSeconds * 2f) & 3;
+                    if (latestAlternatingPhase == 0)
+                    {
+                        environment = SpatialObstacleMeasurement.Unavailable(
+                            observationTime,
+                            SpatialProbeOwner.Head,
+                            purpose);
+                        latestFusionConflictReason =
+                            "alternating_room_only";
+                        break;
+                    }
+                    if (latestAlternatingPhase == 1)
+                    {
+                        room = SpatialObstacleMeasurement.Unavailable(
+                            observationTime,
+                            SpatialProbeOwner.Head,
+                            purpose);
+                        environment = CreateEnvironmentMeasurement(
+                            stableId,
+                            kind,
+                            roomCenter,
+                            roomNormal,
+                            environmentNormal,
+                            width,
+                            height,
+                            roomDistanceMeters,
+                            purpose,
+                            observationTime,
+                            hasFreshFloor,
+                            floorHeight);
+                        latestFusionConflictReason =
+                            "alternating_environment_only";
+                        break;
+                    }
+                    if (latestAlternatingPhase == 2)
+                    {
+                        environment = CreateEnvironmentMeasurement(
+                            stableId,
+                            kind,
+                            roomCenter,
+                            roomNormal,
+                            environmentNormal,
+                            width,
+                            height,
+                            roomDistanceMeters,
+                            purpose,
+                            observationTime,
+                            hasFreshFloor,
+                            floorHeight);
+                        latestFusionConflictReason =
+                            "alternating_fused";
+                        break;
+                    }
+
+                    Vector3 alternatingConflictNormal =
+                        Quaternion.AngleAxis(90f, Vector3.up) * roomNormal;
+                    HazardPresentationGeometry alternatingConflictGeometry =
                         HazardPresentationGeometry.CreatePlanePatch(
                             stableId,
                             kind,
-                            roomCenter + roomNormal * 0.08f,
-                            roomNormal,
+                            roomCenter - roomNormal * 0.10f,
+                            alternatingConflictNormal,
                             Vector3.up,
                             width,
                             height,
@@ -566,9 +683,26 @@ namespace TeamVR.AdaptivePassthrough
                             floorHeight);
                     environment = CreateMockMeasurement(
                         SpatialObstacleSource.EnvironmentDepth,
-                        Mathf.Max(0.01f, roomDistanceMeters - 0.08f),
-                        environmentGeometry,
+                        roomDistanceMeters + 0.10f,
+                        alternatingConflictGeometry,
                         observationTime);
+                    latestFusionConflictReason =
+                        "alternating_normal_conflict";
+                    break;
+                default:
+                    environment = CreateEnvironmentMeasurement(
+                        stableId,
+                        kind,
+                        roomCenter,
+                        roomNormal,
+                        environmentNormal,
+                        width,
+                        height,
+                        roomDistanceMeters,
+                        purpose,
+                        observationTime,
+                        hasFreshFloor,
+                        floorHeight);
                     latestFusionConflictReason = string.Empty;
                     break;
             }
@@ -586,6 +720,84 @@ namespace TeamVR.AdaptivePassthrough
                     "unexpected_spatial_incompatibility";
             }
             return latestFusionMeasurement.PresentationGeometry;
+        }
+
+        private SpatialObstacleMeasurement CreateEnvironmentMeasurement(
+            long stableId,
+            HazardVisualKind kind,
+            Vector3 roomCenter,
+            Vector3 roomNormal,
+            Vector3 environmentNormal,
+            float width,
+            float height,
+            float roomDistanceMeters,
+            SpatialProbePurpose purpose,
+            double observationTime,
+            bool hasFreshFloor,
+            float floorHeight)
+        {
+            HazardPresentationGeometry environmentGeometry =
+                HazardPresentationGeometry.CreatePlanePatch(
+                    stableId,
+                    kind,
+                    roomCenter + roomNormal * 0.08f,
+                    environmentNormal,
+                    Vector3.up,
+                    width,
+                    height,
+                    observationTime,
+                    confidence,
+                    SpatialObstacleSource.EnvironmentDepth,
+                    SpatialProbeOwner.Head,
+                    purpose,
+                    risk,
+                    hasFreshFloor,
+                    floorHeight);
+            return CreateMockMeasurement(
+                SpatialObstacleSource.EnvironmentDepth,
+                Mathf.Max(0.01f, roomDistanceMeters - 0.08f),
+                environmentGeometry,
+                observationTime);
+        }
+
+        private void UpdateStaticSlotSimulation(double timestampSeconds)
+        {
+            float headRisk = CalculateHeadSpeedRisk(mockClosingSpeed);
+            staticSlotCandidates[0] = new StaticHazardSlotCandidate(
+                StaticHazardKey.Head, true, wallDistance <= 0.25f,
+                headRisk, headRisk, mockClosingSpeed);
+            staticSlotCandidates[1] = new StaticHazardSlotCandidate(
+                StaticHazardKey.LeftHand, true, false,
+                0.68f, 0.55f, 0.35f);
+            staticSlotCandidates[2] = new StaticHazardSlotCandidate(
+                StaticHazardKey.RightHand, true, false,
+                0.62f, 0.45f, 0.25f);
+            staticSlotCandidates[3] = new StaticHazardSlotCandidate(
+                StaticHazardKey.LowObstacle, true, false,
+                0.72f, 0.60f, 0.40f);
+            staticSlotArbiter.Update(
+                staticSlotCandidates,
+                staticSlotCandidates.Length,
+                timestampSeconds);
+        }
+
+        private float CalculateHeadSpeedRisk(float closingSpeed)
+        {
+            float distanceRisk = StaticBoundaryRiskMath.DistanceRisk(
+                wallDistance,
+                1.5f);
+            float speedRisk = StaticBoundaryRiskMath.SpeedRisk(
+                closingSpeed,
+                0.05f,
+                0.80f);
+            float ttcRisk = StaticBoundaryRiskMath.TimeToCollisionRisk(
+                wallDistance,
+                closingSpeed,
+                2f,
+                0.01f);
+            return StaticBoundaryRiskMath.WeightedHeadRiskWithSpeed(
+                distanceRisk, speedRisk, ttcRisk, 0.2f,
+                0.45f, 0.30f, 0.20f, 0.05f);
         }
 
         private SpatialObstacleMeasurement CreateMockMeasurement(
@@ -804,6 +1016,7 @@ namespace TeamVR.AdaptivePassthrough
                 + $"Room={FormatDistance(latestFusionMeasurement.RoomSceneDistanceMeters)} "
                 + $"published={latestFusionMeasurement.Source} "
                 + $"selected={latestFusionMeasurement.SelectedSource} "
+                + $"phase={(latestAlternatingPhase < 0 ? "n/a" : latestAlternatingPhase.ToString())} "
                 + $"conflict={(string.IsNullOrEmpty(latestFusionConflictReason) ? "none" : latestFusionConflictReason)}");
             GUILayout.BeginHorizontal();
             DrawScenarioButton("WALL FRONT", LabScenario.FrontWall);
@@ -811,6 +1024,7 @@ namespace TeamVR.AdaptivePassthrough
             DrawScenarioButton("PERSON APPROACH", LabScenario.PersonApproach);
             DrawScenarioButton("PERSON CROSS", LabScenario.PersonCrossing);
             DrawScenarioButton("PERSON OCCLUDE", LabScenario.PersonOcclusion);
+            DrawScenarioButton("STATIC x4", LabScenario.StaticChannels);
             DrawScenarioButton("LOW BOX", LabScenario.LowBox);
             DrawScenarioButton("CHAIR", LabScenario.Chair);
             DrawScenarioButton("STEP", LabScenario.Step);
@@ -820,6 +1034,7 @@ namespace TeamVR.AdaptivePassthrough
             DrawFusionModeButton("AGREE", LabFusionMode.Agreement);
             DrawFusionModeButton("DEPTH OFF", LabFusionMode.DepthUnavailable);
             DrawFusionModeButton("CONFLICT", LabFusionMode.Conflict);
+            DrawFusionModeButton("ALTERNATE", LabFusionMode.Alternating);
             GUILayout.EndHorizontal();
             GUILayout.BeginHorizontal();
             if (GUILayout.Button("0.25m")) wallDistance = 0.25f;
@@ -835,6 +1050,16 @@ namespace TeamVR.AdaptivePassthrough
             GUILayout.EndHorizontal();
             GUILayout.Label($"Wall yaw {wallYaw:F0}°");
             wallYaw = GUILayout.HorizontalSlider(wallYaw, -60f, 60f);
+            GUILayout.Label(
+                $"Static selected={SelectedStaticHazards}  speed={mockClosingSpeed:F2}m/s "
+                + $"risk={CalculateHeadSpeedRisk(mockClosingSpeed):F2}  "
+                + $"normal input d={wallNormalStabilizer.LastInputAngleDegrees:F1}°");
+            mockClosingSpeed = GUILayout.HorizontalSlider(
+                mockClosingSpeed, 0f, 1.2f);
+            wallNormalJitterDegrees = GUILayout.HorizontalSlider(
+                wallNormalJitterDegrees, 0f, 20f);
+            if (GUILayout.Button("INJECT 40° NORMAL OUTLIER"))
+                InjectWallNormalOutlierOnce();
             GUILayout.Label($"IPD {ipd:F3}m / HMD lateral {hmdLateral:F2}m / HMD yaw {hmdYaw:F0}° / pitch {hmdPitch:F0}°");
             ipd = GUILayout.HorizontalSlider(ipd, 0.058f, 0.072f);
             hmdLateral = GUILayout.HorizontalSlider(hmdLateral, -0.75f, 0.75f);
