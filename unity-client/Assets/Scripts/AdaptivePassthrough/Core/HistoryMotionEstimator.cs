@@ -27,8 +27,8 @@ namespace TeamVR.AdaptivePassthrough
             double historyWindowSeconds = 1.5,
             int minimumSamples = 4,
             double minimumObservationSeconds = 0.25,
-            float approachThreshold = 0.04f,
-            float recedeThreshold = -0.04f,
+            float approachThreshold = 0.08f,
+            float recedeThreshold = -0.08f,
             float smoothingFactor = 0.45f)
         {
             this.historyWindowSeconds = historyWindowSeconds;

@@ -35,6 +35,8 @@ namespace TeamVR.AdaptivePassthrough
         private readonly float holdSeconds;
         private readonly float fadeSeconds;
         private readonly float predictionSeconds;
+        private readonly float geometryFreshnessSeconds;
+        private readonly bool freshnessFromQualificationTime;
 
         private HazardPresentationGeometry currentGeometry;
         private HazardPresentationGeometry targetGeometry;
@@ -45,6 +47,7 @@ namespace TeamVR.AdaptivePassthrough
         private double firstQualifiedAt;
         private double lastQualifiedAt;
         private double lastGeometryAt;
+        private double lastGeometryFreshAt;
         private double pulseStartedAt;
         private bool hasQualifiedObservation;
         private bool qualifiedThisFrame;
@@ -59,7 +62,9 @@ namespace TeamVR.AdaptivePassthrough
             float pulseSeconds = DefaultPulseSeconds,
             float holdSeconds = DefaultHoldSeconds,
             float fadeSeconds = DefaultFadeSeconds,
-            float predictionSeconds = DefaultPredictionSeconds)
+            float predictionSeconds = DefaultPredictionSeconds,
+            float geometryFreshnessSeconds = -1f,
+            bool freshnessFromQualificationTime = false)
         {
             this.appearSeconds = Mathf.Max(0.001f, appearSeconds);
             this.smoothingSeconds = Mathf.Max(0.001f, smoothingSeconds);
@@ -67,6 +72,11 @@ namespace TeamVR.AdaptivePassthrough
             this.holdSeconds = Mathf.Max(0f, holdSeconds);
             this.fadeSeconds = Mathf.Max(0.001f, fadeSeconds);
             this.predictionSeconds = Mathf.Max(0f, predictionSeconds);
+            this.geometryFreshnessSeconds = geometryFreshnessSeconds < 0f
+                ? this.predictionSeconds
+                : Mathf.Max(0f, geometryFreshnessSeconds);
+            this.freshnessFromQualificationTime =
+                freshnessFromQualificationTime;
         }
 
         public HazardPresentationGeometry Geometry => RenderGeometry(
@@ -258,6 +268,13 @@ namespace TeamVR.AdaptivePassthrough
 
                 if (acceptedGeometry.Available)
                 {
+                    if (currentGeometry.Available
+                        && currentGeometry.HasWorldVelocity)
+                    {
+                        currentGeometry = currentGeometry.PredictedTo(
+                            safeQualificationTimestamp,
+                            predictionSeconds);
+                    }
                     if (!currentGeometry.Available
                         || currentGeometry.StableId
                             != acceptedGeometry.StableId)
@@ -267,6 +284,9 @@ namespace TeamVR.AdaptivePassthrough
 
                     targetGeometry = acceptedGeometry;
                     lastGeometryAt = safeGeometryTimestamp;
+                    lastGeometryFreshAt = freshnessFromQualificationTime
+                        ? safeQualificationTimestamp
+                        : safeGeometryTimestamp;
                     ClearPendingGeometry();
                 }
             }
@@ -302,8 +322,16 @@ namespace TeamVR.AdaptivePassthrough
             float safeDelta = Mathf.Max(0f, deltaTime);
             if (currentGeometry.Available && targetGeometry.Available)
             {
+                float effectiveSmoothingSeconds = smoothingSeconds;
+                if (targetGeometry.HasWorldVelocity
+                    && targetGeometry.WorldVelocity.magnitude >= 0.20f)
+                {
+                    effectiveSmoothingSeconds = Mathf.Min(
+                        effectiveSmoothingSeconds,
+                        0.060f);
+                }
                 float alpha = 1f - Mathf.Exp(
-                    -safeDelta / smoothingSeconds);
+                    -safeDelta / effectiveSmoothingSeconds);
                 currentGeometry = HazardPresentationGeometry.Lerp(
                     currentGeometry,
                     targetGeometry,
@@ -348,13 +376,21 @@ namespace TeamVR.AdaptivePassthrough
                 return default;
             }
 
-            float age = (float)Math.Max(0.0, timestampSeconds - lastGeometryAt);
-            if (!retainGeometryUntilHidden && age > predictionSeconds)
+            float freshnessAge = (float)Math.Max(
+                0.0,
+                timestampSeconds - lastGeometryFreshAt);
+            if (!retainGeometryUntilHidden
+                && freshnessAge > geometryFreshnessSeconds)
             {
                 return default;
             }
 
-            float predictionAge = Mathf.Min(predictionSeconds, age);
+            float measurementAge = (float)Math.Max(
+                0.0,
+                timestampSeconds - lastGeometryAt);
+            float predictionAge = Mathf.Min(
+                predictionSeconds,
+                measurementAge);
             return currentGeometry.HasWorldVelocity
                 ? currentGeometry.Translated(
                     currentGeometry.WorldVelocity * predictionAge)
@@ -370,8 +406,8 @@ namespace TeamVR.AdaptivePassthrough
 
             float age = (float)Math.Max(
                 0.0,
-                Math.Max(0.0, timestampSeconds) - lastGeometryAt);
-            return age <= predictionSeconds;
+                Math.Max(0.0, timestampSeconds) - lastGeometryFreshAt);
+            return age <= geometryFreshnessSeconds;
         }
 
         private static bool IsSamePhysicalSurface(
@@ -415,6 +451,7 @@ namespace TeamVR.AdaptivePassthrough
             firstQualifiedAt = 0.0;
             lastQualifiedAt = 0.0;
             lastGeometryAt = 0.0;
+            lastGeometryFreshAt = 0.0;
             pulseStartedAt = 0.0;
             hasQualifiedObservation = false;
             qualifiedThisFrame = false;

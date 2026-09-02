@@ -163,7 +163,7 @@ namespace TeamVR.AdaptivePassthrough.Tests
         }
 
         [Test]
-        public void WorldGeometryExpiresFromCaptureTimeNotPresentationTime()
+        public void WorldGeometryFreshnessBridgesTheNextInferenceInterval()
         {
             var tracker = new PersonWindowTracker(lostHoldSeconds: 1.5f);
             HazardPresentationGeometry geometry =
@@ -195,11 +195,51 @@ namespace TeamVR.AdaptivePassthrough.Tests
                 .PresentationGeometry.Available, Is.True);
 
             tracker.BeginFrame();
-            tracker.Update(2.51, 0f);
+            tracker.Update(3.24, 0f);
             PersonWindowSnapshot held = tracker.GetSnapshots(1)[0];
+            Assert.That(held.PresentationGeometry.Available, Is.True);
+            Assert.That(held.Opacity, Is.GreaterThan(0f));
+
+            tracker.BeginFrame();
+            tracker.Update(3.26, 0f);
+            held = tracker.GetSnapshots(1)[0];
             Assert.That(held.PresentationGeometry.Available, Is.False);
             Assert.That(held.Opacity, Is.GreaterThan(0f));
-            Assert.That(held.HoldRemainingSeconds, Is.GreaterThan(1.3f));
+        }
+
+        [Test]
+        public void WorldGeometryRejectsAnAlreadyStaleInferenceResult()
+        {
+            var tracker = new PersonWindowTracker(lostHoldSeconds: 1.5f);
+            HazardPresentationGeometry geometry =
+                HazardPresentationGeometry.CreatePlanePatch(
+                    32,
+                    HazardVisualKind.PersonCapsule,
+                    new Vector3(0f, 1f, 1f),
+                    Vector3.back,
+                    Vector3.up,
+                    0.5f,
+                    1f,
+                    2.0,
+                    1f,
+                    SpatialObstacleSource.EnvironmentDepth,
+                    SpatialProbeOwner.Head,
+                    SpatialProbePurpose.Standard);
+
+            tracker.BeginFrame();
+            tracker.Observe(
+                32,
+                new Rect(0.3f, 0.2f, 0.4f, 0.7f),
+                0.9f,
+                2.0,
+                2.8,
+                true,
+                geometry);
+            tracker.Update(2.8, 0.125f);
+
+            PersonWindowSnapshot snapshot = tracker.GetSnapshots(1)[0];
+            Assert.That(snapshot.PresentationGeometry.Available, Is.False);
+            Assert.That(snapshot.Opacity, Is.GreaterThan(0f));
         }
 
         [Test]

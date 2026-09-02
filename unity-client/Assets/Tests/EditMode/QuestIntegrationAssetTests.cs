@@ -393,6 +393,17 @@ namespace TeamVR.AdaptivePassthrough.Tests
                         .FindProperty("maximumStaticWindows")
                         .intValue,
                     Is.EqualTo(2));
+                Assert.That(
+                    serializedStaticPresentation
+                        .FindProperty("personGeometryFreshnessSeconds")
+                        .floatValue,
+                    Is.EqualTo(0.85f).Within(0.0001f));
+                Assert.That(
+                    serializedStaticPresentation
+                        .FindProperty(
+                            "maximumAcceptedPersonCaptureAgeSeconds")
+                        .floatValue,
+                    Is.EqualTo(0.75f).Within(0.0001f));
                 SerializedProperty staticSettings =
                     serializedStaticPolicy.FindProperty("policySettings");
                 Assert.That(staticSettings, Is.Not.Null);
@@ -400,7 +411,7 @@ namespace TeamVR.AdaptivePassthrough.Tests
                     staticSettings
                         .FindPropertyRelative("stableOnThreshold")
                         .floatValue,
-                    Is.EqualTo(0.65f).Within(0.0001f));
+                    Is.EqualTo(0.50f).Within(0.0001f));
                 Assert.That(
                     staticSettings
                         .FindPropertyRelative("rapidOnThreshold")
@@ -410,7 +421,7 @@ namespace TeamVR.AdaptivePassthrough.Tests
                     staticSettings
                         .FindPropertyRelative("handFullThreshold")
                         .floatValue,
-                    Is.EqualTo(0.85f).Within(0.0001f));
+                    Is.EqualTo(0.40f).Within(0.0001f));
                 Assert.That(
                     staticSettings
                         .FindPropertyRelative("minimumHoldSeconds")
@@ -421,6 +432,21 @@ namespace TeamVR.AdaptivePassthrough.Tests
                         .FindPropertyRelative("releaseDelaySeconds")
                         .floatValue,
                     Is.EqualTo(0.35f).Within(0.0001f));
+                var serializedPersonalizationDefaults =
+                    new SerializedObject(personalization);
+                SerializedProperty thresholdPreview =
+                    serializedPersonalizationDefaults.FindProperty(
+                        "thresholdPreview");
+                Assert.That(
+                    thresholdPreview
+                        .FindPropertyRelative("StableOnThreshold")
+                        .floatValue,
+                    Is.EqualTo(0.50f).Within(0.0001f));
+                Assert.That(
+                    thresholdPreview
+                        .FindPropertyRelative("HandFullThreshold")
+                        .floatValue,
+                    Is.EqualTo(0.40f).Within(0.0001f));
                 var serializedDynamicPolicy =
                     new SerializedObject(dynamicPolicy);
                 SerializedProperty dynamicSettings =
@@ -693,7 +719,7 @@ namespace TeamVR.AdaptivePassthrough.Tests
                     (float)inferredThresholds.GetType()
                         .GetField("StableOnThreshold")
                         .GetValue(inferredThresholds),
-                    Is.EqualTo(0.75f).Within(0.0001f));
+                    Is.EqualTo(0.60f).Within(0.0001f));
                 Assert.That(
                     (float)inferredThresholds.GetType()
                         .GetField("DynamicOnThreshold")
@@ -764,7 +790,7 @@ namespace TeamVR.AdaptivePassthrough.Tests
                     staticSettings
                         .FindPropertyRelative("stableOnThreshold")
                         .floatValue,
-                    Is.EqualTo(0.65f).Within(0.0001f));
+                    Is.EqualTo(0.50f).Within(0.0001f));
                 Assert.That(
                     dynamicSettings
                         .FindPropertyRelative("onThreshold")

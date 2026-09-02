@@ -6,18 +6,18 @@ namespace TeamVR.AdaptivePassthrough
     [Serializable]
     public sealed class DynamicRiskSettings
     {
-        public float proximityWeight = 0.30f;
+        public float proximityWeight = 0.55f;
         public float approachWeight = 0.30f;
-        public float ttcWeight = 0.15f;
-        public float collisionPathWeight = 0.10f;
-        public float objectTypeWeight = 0.05f;
-        public float proximityApproachWeight = 0.10f;
-        public float recedingMultiplier = 0.55f;
-        public float approachRateAtMaximumRisk = 0.15f;
-        public float closingSpeedAtMaximumRisk = 1.20f;
-        public float maximumRiskDistanceMeters = 0.60f;
+        public float ttcWeight = 0.10f;
+        public float collisionPathWeight = 0.05f;
+        public float objectTypeWeight = 0f;
+        public float proximityApproachWeight = 0f;
+        public float recedingMultiplier = 0.40f;
+        public float approachRateAtMaximumRisk = 0.20f;
+        public float closingSpeedAtMaximumRisk = 0.80f;
+        public float maximumRiskDistanceMeters = 1.00f;
         public float middleRiskDistanceMeters = 1.50f;
-        public float lowRiskDistanceMeters = 3.00f;
+        public float lowRiskDistanceMeters = 3.50f;
         public float criticalTtcSeconds = 2f;
         public float zeroRiskTtcSeconds = 15f;
         public float centerApproachRateAtMaximumRisk = 0.30f;
@@ -25,6 +25,13 @@ namespace TeamVR.AdaptivePassthrough
 
     public sealed class DynamicRiskEstimator
     {
+        private const float SafetyForceDistanceMeters = 1.00f;
+        private const float SafetyReleaseDistanceMeters = 2.00f;
+        private const float SafetyMinimumConfidence = 0.55f;
+        private const float NoDepthReleaseMaximumHeight = 0.85f;
+        private const float NoDepthReleaseMaximumArea = 0.45f;
+        private const float ReleaseEdgeMargin = 0.02f;
+
         private sealed class CloseState
         {
             public bool Active;
@@ -48,74 +55,139 @@ namespace TeamVR.AdaptivePassthrough
         {
             DynamicObjectDetection detection = tracked.Detection;
             NormalizedBoundingBox box = detection.boundingBox;
+            bool hasReliableSafetyDistance =
+                location.HasReliableSafetyDistance;
+            bool hasReliableTrackingDistance = location.HasMetricDistance
+                && location.IsMetricReliable;
+            DynamicRiskDistanceSource riskDistanceSource =
+                hasReliableSafetyDistance
+                    ? DynamicRiskDistanceSource.SafetyDistance
+                    : hasReliableTrackingDistance
+                        ? DynamicRiskDistanceSource.TrackingDistance
+                        : DynamicRiskDistanceSource.BoundingBoxProxy;
+            bool hasMetricRiskDistance = riskDistanceSource
+                != DynamicRiskDistanceSource.BoundingBoxProxy;
+            float riskDistanceMeters = hasReliableSafetyDistance
+                ? location.SafetyDistanceMeters
+                : hasReliableTrackingDistance
+                    ? location.FilteredDistanceMeters
+                    : 0f;
+            float clusterConfidence = hasReliableSafetyDistance
+                ? location.SafetyDistanceConfidence
+                : hasReliableTrackingDistance
+                    ? location.DistanceConfidence
+                    : 0f;
 
-            float proximityFactor = location.HasMetricDistance
-                ? MetricProximityFactor(
-                    location.FilteredDistanceMeters)
-                : LegacyProximityFactor(location.DistanceBand);
+            float confidenceFactor = 1f;
+            float proximityFactor;
+            if (hasMetricRiskDistance)
+            {
+                proximityFactor = MetricProximityFactor(riskDistanceMeters);
+            }
+            else
+            {
+                confidenceFactor = 0.5f
+                    + 0.5f * Clamp01(detection.confidence);
+                proximityFactor = LegacyProximityFactor(
+                    location.DistanceBand) * confidenceFactor;
+            }
 
             float approachFactor = 0f;
             if (motion.State == DynamicMotionState.Approaching)
             {
                 approachFactor = motion.HasMetricMotion
-                    ? Clamp01(
-                        motion.ClosingSpeedMetersPerSecond
-                        / Math.Max(
-                            0.01f,
-                            settings.closingSpeedAtMaximumRisk))
+                    ? SmoothStep(
+                        0.05f,
+                        Math.Max(0.051f,
+                            settings.closingSpeedAtMaximumRisk),
+                        motion.ClosingSpeedMetersPerSecond)
                         * motion.Reliability
-                    : Clamp01(
-                        motion.ScaleRatePerSecond
-                        / settings.approachRateAtMaximumRisk)
+                    : SmoothStep(
+                        0.04f,
+                        Math.Max(0.041f,
+                            settings.approachRateAtMaximumRisk),
+                        motion.ScaleRatePerSecond)
                         * motion.Reliability;
             }
-            float ttcFactor = TtcFactor(motion);
-            float typeFactor = ObjectTypeFactor(detection.label);
 
+            float ttcFactor = TtcFactor(
+                motion,
+                riskDistanceMeters,
+                hasReliableSafetyDistance);
             float centerX = box.centerX - 0.5f;
             float centerY = box.centerY - 0.5f;
-            float centerDistance = (float)Math.Sqrt(centerX * centerX + centerY * centerY);
-            float centralityFactor = Math.Max(0f, 1f - centerDistance / 0.5f);
+            float centerDistance = (float)Math.Sqrt(
+                centerX * centerX + centerY * centerY);
+            float centralityFactor = Math.Max(
+                0f,
+                1f - centerDistance / 0.5f);
             float centerMotionBoost = Clamp01(
                 motion.CenterApproachRatePerSecond
-                / settings.centerApproachRateAtMaximumRisk);
+                    / Math.Max(
+                        0.01f,
+                        settings.centerApproachRateAtMaximumRisk));
             float collisionPathFactor = Clamp01(
                 centralityFactor + 0.25f * centerMotionBoost);
 
-            float interactionFactor = proximityFactor * approachFactor;
-            float rawScore =
-                settings.proximityWeight * proximityFactor
-                + settings.approachWeight * approachFactor
-                + settings.ttcWeight * ttcFactor
-                + settings.collisionPathWeight * collisionPathFactor
-                + settings.objectTypeWeight * typeFactor
-                + settings.proximityApproachWeight * interactionFactor;
-
-            // The detector confidence correction used by the prototype keeps a
-            // minimum 0.5 multiplier so one low-confidence frame cannot hide a
-            // persistently tracked approach.
-            float confidenceFactor = 0.5f + 0.5f * Clamp01(detection.confidence);
-            float score = rawScore * confidenceFactor;
-            if (motion.State == DynamicMotionState.Receding)
+            float score = 0.55f * proximityFactor
+                + 0.30f * approachFactor
+                + 0.10f * ttcFactor
+                + 0.05f * collisionPathFactor;
+            float closeRiskFloor = 0f;
+            if (hasMetricRiskDistance && riskDistanceMeters <= 1.50f)
             {
-                bool veryClose =
-                    location.HasMetricDistance
-                    && location.FilteredDistanceMeters
-                        <= settings.maximumRiskDistanceMeters;
-                score *= veryClose
-                    ? Math.Max(0.85f, settings.recedingMultiplier)
-                    : settings.recedingMultiplier;
+                closeRiskFloor = 0.65f
+                    + 0.25f * Clamp01(
+                        (1.50f - riskDistanceMeters) / 0.50f);
+                score = Math.Max(score, closeRiskFloor);
+            }
+
+            float motionAttenuation = 1f;
+            if (hasMetricRiskDistance
+                && riskDistanceMeters > 1.50f
+                && motion.State == DynamicMotionState.Receding)
+            {
+                motionAttenuation = Lerp(
+                    0.75f,
+                    0.40f,
+                    InverseLerp(1.50f, 3.50f, riskDistanceMeters));
+            }
+            else if (hasMetricRiskDistance
+                && riskDistanceMeters > 2.00f
+                && (motion.State == DynamicMotionState.Steady
+                    || motion.State == DynamicMotionState.Unknown))
+            {
+                motionAttenuation = Lerp(
+                    1f,
+                    0.70f,
+                    InverseLerp(2.00f, 3.50f, riskDistanceMeters));
+            }
+            score *= motionAttenuation;
+
+            if (!hasMetricRiskDistance)
+            {
+                if (motion.State == DynamicMotionState.Receding)
+                {
+                    score = Math.Min(score, 0.40f);
+                }
+                else if (motion.State == DynamicMotionState.Steady
+                    || motion.State == DynamicMotionState.Unknown)
+                {
+                    score = Math.Min(score, 0.55f);
+                }
             }
 
             bool person = string.Equals(
                 detection.label,
                 "person",
                 StringComparison.OrdinalIgnoreCase);
-            bool hasReliableMetricDistance = location.HasMetricDistance
-                && location.DistanceConfidence >= 0.45f;
             bool metricClose = person
-                && hasReliableMetricDistance
-                && location.FilteredDistanceMeters <= 0.60f;
+                && hasReliableSafetyDistance
+                && location.SafetySupportCount >= 2
+                && location.SafetyDistanceConfidence
+                    >= SafetyMinimumConfidence
+                && location.SafetyDistanceMeters
+                    <= SafetyForceDistanceMeters;
             bool strongBboxClose = person
                 && detection.confidence >= 0.75f
                 && box.height >= 0.95f
@@ -124,8 +196,9 @@ namespace TeamVR.AdaptivePassthrough
                 && detection.confidence >= 0.60f
                 && box.height >= 0.92f
                 && box.Area >= 0.55f;
-            CloseState closeState;
-            if (!closeStates.TryGetValue(tracked.TrackId, out closeState))
+            if (!closeStates.TryGetValue(
+                    tracked.TrackId,
+                    out CloseState closeState))
             {
                 closeState = new CloseState();
                 closeStates.Add(tracked.TrackId, closeState);
@@ -143,7 +216,7 @@ namespace TeamVR.AdaptivePassthrough
                 closeTransitionReason = wasCloseActive
                     ? "latched"
                     : metricClose
-                        ? "metric_close_enter"
+                        ? "safety_1m_enter"
                         : "strong_bbox_close_enter";
             }
             else if (weakBboxClose)
@@ -163,67 +236,69 @@ namespace TeamVR.AdaptivePassthrough
                 closeState.WeakConfirmations = 0;
                 if (closeState.Active)
                 {
-                    bool releaseConfirmed = hasReliableMetricDistance
-                        ? location.FilteredDistanceMeters > 0.80f
-                            && box.height < 0.65f
-                        : box.height < 0.85f
-                            && box.Area < 0.45f
-                            && detection.confidence >= 0.40f
-                            && IsUnclipped(box, 0.02f);
+                    bool metricRelease = hasReliableSafetyDistance
+                        && location.SafetyDistanceMeters
+                            > SafetyReleaseDistanceMeters;
+                    bool bboxRelease = !hasReliableSafetyDistance
+                        && box.height < NoDepthReleaseMaximumHeight
+                        && box.Area < NoDepthReleaseMaximumArea
+                        && detection.confidence >= 0.40f
+                        && IsUnclipped(box, ReleaseEdgeMargin);
+                    bool releaseConfirmed = metricRelease || bboxRelease;
                     closeState.ReleaseConfirmations = releaseConfirmed
                         ? closeState.ReleaseConfirmations + 1
                         : 0;
                     closeTransitionReason = releaseConfirmed
-                        ? hasReliableMetricDistance
-                            ? "metric_release_pending"
+                        ? metricRelease
+                            ? "safety_2m_release_pending"
                             : "bbox_release_pending"
                         : "release_blocked";
                     if (closeState.ReleaseConfirmations >= 3)
                     {
                         closeState.Active = false;
                         closeState.ReleaseConfirmations = 0;
-                        closeTransitionReason = hasReliableMetricDistance
-                            ? "metric_release_3x"
+                        closeTransitionReason = metricRelease
+                            ? "safety_2m_release_3x"
                             : "bbox_release_3x";
                     }
                 }
             }
 
-            if (closeState.Active)
-            {
-                score = Math.Max(score, 0.90f);
-            }
-
             score = Clamp01(score);
             var reasons = new List<string>();
-            if (location.DistanceBand == DistanceBand.Near)
+            if (hasReliableSafetyDistance)
             {
-                reasons.Add("near_object");
+                reasons.Add("safety_depth");
             }
-
-            if (location.HasMetricDistance)
+            else if (hasReliableTrackingDistance)
             {
-                reasons.Add("metric_depth");
-                if (location.FilteredDistanceMeters
-                    <= settings.maximumRiskDistanceMeters)
-                {
-                    reasons.Add("very_close");
-                }
+                reasons.Add("tracking_depth");
             }
             else
             {
                 reasons.Add("bbox_distance_fallback");
             }
 
+            if (hasMetricRiskDistance && riskDistanceMeters <= 1.50f)
+            {
+                reasons.Add("close_metric_floor");
+            }
             if (motion.MetricConflict)
             {
                 reasons.Add("bbox_depth_conflict");
             }
-
+            if (motionAttenuation < 0.999f)
+            {
+                reasons.Add("motion_attenuated");
+            }
             if (closeState.Active)
             {
                 reasons.Add("ultra_close_force");
-                if (strongBboxClose)
+                if (metricClose)
+                {
+                    reasons.Add("safety_1m_force");
+                }
+                else if (strongBboxClose)
                 {
                     reasons.Add("strong_bbox_close");
                 }
@@ -245,7 +320,6 @@ namespace TeamVR.AdaptivePassthrough
                     reasons.Add("insufficient_motion_history");
                     break;
             }
-
             float? effectiveTtc = motion.HasMetricMotion
                 ? motion.MetricTtcSeconds
                 : motion.TtcSecondsApprox;
@@ -260,20 +334,9 @@ namespace TeamVR.AdaptivePassthrough
                     reasons.Add("ttc_under_4s");
                 }
             }
-
-            if (typeFactor >= 0.6f)
-            {
-                reasons.Add(detection.label.ToLowerInvariant());
-            }
-
             if (collisionPathFactor >= 0.7f)
             {
                 reasons.Add("collision_corridor");
-            }
-
-            if (reasons.Count == 0)
-            {
-                reasons.Add("low_risk");
             }
 
             var breakdown = new DynamicRiskBreakdown(
@@ -281,9 +344,14 @@ namespace TeamVR.AdaptivePassthrough
                 approachFactor,
                 ttcFactor,
                 collisionPathFactor,
-                typeFactor,
-                interactionFactor,
-                confidenceFactor);
+                0f,
+                0f,
+                confidenceFactor,
+                riskDistanceSource,
+                riskDistanceMeters,
+                clusterConfidence,
+                closeRiskFloor,
+                motionAttenuation);
 
             return new DynamicRiskAssessment(
                 tracked.TrackId,
@@ -291,7 +359,9 @@ namespace TeamVR.AdaptivePassthrough
                 location,
                 motion,
                 score,
-                LevelForScore(score),
+                closeState.Active
+                    ? DynamicRiskLevel.Danger
+                    : LevelForScore(score),
                 reasons.ToArray(),
                 breakdown,
                 tracked.Lifecycle,
@@ -306,12 +376,20 @@ namespace TeamVR.AdaptivePassthrough
 
         public void MarkUnobserved(int trackId)
         {
-            CloseState state;
-            if (closeStates.TryGetValue(trackId, out state))
+            if (closeStates.TryGetValue(trackId, out CloseState state))
             {
                 state.WeakConfirmations = 0;
-                state.ReleaseConfirmations = 0;
             }
+        }
+
+        public static bool IsReleaseSafeClipping(
+            NormalizedBoundingBox box,
+            float edgeMargin)
+        {
+            float margin = Math.Max(0f, Math.Min(0.49f, edgeMargin));
+            return box.Left >= margin
+                && box.Top >= margin
+                && box.Right <= 1f - margin;
         }
 
         public static bool IsUnclipped(
@@ -356,25 +434,36 @@ namespace TeamVR.AdaptivePassthrough
             {
                 return DynamicRiskLevel.Safe;
             }
-
             if (score < 0.50f)
             {
                 return DynamicRiskLevel.Caution;
             }
-
             if (score < 0.75f)
             {
                 return DynamicRiskLevel.Warning;
             }
-
             return DynamicRiskLevel.Danger;
         }
 
-        private float TtcFactor(MotionEstimate motion)
+        private float TtcFactor(
+            MotionEstimate motion,
+            float riskDistanceMeters,
+            bool useSafetyDistance)
         {
-            float? selectedTtc = motion.HasMetricMotion
-                ? motion.MetricTtcSeconds
-                : motion.TtcSecondsApprox;
+            float? selectedTtc;
+            if (motion.HasMetricMotion
+                && useSafetyDistance
+                && motion.ClosingSpeedMetersPerSecond > 0.01f)
+            {
+                selectedTtc = riskDistanceMeters
+                    / motion.ClosingSpeedMetersPerSecond;
+            }
+            else
+            {
+                selectedTtc = motion.HasMetricMotion
+                    ? motion.MetricTtcSeconds
+                    : motion.TtcSecondsApprox;
+            }
             if (motion.State != DynamicMotionState.Approaching
                 || !selectedTtc.HasValue)
             {
@@ -386,57 +475,45 @@ namespace TeamVR.AdaptivePassthrough
             {
                 return 1f;
             }
-
             if (ttc >= settings.zeroRiskTtcSeconds)
             {
                 return 0f;
             }
-
-            float range = settings.zeroRiskTtcSeconds - settings.criticalTtcSeconds;
+            float range = settings.zeroRiskTtcSeconds
+                - settings.criticalTtcSeconds;
             return range <= 0f
                 ? 0f
                 : (settings.zeroRiskTtcSeconds - ttc) / range;
         }
 
-        private float MetricProximityFactor(float distanceMeters)
+        private static float MetricProximityFactor(float distanceMeters)
         {
-            float maximumDistance = Math.Max(
-                0.20f,
-                settings.maximumRiskDistanceMeters);
-            float middleDistance = Math.Max(
-                maximumDistance + 0.01f,
-                settings.middleRiskDistanceMeters);
-            float lowDistance = Math.Max(
-                middleDistance + 0.01f,
-                settings.lowRiskDistanceMeters);
-            if (distanceMeters <= maximumDistance)
+            if (distanceMeters <= 1.00f)
             {
                 return 1f;
             }
-
-            if (distanceMeters <= middleDistance)
+            if (distanceMeters <= 1.50f)
             {
                 return Lerp(
                     1f,
-                    0.55f,
-                    InverseLerp(
-                        maximumDistance,
-                        middleDistance,
-                        distanceMeters));
+                    0.80f,
+                    InverseLerp(1.00f, 1.50f, distanceMeters));
             }
-
-            if (distanceMeters <= lowDistance)
+            if (distanceMeters <= 2.50f)
             {
                 return Lerp(
-                    0.55f,
-                    0.15f,
-                    InverseLerp(
-                        middleDistance,
-                        lowDistance,
-                        distanceMeters));
+                    0.80f,
+                    0.25f,
+                    InverseLerp(1.50f, 2.50f, distanceMeters));
             }
-
-            return 0.15f;
+            if (distanceMeters <= 3.50f)
+            {
+                return Lerp(
+                    0.25f,
+                    0f,
+                    InverseLerp(2.50f, 3.50f, distanceMeters));
+            }
+            return 0f;
         }
 
         private static float LegacyProximityFactor(DistanceBand distanceBand)
@@ -452,26 +529,13 @@ namespace TeamVR.AdaptivePassthrough
             }
         }
 
-        private static float ObjectTypeFactor(string label)
+        private static float SmoothStep(
+            float minimum,
+            float maximum,
+            float value)
         {
-            switch ((label ?? string.Empty).ToLowerInvariant())
-            {
-                case "car":
-                case "truck":
-                    return 1f;
-                case "bus":
-                    return 0.95f;
-                case "motorcycle":
-                    return 0.90f;
-                case "bicycle":
-                    return 0.75f;
-                case "person":
-                    return 0.65f;
-                case "dog":
-                    return 0.45f;
-                default:
-                    return 0.30f;
-            }
+            float t = InverseLerp(minimum, maximum, value);
+            return t * t * (3f - 2f * t);
         }
 
         private static float Clamp01(float value)

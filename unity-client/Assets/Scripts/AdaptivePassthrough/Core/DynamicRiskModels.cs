@@ -34,6 +34,13 @@ namespace TeamVR.AdaptivePassthrough
         Danger
     }
 
+    public enum DynamicRiskDistanceSource
+    {
+        BoundingBoxProxy,
+        TrackingDistance,
+        SafetyDistance
+    }
+
     public enum TrackLifecycle
     {
         Tentative,
@@ -311,6 +318,17 @@ namespace TeamVR.AdaptivePassthrough
         public readonly string DepthRejectedReason;
         public readonly bool HasPresentationGeometry;
         public readonly HazardPresentationGeometry PresentationGeometry;
+        public readonly PersonPresentationGeometrySource
+            PresentationGeometrySource;
+        public readonly float PresentationDistanceMeters;
+        public readonly float RawSafetyDistanceMeters;
+        public readonly float SafetyDistanceMeters;
+        public readonly float SafetyDistanceConfidence;
+        public readonly int TorsoSupportCount;
+        public readonly int SafetySupportCount;
+        public readonly string ClusterSelectionReason;
+        public readonly PersonDepthClusterMeasurement TrackingCluster;
+        public readonly PersonDepthClusterMeasurement SafetyCluster;
 
         public RelativeLocationEstimate(
             HorizontalZone screenZone,
@@ -350,7 +368,18 @@ namespace TeamVR.AdaptivePassthrough
             string depthRejectedReason = null,
             bool hasWorldVelocity = false,
             Vector3 worldVelocity = default,
-            HazardPresentationGeometry presentationGeometry = default)
+            HazardPresentationGeometry presentationGeometry = default,
+            PersonPresentationGeometrySource presentationGeometrySource =
+                PersonPresentationGeometrySource.Unavailable,
+            float presentationDistanceMeters = 0f,
+            float rawSafetyDistanceMeters = 0f,
+            float safetyDistanceMeters = 0f,
+            float safetyDistanceConfidence = 0f,
+            int torsoSupportCount = 0,
+            int safetySupportCount = 0,
+            string clusterSelectionReason = null,
+            PersonDepthClusterMeasurement trackingCluster = default,
+            PersonDepthClusterMeasurement safetyCluster = default)
         {
             ScreenZone = screenZone;
             UserRelativeDirection = userRelativeDirection;
@@ -375,11 +404,36 @@ namespace TeamVR.AdaptivePassthrough
             DepthRejectedReason = isMetricReliable
                 ? string.Empty
                 : depthRejectedReason ?? string.Empty;
-            HasPresentationGeometry = isMetricReliable
-                && presentationGeometry.Available;
+            HasPresentationGeometry = presentationGeometry.Available;
             PresentationGeometry = HasPresentationGeometry
                 ? presentationGeometry
                 : default;
+            PresentationGeometrySource = HasPresentationGeometry
+                ? presentationGeometrySource
+                : PersonPresentationGeometrySource.Unavailable;
+            PresentationDistanceMeters = HasPresentationGeometry
+                ? NonNegativeFinite(presentationDistanceMeters)
+                : 0f;
+            RawSafetyDistanceMeters = NonNegativeFinite(
+                rawSafetyDistanceMeters);
+            SafetyDistanceMeters = NonNegativeFinite(safetyDistanceMeters);
+            SafetyDistanceConfidence = Clamp01(safetyDistanceConfidence);
+            TorsoSupportCount = Math.Max(0, torsoSupportCount);
+            SafetySupportCount = Math.Max(0, safetySupportCount);
+            ClusterSelectionReason = clusterSelectionReason ?? string.Empty;
+            TrackingCluster = trackingCluster;
+            SafetyCluster = safetyCluster;
+        }
+
+        public bool HasReliableSafetyDistance
+        {
+            get
+            {
+                return DistanceSource == PersonDistanceSource.EnvironmentDepth
+                    && SafetyDistanceMeters >= 0.20f
+                    && SafetyDistanceConfidence >= 0.55f
+                    && SafetySupportCount >= 2;
+            }
         }
 
         private static float NonNegativeFinite(float value)
@@ -409,6 +463,11 @@ namespace TeamVR.AdaptivePassthrough
         public readonly float ObjectType;
         public readonly float ProximityApproachInteraction;
         public readonly float ConfidenceFactor;
+        public readonly DynamicRiskDistanceSource RiskDistanceSource;
+        public readonly float RiskDistanceMeters;
+        public readonly float ClusterConfidence;
+        public readonly float CloseRiskFloor;
+        public readonly float MotionAttenuation;
 
         public DynamicRiskBreakdown(
             float proximity,
@@ -418,6 +477,35 @@ namespace TeamVR.AdaptivePassthrough
             float objectType,
             float proximityApproachInteraction,
             float confidenceFactor)
+            : this(
+                proximity,
+                approach,
+                ttc,
+                collisionPath,
+                objectType,
+                proximityApproachInteraction,
+                confidenceFactor,
+                DynamicRiskDistanceSource.BoundingBoxProxy,
+                0f,
+                0f,
+                0f,
+                1f)
+        {
+        }
+
+        public DynamicRiskBreakdown(
+            float proximity,
+            float approach,
+            float ttc,
+            float collisionPath,
+            float objectType,
+            float proximityApproachInteraction,
+            float confidenceFactor,
+            DynamicRiskDistanceSource riskDistanceSource,
+            float riskDistanceMeters,
+            float clusterConfidence,
+            float closeRiskFloor,
+            float motionAttenuation)
         {
             Proximity = proximity;
             Approach = approach;
@@ -426,6 +514,25 @@ namespace TeamVR.AdaptivePassthrough
             ObjectType = objectType;
             ProximityApproachInteraction = proximityApproachInteraction;
             ConfidenceFactor = confidenceFactor;
+            RiskDistanceSource = riskDistanceSource;
+            RiskDistanceMeters = NonNegativeFinite(riskDistanceMeters);
+            ClusterConfidence = Clamp01(clusterConfidence);
+            CloseRiskFloor = Clamp01(closeRiskFloor);
+            MotionAttenuation = Clamp01(motionAttenuation);
+        }
+
+        private static float NonNegativeFinite(float value)
+        {
+            return float.IsNaN(value) || float.IsInfinity(value)
+                ? 0f
+                : Math.Max(0f, value);
+        }
+
+        private static float Clamp01(float value)
+        {
+            return float.IsNaN(value) || float.IsInfinity(value)
+                ? 0f
+                : Math.Max(0f, Math.Min(1f, value));
         }
     }
 
@@ -549,8 +656,10 @@ namespace TeamVR.AdaptivePassthrough
             }
 
             MaximumRisk = maximumRisk;
-            MaximumLevel = maximumLevel;
             ForcePassthrough = forcePassthrough;
+            MaximumLevel = forcePassthrough
+                ? DynamicRiskLevel.Danger
+                : maximumLevel;
             PolicyRisk = forcePassthrough ? 1f : maximumRisk;
         }
     }

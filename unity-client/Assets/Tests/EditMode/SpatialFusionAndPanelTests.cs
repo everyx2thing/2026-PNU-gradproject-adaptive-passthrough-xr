@@ -489,6 +489,23 @@ namespace TeamVR.AdaptivePassthrough.Tests
         }
 
         [Test]
+        public void MissingTorsoSupportRequestsExpandedDepthSampling()
+        {
+            Assert.That(
+                QuestPersonDepthProvider.ShouldExpandNextSample(
+                    "torso_cluster_unavailable"),
+                Is.True);
+            Assert.That(
+                QuestPersonDepthProvider.ShouldExpandNextSample(
+                    "insufficient_depth_samples"),
+                Is.True);
+            Assert.That(
+                QuestPersonDepthProvider.ShouldExpandNextSample(
+                    "depth_capture_stale"),
+                Is.False);
+        }
+
+        [Test]
         public void CameraFrameTimestampMapsIntoMonotonicRealtimeClock()
         {
             System.DateTime utcNow = new System.DateTime(

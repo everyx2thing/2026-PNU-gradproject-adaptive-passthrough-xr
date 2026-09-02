@@ -1,13 +1,34 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using UnityEngine;
 
 namespace TeamVR.AdaptivePassthrough
 {
+    [DefaultExecutionOrder(700)]
     [DisallowMultipleComponent]
     public sealed class DynamicRiskSessionLogger : MonoBehaviour
     {
+        [Serializable]
+        private sealed class PersonDepthSampleLog
+        {
+            public int index;
+            public float boxX;
+            public float boxY;
+            public float viewportX;
+            public float viewportY;
+            public bool hit;
+            public float distanceMeters;
+            public bool hasWorldPoint;
+            public float worldX;
+            public float worldY;
+            public float worldZ;
+            public bool torsoCore;
+            public bool upperBody;
+            public string decision;
+        }
+
         [Serializable]
         private sealed class LogRecord
         {
@@ -32,7 +53,33 @@ namespace TeamVR.AdaptivePassthrough
             public bool distanceAvailable;
             public float rawDistanceMeters;
             public float filteredDistanceMeters;
+            public float trackingDistanceMeters;
             public float distanceConfidence;
+            public float rawSafetyDistanceMeters;
+            public float safetyDistanceMeters;
+            public float safetyDistanceConfidence;
+            public int torsoSupportCount;
+            public int safetySupportCount;
+            public string clusterSelectionReason;
+            public int trackingClusterId;
+            public float trackingClusterConfidence;
+            public int trackingClusterSupportCount;
+            public float trackingClusterSpanMeters;
+            public string trackingClusterSelectionMask;
+            public float trackingClusterTemporalConsistency;
+            public int safetyClusterId;
+            public float safetyClusterConfidence;
+            public int safetyClusterSupportCount;
+            public float safetyClusterSpanMeters;
+            public string safetyClusterSelectionMask;
+            public bool expandedDepthPattern;
+            public int requestedDepthSampleCount;
+            public int hitDepthSampleCount;
+            public bool hasTrackingWorldCenter;
+            public float trackingWorldCenterX;
+            public float trackingWorldCenterY;
+            public float trackingWorldCenterZ;
+            public PersonDepthSampleLog[] personDepthSamples;
             public float boundingBoxArea;
             public string motionState;
             public float scaleRatePerSecond;
@@ -42,7 +89,14 @@ namespace TeamVR.AdaptivePassthrough
             public float metricTtcSeconds;
             public bool hasMetricTtc;
             public float collisionPath;
+            public string riskDistanceSource;
+            public float riskDistanceMeters;
+            public float riskClusterConfidence;
+            public float closeRiskFloor;
+            public float motionAttenuation;
             public float dynamicRisk;
+            public float dynamicPolicyRisk;
+            public bool forcePassthrough;
             public string riskLevel;
             public string reasons;
             public bool observedThisFrame;
@@ -85,6 +139,13 @@ namespace TeamVR.AdaptivePassthrough
             public bool bboxDepthConflict;
             public bool metricDepthReliable;
             public string depthRejectedReason;
+            public bool presentationGeometryAvailable;
+            public string presentationGeometrySource;
+            public float presentationDistanceMeters;
+            public string personPresentationStatus;
+            public int qualifiedPersonCount;
+            public int geometryReadyPersonCount;
+            public int renderedPersonWindowCount;
             public bool idHandoff;
             public float missingSeconds;
             public string marker;
@@ -100,6 +161,8 @@ namespace TeamVR.AdaptivePassthrough
             public int inferenceScheduledLayerCount;
             public bool staticWindowVisible;
             public bool dynamicWindowVisible;
+            public bool dynamicPassthroughRendered;
+            public bool dynamicFallbackActive;
             public string visibilitySource;
             public float holdRemainingSeconds;
             public bool applicationPaused;
@@ -202,6 +265,12 @@ namespace TeamVR.AdaptivePassthrough
             public float primaryPolicyGeometryNormalZ;
         }
 
+        private sealed class PendingFrameRecord
+        {
+            public LogRecord Record;
+            public DynamicRiskAssessment Assessment;
+        }
+
         [SerializeField] private DynamicRiskController controller;
         [SerializeField] private MonoBehaviour presentationBehaviour;
         [SerializeField] private MonoBehaviour snapshotSequenceProviderBehaviour;
@@ -209,6 +278,7 @@ namespace TeamVR.AdaptivePassthrough
         [SerializeField] private MonoBehaviour staticPolicyBehaviour;
 #if ADAPTIVE_PASSTHROUGH_QUEST_CAMERA
         [SerializeField] private QuestSpatialObstacleProvider spatialProvider;
+        [SerializeField] private QuestPersonDepthProvider personDepthProvider;
 #endif
         [SerializeField] private bool enableLogging = true;
         [SerializeField, Min(1)] private int flushEveryRecords = 10;
@@ -222,6 +292,13 @@ namespace TeamVR.AdaptivePassthrough
             presentationSnapshotProvider;
         private IPassthroughVisibilityEventSource visibilityEventSource;
         private IStaticRiskDiagnosticsProvider staticPolicy;
+        private IDynamicPresentationModeProvider selectivePresentation;
+        private IPersonPresentationFrameProvider presentationFrameProvider;
+        private readonly List<PendingFrameRecord> pendingFrameRecords =
+            new List<PendingFrameRecord>();
+        private bool hasDynamicPresentationMode;
+        private bool lastDynamicPassthroughRendered;
+        private bool lastDynamicFallbackActive;
 
         public string CurrentLogPath { get; private set; }
 
@@ -239,6 +316,7 @@ namespace TeamVR.AdaptivePassthrough
 
         private void OnEnable()
         {
+            hasDynamicPresentationMode = false;
             if (controller != null)
             {
                 controller.FrameProcessed += OnFrameProcessed;
@@ -264,6 +342,7 @@ namespace TeamVR.AdaptivePassthrough
 
         private void OnDisable()
         {
+            FlushPendingFrameRecords();
             if (controller != null)
             {
                 controller.FrameProcessed -= OnFrameProcessed;
@@ -298,21 +377,18 @@ namespace TeamVR.AdaptivePassthrough
                 : controller.LatestFrameSequence;
             frameRecord.confirmedPersonCount = frame.ConfirmedPersonCount;
             frameRecord.dynamicRisk = frame.MaximumRisk;
+            frameRecord.dynamicPolicyRisk = frame.PolicyRisk;
+            frameRecord.forcePassthrough = frame.ForcePassthrough;
             frameRecord.riskLevel = frame.MaximumLevel.ToString();
-            WriteRecord(frameRecord);
+            pendingFrameRecords.Add(new PendingFrameRecord
+            {
+                Record = frameRecord
+            });
 
             for (int i = 0; i < frame.Assessments.Count; i++)
             {
                 DynamicRiskAssessment assessment = frame.Assessments[i];
                 NormalizedBoundingBox box = assessment.Detection.boundingBox;
-                Rect windowRect = default;
-                float windowOpacity = 0f;
-                bool windowVisible =
-                    presentation != null
-                    && presentation.TryGetPersonWindow(
-                        assessment.TrackId,
-                        out windowRect,
-                        out windowOpacity);
                 LogRecord record = NewRecord(
                     "assessment",
                     frame.TimestampSeconds);
@@ -335,7 +411,45 @@ namespace TeamVR.AdaptivePassthrough
                 record.distanceAvailable = assessment.Location.HasMetricDistance;
                 record.rawDistanceMeters = assessment.Location.RawDistanceMeters;
                 record.filteredDistanceMeters = assessment.Location.FilteredDistanceMeters;
+                record.trackingDistanceMeters =
+                    assessment.Location.FilteredDistanceMeters;
                 record.distanceConfidence = assessment.Location.DistanceConfidence;
+                record.rawSafetyDistanceMeters =
+                    assessment.Location.RawSafetyDistanceMeters;
+                record.safetyDistanceMeters =
+                    assessment.Location.SafetyDistanceMeters;
+                record.safetyDistanceConfidence =
+                    assessment.Location.SafetyDistanceConfidence;
+                record.torsoSupportCount =
+                    assessment.Location.TorsoSupportCount;
+                record.safetySupportCount =
+                    assessment.Location.SafetySupportCount;
+                record.clusterSelectionReason =
+                    assessment.Location.ClusterSelectionReason;
+                PersonDepthClusterMeasurement trackingCluster =
+                    assessment.Location.TrackingCluster;
+                PersonDepthClusterMeasurement safetyCluster =
+                    assessment.Location.SafetyCluster;
+                record.trackingClusterId = trackingCluster.ClusterId;
+                record.trackingClusterConfidence =
+                    trackingCluster.Confidence;
+                record.trackingClusterSupportCount =
+                    trackingCluster.SupportCount;
+                record.trackingClusterSpanMeters = trackingCluster.SpanMeters;
+                record.trackingClusterSelectionMask =
+                    trackingCluster.SelectionMask.ToString("X16");
+                record.trackingClusterTemporalConsistency =
+                    trackingCluster.TemporalConsistency;
+                record.safetyClusterId = safetyCluster.ClusterId;
+                record.safetyClusterConfidence = safetyCluster.Confidence;
+                record.safetyClusterSupportCount =
+                    safetyCluster.SupportCount;
+                record.safetyClusterSpanMeters = safetyCluster.SpanMeters;
+                record.safetyClusterSelectionMask =
+                    safetyCluster.SelectionMask.ToString("X16");
+#if ADAPTIVE_PASSTHROUGH_QUEST_CAMERA
+                ApplyPersonDepthSamples(record, assessment.TrackId);
+#endif
                 record.boundingBoxArea = assessment.Location.BoundingBoxArea;
                 record.motionState = assessment.Motion.State.ToString();
                 record.scaleRatePerSecond = assessment.Motion.ScaleRatePerSecond;
@@ -345,7 +459,20 @@ namespace TeamVR.AdaptivePassthrough
                 record.metricTtcSeconds = assessment.Motion.MetricTtcSeconds.GetValueOrDefault();
                 record.hasMetricTtc = assessment.Motion.MetricTtcSeconds.HasValue;
                 record.collisionPath = assessment.Breakdown.CollisionPath;
+                record.riskDistanceSource = assessment.Breakdown
+                    .RiskDistanceSource.ToString();
+                record.riskDistanceMeters = assessment.Breakdown
+                    .RiskDistanceMeters;
+                record.riskClusterConfidence = assessment.Breakdown
+                    .ClusterConfidence;
+                record.closeRiskFloor = assessment.Breakdown.CloseRiskFloor;
+                record.motionAttenuation = assessment.Breakdown
+                    .MotionAttenuation;
                 record.dynamicRisk = assessment.Score;
+                record.dynamicPolicyRisk = assessment.ForcePassthrough
+                    ? 1f
+                    : assessment.Score;
+                record.forcePassthrough = assessment.ForcePassthrough;
                 record.riskLevel = assessment.Level.ToString();
                 record.reasons = string.Join(",", assessment.Reasons);
                 record.observedThisFrame = assessment.ObservedThisFrame;
@@ -353,8 +480,6 @@ namespace TeamVR.AdaptivePassthrough
                 record.liveTrackIds = string.Join(",", frame.LiveTrackIds);
                 record.tentativeTrack = assessment.Lifecycle
                     == TrackLifecycle.Tentative;
-                record.revealEligible = assessment.ForcePassthrough
-                    || assessment.Score >= 0.50f;
                 record.closePassthroughActive =
                     assessment.ClosePassthroughActive;
                 record.closeTransitionReason =
@@ -366,22 +491,6 @@ namespace TeamVR.AdaptivePassthrough
                 record.worldVelocityX = assessment.Location.WorldVelocity.x;
                 record.worldVelocityY = assessment.Location.WorldVelocity.y;
                 record.worldVelocityZ = assessment.Location.WorldVelocity.z;
-                record.worldPredictionAgeSeconds =
-                    assessment.Location.HasWorldVelocity && controller != null
-                        ? Mathf.Min(
-                            0.50f,
-                            (float)Math.Max(
-                                0.0,
-                                Time.realtimeSinceStartupAsDouble
-                                    - controller
-                                        .LatestFrameCaptureRealtimeSeconds))
-                        : 0f;
-                record.windowVisible = windowVisible;
-                record.windowX = windowVisible ? windowRect.x : 0f;
-                record.windowY = windowVisible ? windowRect.y : 0f;
-                record.windowWidth = windowVisible ? windowRect.width : 0f;
-                record.windowHeight = windowVisible ? windowRect.height : 0f;
-                record.windowOpacity = windowVisible ? windowOpacity : 0f;
                 record.depthSampleDispersionMeters =
                     assessment.Location.DepthSampleDispersionMeters;
                 record.bboxDepthConflict = assessment.Motion.MetricConflict;
@@ -389,15 +498,19 @@ namespace TeamVR.AdaptivePassthrough
                     assessment.Location.IsMetricReliable;
                 record.depthRejectedReason =
                     assessment.Location.DepthRejectedReason;
+                record.presentationGeometryAvailable =
+                    assessment.Location.HasPresentationGeometry;
+                record.presentationGeometrySource = assessment.Location
+                    .PresentationGeometrySource.ToString();
+                record.presentationDistanceMeters = assessment.Location
+                    .PresentationDistanceMeters;
                 record.missingSeconds = assessment.MissingSeconds;
                 record.idHandoff = assessment.IdHandoff;
-                WriteRecord(record);
-            }
-
-            if (pendingRecords >= flushEveryRecords)
-            {
-                writer.Flush();
-                pendingRecords = 0;
+                pendingFrameRecords.Add(new PendingFrameRecord
+                {
+                    Record = record,
+                    Assessment = assessment
+                });
             }
         }
 
@@ -508,9 +621,201 @@ namespace TeamVR.AdaptivePassthrough
                 record.holdRemainingSeconds =
                     presentationSnapshot.HoldRemainingSeconds;
             }
+            if (selectivePresentation != null)
+            {
+                record.dynamicPassthroughRendered =
+                    selectivePresentation.DynamicPassthroughRendered;
+                record.dynamicFallbackActive =
+                    selectivePresentation.DynamicFallbackActive;
+            }
             ApplyStaticDiagnostics(record);
             return record;
         }
+
+        private void LateUpdate()
+        {
+            if (!enableLogging || writer == null)
+            {
+                return;
+            }
+
+            FlushPendingFrameRecords();
+            if (selectivePresentation == null)
+            {
+                return;
+            }
+
+            bool passthroughRendered =
+                selectivePresentation.DynamicPassthroughRendered;
+            bool fallbackActive =
+                selectivePresentation.DynamicFallbackActive;
+            if (hasDynamicPresentationMode
+                && passthroughRendered == lastDynamicPassthroughRendered
+                && fallbackActive == lastDynamicFallbackActive)
+            {
+                return;
+            }
+
+            hasDynamicPresentationMode = true;
+            lastDynamicPassthroughRendered = passthroughRendered;
+            lastDynamicFallbackActive = fallbackActive;
+            LogRecord record = NewRecord(
+                "dynamic_presentation",
+                Time.realtimeSinceStartupAsDouble);
+            record.dynamicPassthroughRendered = passthroughRendered;
+            record.dynamicFallbackActive = fallbackActive;
+            WriteRecord(record);
+            writer.Flush();
+            pendingRecords = 0;
+        }
+
+        private void FlushPendingFrameRecords()
+        {
+            if (writer == null || pendingFrameRecords.Count == 0)
+            {
+                return;
+            }
+
+            for (int i = 0; i < pendingFrameRecords.Count; i++)
+            {
+                PendingFrameRecord pending = pendingFrameRecords[i];
+                RefreshPresentationFields(
+                    pending.Record,
+                    pending.Assessment);
+                WriteRecord(pending.Record);
+            }
+            pendingFrameRecords.Clear();
+
+            if (pendingRecords >= flushEveryRecords)
+            {
+                writer.Flush();
+                pendingRecords = 0;
+            }
+        }
+
+        private void RefreshPresentationFields(
+            LogRecord record,
+            DynamicRiskAssessment assessment)
+        {
+            if (record == null)
+            {
+                return;
+            }
+
+            if (presentationSnapshotProvider != null)
+            {
+                PassthroughPresentationSnapshot snapshot =
+                    presentationSnapshotProvider.GetPresentationSnapshot();
+                record.staticWindowVisible = snapshot.StaticVisible;
+                record.dynamicWindowVisible = snapshot.DynamicVisible;
+                record.visibilitySource = snapshot.VisibilitySource;
+                record.holdRemainingSeconds = snapshot.HoldRemainingSeconds;
+            }
+            if (selectivePresentation != null)
+            {
+                record.dynamicPassthroughRendered =
+                    selectivePresentation.DynamicPassthroughRendered;
+                record.dynamicFallbackActive =
+                    selectivePresentation.DynamicFallbackActive;
+            }
+            if (assessment == null)
+            {
+                return;
+            }
+
+            record.revealEligible = presentationFrameProvider != null
+                ? presentationFrameProvider.IsPersonRevealEligible(assessment)
+                : assessment.ForcePassthrough;
+            Rect windowRect = default;
+            float windowOpacity = 0f;
+            bool windowVisible = presentationFrameProvider != null
+                && presentationFrameProvider.TryGetRenderedPersonWindow(
+                    assessment.TrackId,
+                    out windowRect,
+                    out windowOpacity);
+            record.windowVisible = windowVisible;
+            record.windowX = windowVisible ? windowRect.x : 0f;
+            record.windowY = windowVisible ? windowRect.y : 0f;
+            record.windowWidth = windowVisible ? windowRect.width : 0f;
+            record.windowHeight = windowVisible ? windowRect.height : 0f;
+            record.windowOpacity = windowVisible ? windowOpacity : 0f;
+            record.worldPredictionAgeSeconds =
+                assessment.Location.HasWorldVelocity && controller != null
+                    ? Mathf.Min(
+                        0.50f,
+                        (float)Math.Max(
+                            0.0,
+                            Time.realtimeSinceStartupAsDouble
+                                - controller
+                                    .LatestFrameCaptureRealtimeSeconds))
+                    : 0f;
+            IPersonPresentationDiagnosticsProvider diagnostics =
+                presentationBehaviour
+                    as IPersonPresentationDiagnosticsProvider;
+            if (diagnostics != null)
+            {
+                record.personPresentationStatus = diagnostics
+                    .LatestPersonPresentationStatus.ToString();
+                record.qualifiedPersonCount = diagnostics
+                    .LatestQualifiedPersonCount;
+                record.geometryReadyPersonCount = diagnostics
+                    .LatestGeometryReadyPersonCount;
+                record.renderedPersonWindowCount = diagnostics
+                    .ActivePersonWindowCount;
+            }
+        }
+
+#if ADAPTIVE_PASSTHROUGH_QUEST_CAMERA
+        private void ApplyPersonDepthSamples(LogRecord record, int trackId)
+        {
+            if (record == null || personDepthProvider == null)
+            {
+                return;
+            }
+
+            if (!personDepthProvider.TryGetSamplingSnapshot(
+                    trackId,
+                    out PersonDepthSamplingSnapshot snapshot)
+                || snapshot == null)
+            {
+                return;
+            }
+
+            record.expandedDepthPattern = snapshot.ExpandedPattern;
+            record.requestedDepthSampleCount =
+                snapshot.RequestedSampleCount;
+            record.hitDepthSampleCount = snapshot.HitSampleCount;
+            record.hasTrackingWorldCenter =
+                snapshot.HasTrackingWorldCenter;
+            record.trackingWorldCenterX = snapshot.TrackingWorldCenter.x;
+            record.trackingWorldCenterY = snapshot.TrackingWorldCenter.y;
+            record.trackingWorldCenterZ = snapshot.TrackingWorldCenter.z;
+            var samples = new PersonDepthSampleLog[snapshot.Samples.Length];
+            for (int i = 0; i < snapshot.Samples.Length; i++)
+            {
+                PersonDepthSampleDiagnostic source = snapshot.Samples[i];
+                samples[i] = new PersonDepthSampleLog
+                {
+                    index = source.SampleIndex,
+                    boxX = source.BoxRelativePosition.x,
+                    boxY = source.BoxRelativePosition.y,
+                    viewportX = source.CameraViewportPosition.x,
+                    viewportY = source.CameraViewportPosition.y,
+                    hit = source.HasHit,
+                    distanceMeters = source.DistanceMeters,
+                    hasWorldPoint = source.HasWorldPoint,
+                    worldX = source.WorldPoint.x,
+                    worldY = source.WorldPoint.y,
+                    worldZ = source.WorldPoint.z,
+                    torsoCore = source.IsTorsoCore,
+                    upperBody = source.IsUpperBody,
+                    decision = source.Decision.ToString()
+                };
+            }
+
+            record.personDepthSamples = samples;
+        }
+#endif
 
         private void ApplyStaticDiagnostics(LogRecord record)
         {
@@ -733,9 +1038,10 @@ namespace TeamVR.AdaptivePassthrough
             record.markerPhase = marker.Phase;
             record.groundTruthDistanceMeters =
                 marker.GroundTruthDistanceMeters;
-            WriteRecord(record);
-            writer.Flush();
-            pendingRecords = 0;
+            pendingFrameRecords.Add(new PendingFrameRecord
+            {
+                Record = record
+            });
         }
 
         private void OnVisibilityChanged(
@@ -748,6 +1054,7 @@ namespace TeamVR.AdaptivePassthrough
                 return;
             }
 
+            FlushPendingFrameRecords();
             LogRecord record = NewRecord(
                 "visibility",
                 timestampSeconds);
@@ -769,9 +1076,10 @@ namespace TeamVR.AdaptivePassthrough
                 paused ? "pause" : "resume",
                 Time.realtimeSinceStartupAsDouble);
             record.applicationPaused = paused;
-            WriteRecord(record);
-            writer.Flush();
-            pendingRecords = 0;
+            pendingFrameRecords.Add(new PendingFrameRecord
+            {
+                Record = record
+            });
         }
 
         private void OnTestMarker(string marker, double timestampSeconds)
@@ -783,9 +1091,10 @@ namespace TeamVR.AdaptivePassthrough
 
             LogRecord record = NewRecord("marker", timestampSeconds);
             record.marker = marker;
-            WriteRecord(record);
-            writer.Flush();
-            pendingRecords = 0;
+            pendingFrameRecords.Add(new PendingFrameRecord
+            {
+                Record = record
+            });
         }
 
         private long LatestSnapshotSequence()
@@ -820,6 +1129,10 @@ namespace TeamVR.AdaptivePassthrough
 
         private void ResolvePresentation()
         {
+            selectivePresentation = presentationBehaviour
+                as IDynamicPresentationModeProvider;
+            presentationFrameProvider = presentationBehaviour
+                as IPersonPresentationFrameProvider;
             presentation =
                 presentationBehaviour as IPersonWindowSnapshotProvider;
             presentationSnapshotProvider =
@@ -840,6 +1153,10 @@ namespace TeamVR.AdaptivePassthrough
                     is IPersonWindowSnapshotProvider provider)
                 {
                     presentationBehaviour = behaviours[i];
+                    selectivePresentation = behaviours[i]
+                        as IDynamicPresentationModeProvider;
+                    presentationFrameProvider = behaviours[i]
+                        as IPersonPresentationFrameProvider;
                     presentation = provider;
                     presentationSnapshotProvider = behaviours[i]
                         as IPassthroughPresentationSnapshotProvider;
@@ -885,6 +1202,11 @@ namespace TeamVR.AdaptivePassthrough
             {
                 spatialProvider =
                     FindAnyObjectByType<QuestSpatialObstacleProvider>();
+            }
+            if (personDepthProvider == null)
+            {
+                personDepthProvider =
+                    FindAnyObjectByType<QuestPersonDepthProvider>();
             }
 #endif
         }

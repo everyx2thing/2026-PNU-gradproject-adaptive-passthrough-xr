@@ -15,15 +15,15 @@ namespace TeamVR.AdaptivePassthrough.Tests
             StaticPassthroughDecision resting = policy.Evaluate(
                 1L,
                 0.0,
-                Frame(headRisk: 0.55f, userState: 0f));
+                Frame(headRisk: 0.47f, userState: 0f));
             StaticPassthroughDecision moving = policy.Evaluate(
                 2L,
                 0.1,
-                Frame(headRisk: 0.55f, userState: 1f));
+                Frame(headRisk: 0.47f, userState: 1f));
 
             Assert.That(resting.Enabled, Is.False);
-            Assert.That(resting.HeadRisk, Is.EqualTo(0.55f));
-            Assert.That(moving.HeadRisk, Is.EqualTo(0.55f));
+            Assert.That(resting.HeadRisk, Is.EqualTo(0.47f));
+            Assert.That(moving.HeadRisk, Is.EqualTo(0.47f));
             Assert.That(moving.Enabled, Is.True);
             Assert.That(moving.Cause, Is.EqualTo(StaticActivationCause.Head));
         }
@@ -75,11 +75,11 @@ namespace TeamVR.AdaptivePassthrough.Tests
             StaticPassthroughDecision minimumHeld = policy.Evaluate(
                 3L,
                 0.2,
-                Frame(headRisk: 0.56f));
+                Frame(headRisk: 0.36f));
             StaticPassthroughDecision released = policy.Evaluate(
                 4L,
                 1.6,
-                Frame(headRisk: 0.56f));
+                Frame(headRisk: 0.36f));
 
             Assert.That(entered.Enabled, Is.True);
             Assert.That(held.Enabled, Is.True);
@@ -307,7 +307,7 @@ namespace TeamVR.AdaptivePassthrough.Tests
             StaticPassthroughDecision decision = policy.Evaluate(
                 2L,
                 0.1,
-                Frame(headRisk: 0.60f),
+                Frame(headRisk: 0.45f),
                 StaticRiskChannelMask.All);
 
             Assert.That(Hazard(decision, StaticHazardKey.Head).Enabled,

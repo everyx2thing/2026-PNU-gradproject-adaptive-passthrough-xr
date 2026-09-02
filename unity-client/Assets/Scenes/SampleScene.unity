@@ -2586,6 +2586,8 @@ MonoBehaviour:
   personFadeInSeconds: 0.125
   personLostHoldSeconds: 1.5
   personFadeOutSeconds: 0.3
+  personGeometryFreshnessSeconds: 0.85
+  maximumAcceptedPersonCaptureAgeSeconds: 0.75
   wallEdgeFeather: 0.065
   wallViewportEdgeMargin: 0.02
   wallMinimumWidth: 0.24
@@ -2627,10 +2629,10 @@ MonoBehaviour:
   measurementProvider: {fileID: 458888778}
   evaluationRateHz: 20
   policySettings:
-    stableOnThreshold: 0.65
+    stableOnThreshold: 0.5
     rapidOnThreshold: 0.45
     hysteresisWidth: 0.08
-    handFullThreshold: 0.85
+    handFullThreshold: 0.4
     awareThreshold: 0.4
     minimumHoldSeconds: 1.5
     releaseDelaySeconds: 0.35
@@ -2742,9 +2744,9 @@ MonoBehaviour:
   negativeProbabilityOverride: 0
   overriddenNegativeProbability: 0.5
   thresholdPreview:
-    StableOnThreshold: 0.65
+    StableOnThreshold: 0.5
     RapidOnThreshold: 0.45
-    HandFullThreshold: 0.85
+    HandFullThreshold: 0.4
     DynamicOnThreshold: 0.6
     DynamicOffThreshold: 0.45
     AdjustmentDelta: 0

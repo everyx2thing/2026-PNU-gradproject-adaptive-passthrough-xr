@@ -152,9 +152,9 @@ namespace TeamVR.AdaptivePassthrough.Tests
 
                 Invoke(runtime, "ApplyModelNow");
 
-                AssertFloat(staticPolicy, "StableOnThreshold", 0.75f);
+                AssertFloat(staticPolicy, "StableOnThreshold", 0.60f);
                 AssertFloat(staticPolicy, "RapidOnThreshold", 0.55f);
-                AssertFloat(staticPolicy, "HandFullThreshold", 0.95f);
+                AssertFloat(staticPolicy, "HandFullThreshold", 0.50f);
                 AssertFloat(dynamicPolicy, "OnThreshold", 0.70f);
                 AssertFloat(dynamicPolicy, "OffThreshold", 0.55f);
                 Assert.That(
@@ -166,9 +166,9 @@ namespace TeamVR.AdaptivePassthrough.Tests
 
                 Invoke(runtime, "SetMlEnabled", false);
 
-                AssertFloat(staticPolicy, "StableOnThreshold", 0.65f);
+                AssertFloat(staticPolicy, "StableOnThreshold", 0.50f);
                 AssertFloat(staticPolicy, "RapidOnThreshold", 0.45f);
-                AssertFloat(staticPolicy, "HandFullThreshold", 0.85f);
+                AssertFloat(staticPolicy, "HandFullThreshold", 0.40f);
                 AssertFloat(dynamicPolicy, "OnThreshold", 0.60f);
                 AssertFloat(dynamicPolicy, "OffThreshold", 0.45f);
             }
@@ -206,9 +206,9 @@ namespace TeamVR.AdaptivePassthrough.Tests
                 Assert.That(
                     BoolProperty(runtime, "HasNegativeProbability"),
                     Is.False);
-                AssertFloat(staticPolicy, "StableOnThreshold", 0.65f);
+                AssertFloat(staticPolicy, "StableOnThreshold", 0.50f);
                 AssertFloat(staticPolicy, "RapidOnThreshold", 0.45f);
-                AssertFloat(staticPolicy, "HandFullThreshold", 0.85f);
+                AssertFloat(staticPolicy, "HandFullThreshold", 0.40f);
                 AssertFloat(dynamicPolicy, "OnThreshold", 0.60f);
                 AssertFloat(dynamicPolicy, "OffThreshold", 0.45f);
             }

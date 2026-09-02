@@ -168,6 +168,46 @@ namespace TeamVR.AdaptivePassthrough
                 FloorHeight);
         }
 
+        public HazardPresentationGeometry PredictedTo(
+            double timestampSeconds,
+            float maximumPredictionSeconds)
+        {
+            if (!Available)
+            {
+                return this;
+            }
+
+            double safeTimestamp = Math.Max(
+                CaptureTimestampSeconds,
+                timestampSeconds);
+            float age = Mathf.Min(
+                Mathf.Max(0f, maximumPredictionSeconds),
+                (float)Math.Max(
+                    0.0,
+                    safeTimestamp - CaptureTimestampSeconds));
+            Vector3 delta = HasWorldVelocity
+                ? WorldVelocity * age
+                : Vector3.zero;
+            return new HazardPresentationGeometry(
+                StableId,
+                Kind,
+                BottomLeft + delta,
+                BottomRight + delta,
+                TopRight + delta,
+                TopLeft + delta,
+                SurfaceNormal,
+                safeTimestamp,
+                Confidence,
+                Risk,
+                Source,
+                Owner,
+                ProbePurpose,
+                HasWorldVelocity,
+                WorldVelocity,
+                HasFreshFloor,
+                HasFreshFloor ? FloorHeight + delta.y : FloorHeight);
+        }
+
         public HazardPresentationGeometry WithStableId(long stableId)
         {
             if (!Available)

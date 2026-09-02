@@ -110,7 +110,27 @@ namespace TeamVR.AdaptivePassthrough
                     : distance.WorldVelocity,
                 distance == null
                     ? default
-                    : distance.PresentationGeometry);
+                    : distance.PresentationGeometry,
+                distance == null
+                    ? PersonPresentationGeometrySource.Unavailable
+                    : distance.PresentationGeometrySource,
+                distance == null
+                    ? 0f
+                    : distance.PresentationDistanceMeters,
+                distance == null ? 0f : distance.RawSafetyDistanceMeters,
+                distance == null ? 0f : distance.SafetyDistanceMeters,
+                distance == null ? 0f : distance.SafetyConfidence,
+                distance == null ? 0 : distance.TorsoSupportCount,
+                distance == null ? 0 : distance.SafetySupportCount,
+                distance == null
+                    ? string.Empty
+                    : distance.ClusterSelectionReason,
+                distance == null
+                    ? default
+                    : distance.TrackingCluster,
+                distance == null
+                    ? default
+                    : distance.SafetyCluster);
         }
     }
 }

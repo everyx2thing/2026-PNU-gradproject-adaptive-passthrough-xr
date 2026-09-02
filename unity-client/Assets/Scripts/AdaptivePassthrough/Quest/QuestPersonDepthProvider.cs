@@ -10,6 +10,7 @@ namespace TeamVR.AdaptivePassthrough
     [DisallowMultipleComponent]
     public sealed class QuestPersonDepthProvider : MonoBehaviour
     {
+        private const float MinimumDepthDistanceMeters = 0.20f;
         private sealed class WorldTrackState
         {
             public bool Initialized;
@@ -88,16 +89,18 @@ namespace TeamVR.AdaptivePassthrough
 
         [SerializeField] private PassthroughCameraAccess cameraAccess;
         [SerializeField] private EnvironmentRaycastManager raycastManager;
+        [SerializeField] private TrackingQualityController trackingQuality;
         [SerializeField, Min(0.2f)] private float maximumDistanceMeters = 6f;
         [SerializeField, Min(0.05f)] private float maximumCaptureAgeSeconds = 0.40f;
 
-        private readonly List<float> sampleDistances =
-            new List<float>(ExpandedSamplePoints.Length);
-        private readonly List<float> sampleWeights =
-            new List<float>(ExpandedSamplePoints.Length);
+        private readonly List<PersonDepthSample> personDepthSamples =
+            new List<PersonDepthSample>(ExpandedSamplePoints.Length);
         private readonly HashSet<int> expandNextFrame = new HashSet<int>();
         private readonly Dictionary<int, WorldTrackState> worldTrackStates =
             new Dictionary<int, WorldTrackState>();
+        private readonly Dictionary<int, PersonDepthSamplingSnapshot>
+            samplingSnapshots =
+                new Dictionary<int, PersonDepthSamplingSnapshot>();
         private readonly HashSet<int> liveTrackScratch = new HashSet<int>();
         private readonly List<int> expiredWorldTracks = new List<int>();
         private readonly List<ObservationDepthSample> observationDepthCache =
@@ -117,9 +120,28 @@ namespace TeamVR.AdaptivePassthrough
 
         public string LastFailureReason { get; private set; }
 
+        public PersonPresentationGeometrySource LastPresentationGeometrySource
+        {
+            get;
+            private set;
+        }
+
         public PassthroughCameraAccess CameraAccess
         {
             get { return cameraAccess; }
+        }
+
+        public PersonDepthSamplingSnapshot LatestSamplingSnapshot
+        {
+            get;
+            private set;
+        } = PersonDepthSamplingSnapshot.Empty;
+
+        public bool TryGetSamplingSnapshot(
+            int trackId,
+            out PersonDepthSamplingSnapshot snapshot)
+        {
+            return samplingSnapshots.TryGetValue(trackId, out snapshot);
         }
 
         private void Awake()
@@ -171,7 +193,7 @@ namespace TeamVR.AdaptivePassthrough
             {
                 return Fallback(
                     tracked,
-                    bboxArea,
+                    tracked.Detection.boundingBox,
                     "camera_not_ready");
             }
 
@@ -180,7 +202,7 @@ namespace TeamVR.AdaptivePassthrough
             {
                 return Fallback(
                     tracked,
-                    bboxArea,
+                    tracked.Detection.boundingBox,
                     "environment_depth_not_supported");
             }
 
@@ -199,46 +221,45 @@ namespace TeamVR.AdaptivePassthrough
                 expandNextFrame.Remove(tracked.TrackId);
                 IsDepthReady = false;
                 LastFailureReason = preRaycastRejection;
-                return PersonDistanceMeasurement.BoundingBoxFallback(
-                    tracked.TrackId,
-                    frameTimestampSeconds,
-                    bboxArea,
+                return Fallback(
+                    tracked,
+                    tracked.Detection.boundingBox,
                     preRaycastRejection);
             }
 
-            sampleDistances.Clear();
-            sampleWeights.Clear();
+            personDepthSamples.Clear();
             NormalizedBoundingBox box =
                 tracked.Detection.boundingBox;
             bool expanded = expandNextFrame.Remove(tracked.TrackId);
             Vector2[] points = expanded
                 ? ExpandedSamplePoints
                 : DefaultSamplePoints;
-            int cachedSampleIndex = expanded
-                ? -1
-                : FindObservationDepthSample(box);
-            if (cachedSampleIndex >= 0)
-            {
-                ObservationDepthSample cached =
-                    observationDepthCache[cachedSampleIndex];
-                sampleDistances.Add(cached.LeftDistance);
-                sampleWeights.Add(DefaultSampleWeights[5]);
-                sampleDistances.Add(cached.CenterDistance);
-                sampleWeights.Add(DefaultSampleWeights[6]);
-                sampleDistances.Add(cached.RightDistance);
-                sampleWeights.Add(DefaultSampleWeights[7]);
-            }
+            // Always raycast the exact inference frame. Reusing the older
+            // observation cache kept only scalar distances and therefore
+            // could not provide the real body surface points needed for
+            // world-space person presentation.
+            var sampleDiagnostics =
+                new PersonDepthSampleDiagnostic[points.Length];
             for (int i = 0; i < points.Length; i++)
             {
-                if (cachedSampleIndex >= 0 && i >= 5 && i <= 7)
-                {
-                    continue;
-                }
                 Vector2 relative = points[i];
-                float x = box.Left + box.width * relative.x;
-                float topDownY = box.Top + box.height * relative.y;
                 Vector2 cameraViewportPoint =
-                    new Vector2(x, 1f - topDownY);
+                    PersonImageCoordinates.BoxRelativeToCameraViewport(
+                        box,
+                        relative);
+                bool torsoCore = IsTorsoCore(relative);
+                bool upperBody = IsUpperBody(relative);
+                sampleDiagnostics[i] = new PersonDepthSampleDiagnostic(
+                    i,
+                    relative,
+                    cameraViewportPoint,
+                    false,
+                    0f,
+                    false,
+                    Vector3.zero,
+                    torsoCore,
+                    upperBody,
+                    PersonDepthSampleDecision.NoHit);
                 Ray ray = cameraAccess.ViewportPointToRay(
                     cameraViewportPoint,
                     cameraPoseAtCapture);
@@ -255,12 +276,37 @@ namespace TeamVR.AdaptivePassthrough
                 float distance = Vector3.Distance(
                     ray.origin,
                     hit.point);
-                if (IsFinite(distance))
+                if (IsFinite(distance)
+                    && distance >= MinimumDepthDistanceMeters
+                    && distance <= maximumDistanceMeters)
                 {
-                    sampleDistances.Add(distance);
-                    sampleWeights.Add(expanded
-                        ? ExpandedWeight(relative)
-                        : DefaultSampleWeights[i]);
+                    AddDepthSample(
+                        i,
+                        distance,
+                        relative,
+                        cameraViewportPoint,
+                        expanded
+                            ? ExpandedWeight(relative)
+                            : DefaultSampleWeights[i],
+                        hit.point);
+                    sampleDiagnostics[i] =
+                        new PersonDepthSampleDiagnostic(
+                            i,
+                            relative,
+                            cameraViewportPoint,
+                            true,
+                            distance,
+                            true,
+                            hit.point,
+                            torsoCore,
+                            upperBody,
+                            PersonDepthSampleDecision.OtherCluster);
+                }
+                else
+                {
+                    sampleDiagnostics[i] =
+                        sampleDiagnostics[i].WithDecision(
+                            PersonDepthSampleDecision.InvalidDistance);
                 }
             }
 
@@ -268,14 +314,11 @@ namespace TeamVR.AdaptivePassthrough
                 distanceFilter.UpdateMetric(
                     tracked.TrackId,
                     frameTimestampSeconds,
-                    sampleDistances,
+                    personDepthSamples,
                     points.Length,
                     bboxArea,
-                    sampleWeights,
                     PersonDepthReliability.MinimumConfidence,
-                    PersonDepthReliability.IsLargeBox(box)
-                        ? PersonDepthReliability.BackgroundDistanceMeters
-                        : float.PositiveInfinity,
+                    float.PositiveInfinity,
                     PersonDepthReliability.MaximumDispersionMeters);
             string rejectedReason;
             bool reliable = PersonDepthReliability.IsReliable(
@@ -291,64 +334,45 @@ namespace TeamVR.AdaptivePassthrough
             {
                 expandNextFrame.Add(tracked.TrackId);
             }
-            if (result.HasReliableMetricDistance)
+
+            ulong trackingMask = distanceFilter.LatestTrackingSelectionMask;
+            ulong safetyMask = distanceFilter.LatestSafetySelectionMask;
+            ApplySampleDecisions(
+                sampleDiagnostics,
+                trackingMask,
+                safetyMask);
+            bool hasTrackingWorldCenter = PersonDepthWorldCenter.TryCalculate(
+                personDepthSamples,
+                trackingMask,
+                out Vector3 trackingWorldCenter);
+            if (hasTrackingWorldCenter)
             {
-                Vector2 centerViewport = new Vector2(
-                    box.centerX,
-                    1f - box.centerY);
-                Ray centerRay = cameraAccess.ViewportPointToRay(
-                    centerViewport,
-                    cameraPoseAtCapture);
-                Vector3 worldVelocity;
-                bool hasWorldVelocity;
-                Vector3 worldPoint = FilterWorldPoint(
-                    tracked.TrackId,
-                    centerRay.origin
-                        + centerRay.direction
-                        * result.FilteredDistanceMeters,
-                    frameTimestampSeconds,
-                    out worldVelocity,
-                    out hasWorldVelocity);
-                result = result.WithWorldPoint(
-                    worldPoint,
-                    worldVelocity,
-                    hasWorldVelocity);
-                NormalizedBoundingBox capsuleBox =
-                    HazardPresentationGeometry.UpperBodyExpandedBox(box);
-                Ray bottomLeftRay = cameraAccess.ViewportPointToRay(
-                    new Vector2(capsuleBox.Left, 1f - capsuleBox.Bottom),
-                    cameraPoseAtCapture);
-                Ray bottomRightRay = cameraAccess.ViewportPointToRay(
-                    new Vector2(capsuleBox.Right, 1f - capsuleBox.Bottom),
-                    cameraPoseAtCapture);
-                Ray topRightRay = cameraAccess.ViewportPointToRay(
-                    new Vector2(capsuleBox.Right, 1f - capsuleBox.Top),
-                    cameraPoseAtCapture);
-                Ray topLeftRay = cameraAccess.ViewportPointToRay(
-                    new Vector2(capsuleBox.Left, 1f - capsuleBox.Top),
-                    cameraPoseAtCapture);
-                Vector3 captureForward = cameraPoseAtCapture.rotation
-                    * Vector3.forward;
-                if (HazardPresentationGeometry.TryCreatePersonCapsule(
-                        tracked.TrackId,
-                        capsuleBox,
-                        bottomLeftRay,
-                        bottomRightRay,
-                        topRightRay,
-                        topLeftRay,
-                        worldPoint,
-                        captureForward,
-                        frameTimestampSeconds,
-                        result.Confidence,
-                        0f,
-                        worldVelocity,
-                        hasWorldVelocity,
-                        out HazardPresentationGeometry geometry))
-                {
-                    result = result.WithPresentationGeometry(geometry);
-                }
+                result = result.WithDepthClusters(
+                    result.TrackingCluster.WithWorldCenter(
+                        trackingWorldCenter),
+                    result.SafetyCluster);
             }
-            IsDepthReady = result.HasReliableMetricDistance;
+            PublishSamplingSnapshot(
+                tracked.TrackId,
+                expanded,
+                sampleDiagnostics,
+                trackingMask,
+                safetyMask,
+                hasTrackingWorldCenter,
+                trackingWorldCenter,
+                string.IsNullOrEmpty(result.ClusterSelectionReason)
+                    ? rejectedReason
+                    : result.ClusterSelectionReason,
+                result.TrackingCluster,
+                result.SafetyCluster);
+            result = AttachPresentationGeometry(
+                tracked,
+                box,
+                result,
+                reliable && hasTrackingWorldCenter,
+                trackingWorldCenter);
+            IsDepthReady = result.HasReliableMetricDistance
+                || result.HasReliableSafetyDistance;
             LastFailureReason = result.IsMetricReliable
                 ? result.FailureReason
                 : result.DepthRejectedReason;
@@ -378,8 +402,10 @@ namespace TeamVR.AdaptivePassthrough
 
             for (int i = 0; i < expiredWorldTracks.Count; i++)
             {
-                worldTrackStates.Remove(expiredWorldTracks[i]);
-                expandNextFrame.Remove(expiredWorldTracks[i]);
+                int trackId = expiredWorldTracks[i];
+                worldTrackStates.Remove(trackId);
+                samplingSnapshots.Remove(trackId);
+                expandNextFrame.Remove(trackId);
             }
         }
 
@@ -388,24 +414,207 @@ namespace TeamVR.AdaptivePassthrough
             distanceFilter.Reset();
             expandNextFrame.Clear();
             worldTrackStates.Clear();
+            samplingSnapshots.Clear();
             observationDepthCache.Clear();
             hasFrameContext = false;
             IsDepthReady = false;
             LastFailureReason = string.Empty;
+            LastPresentationGeometrySource =
+                PersonPresentationGeometrySource.Unavailable;
+            LatestSamplingSnapshot = PersonDepthSamplingSnapshot.Empty;
         }
 
         private PersonDistanceMeasurement Fallback(
             TrackedDynamicObject tracked,
-            float bboxArea,
+            NormalizedBoundingBox box,
             string reason)
         {
             IsDepthReady = false;
             LastFailureReason = reason;
-            return distanceFilter.GetHeldOrBoundingBoxFallback(
+            PublishSamplingSnapshot(
+                tracked.TrackId,
+                false,
+                Array.Empty<PersonDepthSampleDiagnostic>(),
+                0UL,
+                0UL,
+                false,
+                Vector3.zero,
+                reason);
+            PersonDistanceMeasurement fallback =
+                distanceFilter.GetHeldOrBoundingBoxFallback(
                 tracked.TrackId,
                 frameTimestampSeconds,
-                bboxArea,
+                box.Area,
                 reason);
+            return AttachPresentationGeometry(tracked, box, fallback);
+        }
+
+        private PersonDistanceMeasurement AttachPresentationGeometry(
+            TrackedDynamicObject tracked,
+            NormalizedBoundingBox box,
+            PersonDistanceMeasurement measurement,
+            bool hasTrackingWorldCenter = false,
+            Vector3 trackingWorldCenter = default)
+        {
+            LastPresentationGeometrySource =
+                PersonPresentationGeometrySource.Unavailable;
+            if (tracked == null
+                || measurement == null
+                || !hasFrameContext
+                || cameraAccess == null
+                || !cameraAccess.IsPlaying)
+            {
+                return measurement;
+            }
+
+            NormalizedBoundingBox capsuleBox =
+                HazardPresentationGeometry.UpperBodyExpandedBox(box);
+            Ray bottomLeftRay = cameraAccess.ViewportPointToRay(
+                PersonImageCoordinates.BoxRelativeToCameraViewport(
+                    capsuleBox,
+                    new Vector2(0f, 1f)),
+                cameraPoseAtCapture);
+            Ray bottomRightRay = cameraAccess.ViewportPointToRay(
+                PersonImageCoordinates.BoxRelativeToCameraViewport(
+                    capsuleBox,
+                    new Vector2(1f, 1f)),
+                cameraPoseAtCapture);
+            Ray topRightRay = cameraAccess.ViewportPointToRay(
+                PersonImageCoordinates.BoxRelativeToCameraViewport(
+                    capsuleBox,
+                    new Vector2(1f, 0f)),
+                cameraPoseAtCapture);
+            Ray topLeftRay = cameraAccess.ViewportPointToRay(
+                PersonImageCoordinates.BoxRelativeToCameraViewport(
+                    capsuleBox,
+                    Vector2.zero),
+                cameraPoseAtCapture);
+            Ray centerRay = cameraAccess.ViewportPointToRay(
+                PersonImageCoordinates.BoxRelativeToCameraViewport(
+                    box,
+                    new Vector2(0.5f, 0.5f)),
+                cameraPoseAtCapture);
+            Ray topCenterRay = cameraAccess.ViewportPointToRay(
+                PersonImageCoordinates.BoxRelativeToCameraViewport(
+                    capsuleBox,
+                    new Vector2(0.5f, 0f)),
+                cameraPoseAtCapture);
+            Ray bottomCenterRay = cameraAccess.ViewportPointToRay(
+                PersonImageCoordinates.BoxRelativeToCameraViewport(
+                    capsuleBox,
+                    new Vector2(0.5f, 1f)),
+                cameraPoseAtCapture);
+            Vector3 captureForward = cameraPoseAtCapture.rotation
+                * Vector3.forward;
+
+            if (measurement.HasReliableMetricDistance)
+            {
+                Vector3 worldVelocity;
+                bool hasWorldVelocity;
+                Vector3 observedWorldPoint = hasTrackingWorldCenter
+                    ? trackingWorldCenter
+                    : centerRay.origin
+                        + centerRay.direction
+                            * measurement.FilteredDistanceMeters;
+                Vector3 worldPoint = FilterWorldPoint(
+                    tracked.TrackId,
+                    observedWorldPoint,
+                    frameTimestampSeconds,
+                    out worldVelocity,
+                    out hasWorldVelocity);
+                measurement = measurement.WithWorldPoint(
+                    worldPoint,
+                    worldVelocity,
+                    hasWorldVelocity);
+                if (HazardPresentationGeometry.TryCreatePersonCapsule(
+                        tracked.TrackId,
+                        capsuleBox,
+                        bottomLeftRay,
+                        bottomRightRay,
+                        topRightRay,
+                        topLeftRay,
+                        worldPoint,
+                        captureForward,
+                        frameTimestampSeconds,
+                        measurement.Confidence,
+                        0f,
+                        worldVelocity,
+                        hasWorldVelocity,
+                        out HazardPresentationGeometry metricGeometry))
+                {
+                    LastPresentationGeometrySource =
+                        PersonPresentationGeometrySource.MetricDepth;
+                    return measurement.WithPresentationGeometry(
+                        metricGeometry,
+                        LastPresentationGeometrySource,
+                        measurement.FilteredDistanceMeters);
+                }
+            }
+
+            WorldTrackState history;
+            if (worldTrackStates.TryGetValue(tracked.TrackId, out history)
+                && history.Initialized
+                && PersonPresentationGeometryMath.TryHistoryDistance(
+                    cameraPoseAtCapture.position,
+                    captureForward,
+                    history.Position,
+                    history.Velocity,
+                    frameTimestampSeconds - history.TimestampSeconds,
+                    out float historyDistance)
+                && PersonPresentationGeometryMath.TryCreateAtDistance(
+                    tracked.TrackId,
+                    capsuleBox,
+                    bottomLeftRay,
+                    bottomRightRay,
+                    topRightRay,
+                    topLeftRay,
+                    centerRay,
+                    captureForward,
+                    historyDistance,
+                    frameTimestampSeconds,
+                    Mathf.Max(0.20f, measurement.Confidence),
+                    history.Velocity,
+                    true,
+                    out HazardPresentationGeometry historyGeometry))
+            {
+                LastPresentationGeometrySource =
+                    PersonPresentationGeometrySource.TrackHistory;
+                return measurement.WithPresentationGeometry(
+                    historyGeometry,
+                    LastPresentationGeometrySource,
+                    historyDistance);
+            }
+
+            float estimatedDistance =
+                PersonPresentationGeometryMath.EstimateDistanceMeters(
+                    box,
+                    topCenterRay,
+                    bottomCenterRay);
+            if (PersonPresentationGeometryMath.TryCreateAtDistance(
+                    tracked.TrackId,
+                    capsuleBox,
+                    bottomLeftRay,
+                    bottomRightRay,
+                    topRightRay,
+                    topLeftRay,
+                    centerRay,
+                    captureForward,
+                    estimatedDistance,
+                    frameTimestampSeconds,
+                    Mathf.Clamp01(tracked.Detection.confidence * 0.55f),
+                    Vector3.zero,
+                    false,
+                    out HazardPresentationGeometry estimatedGeometry))
+            {
+                LastPresentationGeometrySource =
+                    PersonPresentationGeometrySource.BoundingBoxEstimate;
+                return measurement.WithPresentationGeometry(
+                    estimatedGeometry,
+                    LastPresentationGeometrySource,
+                    estimatedDistance);
+            }
+
+            return measurement;
         }
 
         private void ResolveReferences()
@@ -421,11 +630,118 @@ namespace TeamVR.AdaptivePassthrough
                 raycastManager =
                     FindAnyObjectByType<EnvironmentRaycastManager>();
             }
+
+            if (trackingQuality == null)
+            {
+                trackingQuality =
+                    FindAnyObjectByType<TrackingQualityController>();
+            }
         }
 
         private static bool IsFinite(float value)
         {
             return !float.IsNaN(value) && !float.IsInfinity(value);
+        }
+
+        private void AddDepthSample(
+            int sampleIndex,
+            float distanceMeters,
+            Vector2 relativePoint,
+            Vector2 cameraViewportPoint,
+            float weight,
+            Vector3 worldPoint)
+        {
+            personDepthSamples.Add(new PersonDepthSample(
+                sampleIndex,
+                relativePoint,
+                cameraViewportPoint,
+                distanceMeters,
+                weight,
+                IsTorsoCore(relativePoint),
+                IsUpperBody(relativePoint),
+                true,
+                worldPoint));
+        }
+
+        private static bool IsTorsoCore(Vector2 relativePoint)
+        {
+            return relativePoint.x >= 0.35f
+                && relativePoint.x <= 0.65f
+                && relativePoint.y >= 0.28f
+                && relativePoint.y <= 0.68f;
+        }
+
+        private static bool IsUpperBody(Vector2 relativePoint)
+        {
+            return relativePoint.y <= 0.70f;
+        }
+
+        private void PublishSamplingSnapshot(
+            int trackId,
+            bool expanded,
+            PersonDepthSampleDiagnostic[] samples,
+            ulong trackingMask,
+            ulong safetyMask,
+            bool hasTrackingWorldCenter,
+            Vector3 trackingWorldCenter,
+            string selectionReason,
+            PersonDepthClusterMeasurement trackingCluster = default,
+            PersonDepthClusterMeasurement safetyCluster = default)
+        {
+            int hitCount = 0;
+            for (int i = 0; i < samples.Length; i++)
+            {
+                if (samples[i].HasHit)
+                {
+                    hitCount++;
+                }
+            }
+
+            var snapshot = new PersonDepthSamplingSnapshot(
+                trackId,
+                frameTimestampSeconds,
+                expanded,
+                samples.Length,
+                hitCount,
+                trackingMask,
+                safetyMask,
+                samples,
+                hasTrackingWorldCenter,
+                trackingWorldCenter,
+                selectionReason,
+                trackingCluster,
+                safetyCluster);
+            samplingSnapshots[trackId] = snapshot;
+            LatestSamplingSnapshot = snapshot;
+            trackingQuality?.RecordPersonDepthSamples(snapshot);
+        }
+
+        private static void ApplySampleDecisions(
+            PersonDepthSampleDiagnostic[] samples,
+            ulong trackingMask,
+            ulong safetyMask)
+        {
+            if (samples == null)
+            {
+                return;
+            }
+
+            for (int i = 0; i < samples.Length && i < 64; i++)
+            {
+                if (!samples[i].HasHit)
+                {
+                    continue;
+                }
+
+                ulong bit = 1UL << i;
+                PersonDepthSampleDecision decision =
+                    (safetyMask & bit) != 0UL
+                        ? PersonDepthSampleDecision.SelectedSafety
+                        : (trackingMask & bit) != 0UL
+                            ? PersonDepthSampleDecision.SelectedTracking
+                            : PersonDepthSampleDecision.OtherCluster;
+                samples[i] = samples[i].WithDecision(decision);
+            }
         }
 
         public static bool ShouldExpandNextSample(string rejectedReason)
@@ -437,6 +753,22 @@ namespace TeamVR.AdaptivePassthrough
                 || string.Equals(
                     rejectedReason,
                     "bbox_depth_conflict",
+                    StringComparison.Ordinal)
+                || string.Equals(
+                    rejectedReason,
+                    "torso_cluster_unavailable",
+                    StringComparison.Ordinal)
+                || string.Equals(
+                    rejectedReason,
+                    "insufficient_tracking_cluster",
+                    StringComparison.Ordinal)
+                || string.Equals(
+                    rejectedReason,
+                    "insufficient_safety_cluster",
+                    StringComparison.Ordinal)
+                || string.Equals(
+                    rejectedReason,
+                    "insufficient_depth_samples",
                     StringComparison.Ordinal);
         }
 
@@ -505,9 +837,10 @@ namespace TeamVR.AdaptivePassthrough
             for (int i = 0; i < ObservationWorldSamplePoints.Length; i++)
             {
                 Vector2 relative = ObservationWorldSamplePoints[i];
-                Vector2 viewport = new Vector2(
-                    box.Left + box.width * relative.x,
-                    1f - (box.Top + box.height * relative.y));
+                Vector2 viewport =
+                    PersonImageCoordinates.BoxRelativeToCameraViewport(
+                        box,
+                        relative);
                 Ray ray = cameraAccess.ViewportPointToRay(
                     viewport,
                     cameraPoseAtCapture);
@@ -642,12 +975,26 @@ namespace TeamVR.AdaptivePassthrough
             float elapsed = (float)Math.Max(
                 0.0001,
                 timestampSeconds - state.TimestampSeconds);
+            if (elapsed > 0.75f)
+            {
+                state.Position = observation;
+                state.Velocity = Vector3.zero;
+                state.TimestampSeconds = timestampSeconds;
+                worldVelocity = Vector3.zero;
+                hasWorldVelocity = false;
+                return observation;
+            }
             Vector3 prediction = state.Position + state.Velocity * elapsed;
             Vector3 residual = observation - prediction;
-            const float alpha = 0.65f;
-            const float beta = 0.12f;
+            // Three-Hz inference needs a more responsive center update than
+            // the original distance-only estimate; render-time prediction
+            // handles the remaining capture latency.
+            const float alpha = 0.78f;
+            const float beta = 0.20f;
             state.Position = prediction + alpha * residual;
-            state.Velocity += beta * residual / elapsed;
+            state.Velocity = Vector3.ClampMagnitude(
+                state.Velocity + beta * residual / elapsed,
+                3f);
             state.TimestampSeconds = timestampSeconds;
             worldVelocity = state.Velocity;
             hasWorldVelocity = true;

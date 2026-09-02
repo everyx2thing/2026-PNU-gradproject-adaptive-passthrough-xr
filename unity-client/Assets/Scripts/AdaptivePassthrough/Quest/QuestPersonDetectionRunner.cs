@@ -556,7 +556,20 @@ namespace TeamVR.AdaptivePassthrough
                                 primary.Motion.State.ToString(),
                                 primary.MissingSeconds,
                                 primary.Location.IsMetricReliable,
-                                primary.Location.DepthRejectedReason);
+                                primary.Location.DepthRejectedReason,
+                                primary.Location.SafetyDistanceMeters,
+                                primary.Location.SafetyDistanceConfidence,
+                                primary.Location.TorsoSupportCount,
+                                primary.Location.SafetySupportCount,
+                                primary.Location.ClusterSelectionReason);
+                            if (depthProvider != null
+                                && depthProvider.TryGetSamplingSnapshot(
+                                    primary.TrackId,
+                                    out PersonDepthSamplingSnapshot samples))
+                            {
+                                qualityController.RecordPersonDepthSamples(
+                                    samples);
+                            }
                         }
                     }
 

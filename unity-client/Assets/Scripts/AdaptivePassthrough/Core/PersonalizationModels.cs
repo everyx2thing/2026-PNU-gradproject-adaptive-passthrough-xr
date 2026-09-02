@@ -165,9 +165,13 @@ namespace TeamVR.AdaptivePassthrough
 
     public static class PersonalizationMath
     {
-        public const float DefaultStableOnThreshold = 0.65f;
+        // Quest calibration: stationary head and low-obstacle scores usually
+        // remain below 0.65 until the separate 0.25 m emergency path fires.
+        public const float DefaultStableOnThreshold = 0.50f;
         public const float DefaultRapidOnThreshold = 0.45f;
-        public const float DefaultHandFullThreshold = 0.85f;
+        // Reach-gated hand scores were observed below 0.52 outside emergency
+        // range, making the previous 0.85 threshold effectively unreachable.
+        public const float DefaultHandFullThreshold = 0.40f;
         public const float DefaultDynamicOnThreshold = 0.60f;
         public const float DefaultDynamicOffThreshold = 0.45f;
         public const float MaximumAdjustmentDelta = 0.10f;

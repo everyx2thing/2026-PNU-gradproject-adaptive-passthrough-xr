@@ -259,7 +259,7 @@ namespace TeamVR.AdaptivePassthrough.Tests
         }
 
         [Test]
-        public void RiskMatchesMidtermReportFormula()
+        public void RiskUsesDistanceApproachTtcAndCollisionWeights()
         {
             DynamicObjectDetection detection = Person(0.5f, 0.5f, 0.4f, 0.4f, 1f);
             var tracked = new TrackedDynamicObject(1, detection, 0f);
@@ -276,12 +276,15 @@ namespace TeamVR.AdaptivePassthrough.Tests
             DynamicRiskAssessment risk =
                 new DynamicRiskEstimator().Estimate(tracked, location, motion);
 
-            Assert.That(risk.Score, Is.EqualTo(0.9825f).Within(0.0001f));
+            Assert.That(risk.Breakdown.Proximity, Is.GreaterThan(0f));
+            Assert.That(risk.Breakdown.Approach, Is.GreaterThan(0f));
+            Assert.That(risk.Breakdown.Ttc, Is.EqualTo(1f));
+            Assert.That(risk.Score, Is.GreaterThan(0.90f));
             Assert.That(risk.Level, Is.EqualTo(DynamicRiskLevel.Danger));
         }
 
         [Test]
-        public void RecedingMultiplierReducesNearPersonToSafe()
+        public void BboxOnlyRecedingRiskIsCappedAtPointFour()
         {
             DynamicObjectDetection detection = Person(0.5f, 0.5f, 0.4f, 0.4f, 1f);
             var tracked = new TrackedDynamicObject(1, detection, 0f);
@@ -299,8 +302,8 @@ namespace TeamVR.AdaptivePassthrough.Tests
             DynamicRiskAssessment risk =
                 new DynamicRiskEstimator().Estimate(tracked, location, motion);
 
-            Assert.That(risk.Score, Is.EqualTo(0.237875f).Within(0.0001f));
-            Assert.That(risk.Level, Is.EqualTo(DynamicRiskLevel.Safe));
+            Assert.That(risk.Score, Is.EqualTo(0.40f).Within(0.0001f));
+            Assert.That(risk.Level, Is.EqualTo(DynamicRiskLevel.Caution));
         }
 
         [Test]
@@ -337,6 +340,54 @@ namespace TeamVR.AdaptivePassthrough.Tests
                 riskEstimator.Estimate(farTracked, far, steady).Score;
 
             Assert.That(closeRisk, Is.GreaterThan(farRisk));
+        }
+
+        [Test]
+        public void SupportedSafetyDistanceDrivesCloseRiskWithoutMovingTrack()
+        {
+            DynamicObjectDetection detection =
+                Person(0.5f, 0.5f, 0.25f, 0.55f, 0.90f);
+            var tracked = new TrackedDynamicObject(81, detection, 0f);
+            PersonDistanceMeasurement measurement = new PersonDistanceMeasurement(
+                81,
+                0.0,
+                PersonDistanceSource.EnvironmentDepth,
+                true,
+                2.0f,
+                2.0f,
+                0.90f,
+                13,
+                6,
+                0f,
+                detection.boundingBox.Area,
+                sampleDispersionMeters: 0.20f,
+                rawSafetyDistanceMeters: 0.55f,
+                safetyDistanceMeters: 0.55f,
+                safetyConfidence: 0.80f,
+                torsoSupportCount: 3,
+                safetySupportCount: 3,
+                clusterSelectionReason: "torso_supported_foreground");
+            RelativeLocationEstimate location =
+                new RelativeLocationEstimator().Estimate(tracked, measurement);
+            var steady = new MotionEstimate(
+                DynamicMotionState.Steady,
+                0f,
+                null,
+                0f,
+                4,
+                0.5,
+                1f);
+
+            DynamicRiskAssessment risk = new DynamicRiskEstimator().Estimate(
+                tracked,
+                location,
+                steady);
+
+            Assert.That(location.FilteredDistanceMeters,
+                Is.EqualTo(2.0f).Within(0.001f));
+            Assert.That(location.HasReliableSafetyDistance, Is.True);
+            Assert.That(risk.ForcePassthrough, Is.True);
+            Assert.That(risk.Reasons, Does.Contain("safety_depth"));
         }
 
         [Test]
@@ -424,12 +475,34 @@ namespace TeamVR.AdaptivePassthrough.Tests
                     location,
                     steady);
 
-            Assert.That(risk.Score, Is.GreaterThanOrEqualTo(0.90f));
+            Assert.That(risk.Score, Is.LessThan(0.90f));
+            Assert.That(risk.Level, Is.EqualTo(DynamicRiskLevel.Danger));
             Assert.That(risk.Reasons, Does.Contain("ultra_close_force"));
             Assert.That(risk.ForcePassthrough, Is.True);
             var frame = new DynamicRiskFrame(0.0, new[] { risk });
             Assert.That(frame.ForcePassthrough, Is.True);
             Assert.That(frame.PolicyRisk, Is.EqualTo(1f));
+            Assert.That(frame.MaximumLevel,
+                Is.EqualTo(DynamicRiskLevel.Danger));
+
+            var higherRawScore = new DynamicRiskAssessment(
+                12,
+                risk.Detection,
+                risk.Location,
+                risk.Motion,
+                0.80f,
+                DynamicRiskLevel.Warning,
+                Array.Empty<string>(),
+                risk.Breakdown);
+            var mixedFrame = new DynamicRiskFrame(
+                0.0,
+                new[] { risk, higherRawScore });
+            Assert.That(mixedFrame.MaximumRisk,
+                Is.EqualTo(0.80f).Within(0.0001f));
+            Assert.That(mixedFrame.ForcePassthrough, Is.True);
+            Assert.That(mixedFrame.PolicyRisk, Is.EqualTo(1f));
+            Assert.That(mixedFrame.MaximumLevel,
+                Is.EqualTo(DynamicRiskLevel.Danger));
         }
 
         [Test]
@@ -513,9 +586,16 @@ namespace TeamVR.AdaptivePassthrough.Tests
 
             DynamicRiskAssessment close = estimator.Estimate(
                 closeTracked,
-                relative.Estimate(closeTracked, MetricDistance(12, 0.55f)),
+                relative.Estimate(closeTracked, MetricDistance(12, 1.0f)),
                 steady);
             Assert.That(close.Reasons, Does.Contain("ultra_close_force"));
+
+            DynamicRiskAssessment midRange = estimator.Estimate(
+                closeTracked,
+                relative.Estimate(closeTracked, MetricDistance(12, 1.5f)),
+                steady);
+            Assert.That(midRange.ForcePassthrough, Is.True);
+            Assert.That(midRange.CloseReleaseConfirmationCount, Is.Zero);
 
             var farTracked = new TrackedDynamicObject(
                 12,
@@ -523,15 +603,15 @@ namespace TeamVR.AdaptivePassthrough.Tests
                 1f);
             DynamicRiskAssessment first = estimator.Estimate(
                 farTracked,
-                relative.Estimate(farTracked, MetricDistance(12, 1.0f)),
+                relative.Estimate(farTracked, MetricDistance(12, 2.1f)),
                 steady);
             DynamicRiskAssessment second = estimator.Estimate(
                 farTracked,
-                relative.Estimate(farTracked, MetricDistance(12, 1.0f)),
+                relative.Estimate(farTracked, MetricDistance(12, 2.1f)),
                 steady);
             DynamicRiskAssessment third = estimator.Estimate(
                 farTracked,
-                relative.Estimate(farTracked, MetricDistance(12, 1.0f)),
+                relative.Estimate(farTracked, MetricDistance(12, 2.1f)),
                 steady);
 
             Assert.That(first.Reasons, Does.Contain("ultra_close_force"));
@@ -634,6 +714,45 @@ namespace TeamVR.AdaptivePassthrough.Tests
         }
 
         [Test]
+        public void NoDepthReleaseRequiresFullyUnclippedRetreat()
+        {
+            var estimator = new DynamicRiskEstimator();
+            var relative = new RelativeLocationEstimator();
+            var steady = new MotionEstimate(
+                DynamicMotionState.Steady, 0f, null, 0f, 4, 0.5, 1f);
+            var close = new TrackedDynamicObject(
+                72,
+                Person(0.5f, 0.5f, 0.96f, 0.96f, 0.90f),
+                0f);
+            estimator.Estimate(close, relative.Estimate(close), steady);
+
+            // A retreating full-body box commonly remains clipped at the
+            // bottom by the camera framing. Side/top clipping would still be
+            // ambiguous, but bottom clipping must not pin the close latch.
+            var bottomClipped = new TrackedDynamicObject(
+                72,
+                Person(0.5f, 0.60f, 0.60f, 0.80f, 0.80f),
+                1f);
+            DynamicRiskAssessment first = estimator.Estimate(
+                bottomClipped,
+                relative.Estimate(bottomClipped),
+                steady);
+            estimator.MarkUnobserved(72);
+            DynamicRiskAssessment second = estimator.Estimate(
+                bottomClipped,
+                relative.Estimate(bottomClipped),
+                steady);
+            DynamicRiskAssessment third = estimator.Estimate(
+                bottomClipped,
+                relative.Estimate(bottomClipped),
+                steady);
+
+            Assert.That(first.ForcePassthrough, Is.True);
+            Assert.That(second.ForcePassthrough, Is.True);
+            Assert.That(third.ForcePassthrough, Is.True);
+        }
+
+        [Test]
         public void TrackerExpiresBeforeMatchingAndCreatesNewId()
         {
             var tracker = new SimpleObjectTracker(
@@ -662,6 +781,140 @@ namespace TeamVR.AdaptivePassthrough.Tests
 
             Assert.That(frame.LiveTrackIds.Count, Is.EqualTo(1));
             Assert.That(frame.LiveTrackIds[0], Is.GreaterThan(0));
+        }
+
+        [Test]
+        public void OnePointFiveMeterPersonStaysAboveRevealThreshold()
+        {
+            var relative = new RelativeLocationEstimator();
+            var estimator = new DynamicRiskEstimator();
+            var tracked = new TrackedDynamicObject(
+                101,
+                Person(0.5f, 0.5f, 0.25f, 0.55f, 0.9f),
+                0f);
+            RelativeLocationEstimate location = relative.Estimate(
+                tracked,
+                MetricDistance(101, 1.5f));
+            var steady = new MotionEstimate(
+                DynamicMotionState.Steady,
+                0f,
+                null,
+                0f,
+                4,
+                0.6,
+                1f);
+            var receding = new MotionEstimate(
+                DynamicMotionState.Receding,
+                -0.1f,
+                null,
+                0f,
+                4,
+                0.6,
+                1f,
+                PersonDistanceSource.EnvironmentDepth,
+                true,
+                -0.2f,
+                null);
+
+            Assert.That(estimator.Estimate(tracked, location, steady).Score,
+                Is.GreaterThanOrEqualTo(0.60f));
+            Assert.That(estimator.Estimate(tracked, location, receding).Score,
+                Is.GreaterThanOrEqualTo(0.60f));
+        }
+
+        [Test]
+        public void FarStationaryAndRecedingMetricPersonFallsBelowOffThreshold()
+        {
+            var relative = new RelativeLocationEstimator();
+            var estimator = new DynamicRiskEstimator();
+            var tracked = new TrackedDynamicObject(
+                102,
+                Person(0.5f, 0.5f, 0.20f, 0.45f, 0.9f),
+                0f);
+            RelativeLocationEstimate location = relative.Estimate(
+                tracked,
+                MetricDistance(102, 2.5f));
+            var steady = new MotionEstimate(
+                DynamicMotionState.Steady,
+                0f,
+                null,
+                0f,
+                4,
+                0.6,
+                1f);
+            var receding = new MotionEstimate(
+                DynamicMotionState.Receding,
+                -0.1f,
+                null,
+                0f,
+                4,
+                0.6,
+                1f,
+                PersonDistanceSource.EnvironmentDepth,
+                true,
+                -0.2f,
+                null);
+
+            Assert.That(estimator.Estimate(tracked, location, steady).Score,
+                Is.LessThan(0.45f));
+            Assert.That(estimator.Estimate(tracked, location, receding).Score,
+                Is.LessThan(0.45f));
+        }
+
+        [Test]
+        public void TwoMeterClosingPersonCrossesRevealThreshold()
+        {
+            var relative = new RelativeLocationEstimator();
+            var estimator = new DynamicRiskEstimator();
+            var tracked = new TrackedDynamicObject(
+                103,
+                Person(0.5f, 0.5f, 0.22f, 0.48f, 0.9f),
+                0f);
+            RelativeLocationEstimate location = relative.Estimate(
+                tracked,
+                MetricDistance(103, 2.0f));
+            var approaching = new MotionEstimate(
+                DynamicMotionState.Approaching,
+                0.12f,
+                3.33f,
+                0f,
+                4,
+                0.6,
+                0.70f,
+                PersonDistanceSource.EnvironmentDepth,
+                true,
+                0.60f,
+                3.33f);
+
+            DynamicRiskAssessment assessment = estimator.Estimate(
+                tracked,
+                location,
+                approaching);
+
+            Assert.That(assessment.Score, Is.GreaterThanOrEqualTo(0.60f));
+            Assert.That(assessment.Breakdown.RiskDistanceSource,
+                Is.EqualTo(DynamicRiskDistanceSource.SafetyDistance));
+        }
+
+        [Test]
+        public void BboxOnlySteadyAndRecedingScoresAreCapped()
+        {
+            var estimator = new DynamicRiskEstimator();
+            var relative = new RelativeLocationEstimator();
+            var tracked = new TrackedDynamicObject(
+                104,
+                Person(0.5f, 0.5f, 0.4f, 0.7f, 1f),
+                0f);
+            RelativeLocationEstimate location = relative.Estimate(tracked);
+            var steady = new MotionEstimate(
+                DynamicMotionState.Steady, 0f, null, 0f, 4, 0.6, 1f);
+            var receding = new MotionEstimate(
+                DynamicMotionState.Receding, -0.2f, null, 0f, 4, 0.6, 1f);
+
+            Assert.That(estimator.Estimate(tracked, location, steady).Score,
+                Is.LessThanOrEqualTo(0.55f));
+            Assert.That(estimator.Estimate(tracked, location, receding).Score,
+                Is.LessThanOrEqualTo(0.40f));
         }
 
         [Test]
@@ -704,7 +957,13 @@ namespace TeamVR.AdaptivePassthrough.Tests
                 7,
                 7,
                 0f,
-                0.08f);
+                0.08f,
+                rawSafetyDistanceMeters: meters,
+                safetyDistanceMeters: meters,
+                safetyConfidence: 1f,
+                torsoSupportCount: 7,
+                safetySupportCount: 3,
+                clusterSelectionReason: "connected_tracking_and_safety");
         }
     }
 }

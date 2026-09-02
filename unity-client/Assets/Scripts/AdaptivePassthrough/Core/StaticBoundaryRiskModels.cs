@@ -427,10 +427,10 @@ namespace TeamVR.AdaptivePassthrough
     [Serializable]
     public sealed class StaticBoundaryPolicySettings
     {
-        [Range(0f, 1f)] public float stableOnThreshold = 0.65f;
+        [Range(0f, 1f)] public float stableOnThreshold = 0.50f;
         [Range(0f, 1f)] public float rapidOnThreshold = 0.45f;
         [Range(0f, 1f)] public float hysteresisWidth = 0.08f;
-        [Range(0f, 1f)] public float handFullThreshold = 0.85f;
+        [Range(0f, 1f)] public float handFullThreshold = 0.40f;
         [Range(0f, 1f)] public float awareThreshold = 0.40f;
         [Min(0f)] public float minimumHoldSeconds = 1.50f;
         [Min(0f)] public float releaseDelaySeconds = 0.35f;

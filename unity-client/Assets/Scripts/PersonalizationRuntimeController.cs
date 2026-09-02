@@ -105,7 +105,7 @@ public sealed class PersonalizationRuntimeController : MonoBehaviour
     [SerializeField] private bool negativeProbabilityOverride;
     [SerializeField, Range(0f, 1f)] private float overriddenNegativeProbability = 0.5f;
     [SerializeField] private PersonalizedThresholds thresholdPreview =
-        new PersonalizedThresholds(0.65f, 0.45f, 0.85f);
+        new PersonalizedThresholds(0.50f, 0.45f, 0.40f);
 
     [Header("Diagnostics Log")]
     [SerializeField] private bool enableLogging = true;

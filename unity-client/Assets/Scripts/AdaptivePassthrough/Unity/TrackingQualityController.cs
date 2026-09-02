@@ -51,10 +51,17 @@ namespace TeamVR.AdaptivePassthrough
         private int personTrackId;
         private float personRawDistance;
         private float personFilteredDistance;
+        private float personSafetyDistance;
+        private float personSafetyDistanceConfidence;
+        private int personTorsoSupportCount;
+        private int personSafetySupportCount;
+        private string personClusterSelectionReason = string.Empty;
         private string personMotion = "Unavailable";
         private float personMissingSeconds;
         private bool personMetricReliable;
         private string personDepthRejectedReason = string.Empty;
+        private PersonDepthSamplingSnapshot latestPersonDepthSamples =
+            PersonDepthSamplingSnapshot.Empty;
         private SpatialOwnerDiagnostics headSpatial;
         private SpatialOwnerDiagnostics leftHandSpatial;
         private SpatialOwnerDiagnostics rightHandSpatial;
@@ -81,6 +88,8 @@ namespace TeamVR.AdaptivePassthrough
         public string ActiveScenario => activeScenario;
         public TrackingQualitySettings EffectiveSettings =>
             CalculateEffectiveSettings(profile, adaptiveLevel);
+        public PersonDepthSamplingSnapshot LatestPersonDepthSamples =>
+            latestPersonDepthSamples;
 
         private void Awake()
         {
@@ -307,11 +316,23 @@ namespace TeamVR.AdaptivePassthrough
             string motion,
             float missingSeconds,
             bool metricReliable = false,
-            string depthRejectedReason = null)
+            string depthRejectedReason = null,
+            float safetyDistanceMeters = 0f,
+            float safetyDistanceConfidence = 0f,
+            int torsoSupportCount = 0,
+            int safetySupportCount = 0,
+            string clusterSelectionReason = null)
         {
             personTrackId = Mathf.Max(0, trackId);
             personRawDistance = Mathf.Max(0f, rawDistanceMeters);
             personFilteredDistance = Mathf.Max(0f, filteredDistanceMeters);
+            personSafetyDistance = Mathf.Max(0f, safetyDistanceMeters);
+            personSafetyDistanceConfidence = Mathf.Clamp01(
+                safetyDistanceConfidence);
+            personTorsoSupportCount = Mathf.Max(0, torsoSupportCount);
+            personSafetySupportCount = Mathf.Max(0, safetySupportCount);
+            personClusterSelectionReason = clusterSelectionReason
+                ?? string.Empty;
             personMotion = motion ?? "Unavailable";
             personMissingSeconds = Mathf.Max(0f, missingSeconds);
             personMetricReliable = metricReliable;
@@ -325,10 +346,23 @@ namespace TeamVR.AdaptivePassthrough
             personTrackId = 0;
             personRawDistance = 0f;
             personFilteredDistance = 0f;
+            personSafetyDistance = 0f;
+            personSafetyDistanceConfidence = 0f;
+            personTorsoSupportCount = 0;
+            personSafetySupportCount = 0;
+            personClusterSelectionReason = string.Empty;
             personMotion = "Unavailable";
             personMissingSeconds = 0f;
             personMetricReliable = false;
             personDepthRejectedReason = string.Empty;
+            latestPersonDepthSamples = PersonDepthSamplingSnapshot.Empty;
+        }
+
+        public void RecordPersonDepthSamples(
+            PersonDepthSamplingSnapshot snapshot)
+        {
+            latestPersonDepthSamples = snapshot
+                ?? PersonDepthSamplingSnapshot.Empty;
         }
 
         public void AddTestMarker(string marker)
@@ -427,7 +461,12 @@ namespace TeamVR.AdaptivePassthrough
                 inferenceSliceBudgetMilliseconds,
                 settings.personInferenceRateHz,
                 measuredInferenceRateHz,
-                hasInferenceMeasurement);
+                hasInferenceMeasurement,
+                personSafetyDistance,
+                personSafetyDistanceConfidence,
+                personTorsoSupportCount,
+                personSafetySupportCount,
+                personClusterSelectionReason);
         }
 
         public static TrackingQualityProfile LoadProfile()
@@ -494,6 +533,7 @@ namespace TeamVR.AdaptivePassthrough
             classRejectedCount = 0;
             inferenceWatchdogState = "idle";
             inferenceSliceBudgetMilliseconds = 0f;
+            latestPersonDepthSamples = PersonDepthSamplingSnapshot.Empty;
         }
 
         private void ResetFrameStatistics()

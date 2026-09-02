@@ -32,7 +32,7 @@ namespace TeamVR.AdaptivePassthrough.Tests
         }
 
         [Test]
-        public void TooFewDepthSamplesUsesBoundingBoxFallback()
+        public void TwoConnectedDepthSamplesProvideSafetyOnly()
         {
             var filter = new PersonDistanceFilter();
             PersonDistanceMeasurement result = filter.UpdateMetric(
@@ -42,10 +42,11 @@ namespace TeamVR.AdaptivePassthrough.Tests
                 7,
                 0.08f);
 
-            Assert.That(
-                result.Source,
-                Is.EqualTo(PersonDistanceSource.BoundingBoxProxy));
+            Assert.That(result.Source,
+                Is.EqualTo(PersonDistanceSource.EnvironmentDepth));
             Assert.That(result.HasMetricDistance, Is.False);
+            Assert.That(result.HasReliableSafetyDistance, Is.True);
+            Assert.That(result.SafetySupportCount, Is.EqualTo(2));
             Assert.That(result.BoundingBoxArea, Is.EqualTo(0.08f));
         }
 
@@ -152,11 +153,14 @@ namespace TeamVR.AdaptivePassthrough.Tests
             Assert.That(conflict.BoundingBoxDepthConflict, Is.True);
             Assert.That(conflict.FilteredDistanceMeters,
                 Is.EqualTo(baseline.FilteredDistanceMeters).Within(0.001f));
-            Assert.That(conflict.Confidence, Is.LessThan(0.45f));
+            Assert.That(conflict.IsMetricReliable, Is.False);
+            Assert.That(conflict.DepthRejectedReason,
+                Is.EqualTo("bbox_depth_conflict"));
+            Assert.That(conflict.HasReliableSafetyDistance, Is.True);
         }
 
         [Test]
-        public void BackgroundDepthIsLoggedButNotCommittedToFilter()
+        public void RejectedTrackingDepthCanStillProvideSafetyDistance()
         {
             var filter = new PersonDistanceFilter();
             PersonDistanceMeasurement rejected = filter.UpdateMetric(
@@ -181,8 +185,9 @@ namespace TeamVR.AdaptivePassthrough.Tests
             Assert.That(rejected.IsMetricReliable, Is.False);
             Assert.That(rejected.DepthRejectedReason,
                 Is.EqualTo("background_depth_suspected"));
+            Assert.That(rejected.HasReliableSafetyDistance, Is.True);
             Assert.That(fallback.Source,
-                Is.EqualTo(PersonDistanceSource.BoundingBoxProxy));
+                Is.EqualTo(PersonDistanceSource.EnvironmentDepth));
         }
 
         [Test]
@@ -206,7 +211,7 @@ namespace TeamVR.AdaptivePassthrough.Tests
         }
 
         [Test]
-        public void LargeBoundingBoxRejectsTwoPointSevenMeterDepth()
+        public void LargeBoundingBoxDoesNotGloballyRejectMetricDepth()
         {
             var measurement = new PersonDistanceMeasurement(
                 3,
@@ -228,8 +233,238 @@ namespace TeamVR.AdaptivePassthrough.Tests
                 new NormalizedBoundingBox(0.5f, 0.5f, 0.75f, 0.90f),
                 out reason);
 
-            Assert.That(reliable, Is.False);
-            Assert.That(reason, Is.EqualTo("background_depth_suspected"));
+            Assert.That(reliable, Is.True);
+            Assert.That(reason, Is.Empty);
+        }
+
+        [Test]
+        public void DenseBackgroundTrackingDoesNotHideCloserSafetyCluster()
+        {
+            PersonDepthSample[] samples =
+            {
+                Body(0.82f), Body(0.86f), Body(0.89f),
+                Background(2.55f), Background(2.58f),
+                Background(2.61f), Background(2.64f),
+                Background(2.67f), Background(2.70f),
+                Background(2.73f)
+            };
+
+            bool selected = PersonDistanceFilter.TrySelectTorsoSupportedCluster(
+                samples,
+                0.20f,
+                6f,
+                0.35f,
+                3,
+                out float tracking,
+                out float safety,
+                out int count,
+                out int torsoSupport,
+                out int safetySupport,
+                out float dispersion,
+                out string reason);
+
+            Assert.That(selected, Is.True);
+            Assert.That(tracking, Is.EqualTo(2.64f).Within(0.001f));
+            Assert.That(safety, Is.LessThan(0.90f));
+            Assert.That(count, Is.EqualTo(7));
+            Assert.That(torsoSupport, Is.EqualTo(7));
+            Assert.That(safetySupport, Is.GreaterThanOrEqualTo(2));
+            Assert.That(dispersion, Is.EqualTo(0.18f).Within(0.001f));
+            Assert.That(reason, Is.EqualTo("connected_tracking_and_safety"));
+        }
+
+        [Test]
+        public void IsolatedNearNoiseDoesNotBecomePersonSafetyDistance()
+        {
+            PersonDepthSample[] samples =
+            {
+                Background(0.40f),
+                Body(1.82f), Body(1.90f), Body(1.98f),
+                Body(2.04f), Body(2.08f),
+                Background(3.10f), Background(3.12f), Background(3.14f)
+            };
+
+            var filter = new PersonDistanceFilter();
+            PersonDistanceMeasurement result = filter.UpdateMetric(
+                17,
+                1.0,
+                samples,
+                samples.Length,
+                0.18f);
+
+            Assert.That(result.HasReliableMetricDistance, Is.True);
+            Assert.That(result.TrackingDistanceMeters,
+                Is.EqualTo(1.98f).Within(0.001f));
+            Assert.That(result.SafetyDistanceMeters, Is.GreaterThan(1.70f));
+            Assert.That(result.SafetyDistanceMeters, Is.LessThanOrEqualTo(
+                result.TrackingDistanceMeters));
+        }
+
+        [Test]
+        public void TrackingMedianAndSupportedSafetyPercentileAreSeparated()
+        {
+            var filter = new PersonDistanceFilter();
+            PersonDistanceMeasurement result = filter.UpdateMetric(
+                21,
+                1.0,
+                new[]
+                {
+                    Body(0.70f), Body(0.78f), Body(0.82f),
+                    Body(0.90f), Body(0.94f)
+                },
+                5,
+                0.30f);
+
+            Assert.That(result.TrackingDistanceMeters,
+                Is.EqualTo(0.82f).Within(0.001f));
+            Assert.That(result.RawSafetyDistanceMeters,
+                Is.EqualTo(0.764f).Within(0.001f));
+            Assert.That(result.SafetyDistanceMeters,
+                Is.LessThan(result.TrackingDistanceMeters));
+            Assert.That(result.HasReliableSafetyDistance, Is.True);
+            Assert.That(result.ClusterSelectionReason,
+                Is.EqualTo("connected_tracking_and_safety"));
+        }
+
+        [Test]
+        public void OffCenterClusterDoesNotRequireTorsoSupport()
+        {
+            bool selected = PersonDistanceFilter.TrySelectTorsoSupportedCluster(
+                new[]
+                {
+                    Background(0.80f), Background(0.85f),
+                    Background(0.90f), Background(0.95f)
+                },
+                0.20f,
+                6f,
+                0.35f,
+                3,
+                out _,
+                out _,
+                out _,
+                out _,
+                out _,
+                out _,
+                out string reason);
+
+            Assert.That(selected, Is.True);
+            Assert.That(reason, Is.EqualTo("connected_tracking_and_safety"));
+        }
+
+        [Test]
+        public void OffCenterConnectedForegroundBecomesSafetyCluster()
+        {
+            PersonDepthSample[] samples =
+            {
+                Indexed(0, 0.08f, 0.25f, 0.92f),
+                Indexed(1, 0.20f, 0.33f, 0.98f),
+                Indexed(2, 0.70f, 0.30f, 3.00f),
+                Indexed(3, 0.78f, 0.36f, 3.04f),
+                Indexed(4, 0.84f, 0.42f, 3.08f)
+            };
+
+            PersonDistanceFilter.TrySelectConnectedClusters(
+                samples,
+                0.20f,
+                6f,
+                -1f,
+                out PersonDepthClusterMeasurement tracking,
+                out PersonDepthClusterMeasurement safety);
+
+            Assert.That(tracking.Available, Is.True);
+            Assert.That(tracking.DistanceMeters, Is.GreaterThan(2.9f));
+            Assert.That(safety.Available, Is.True);
+            Assert.That(safety.DistanceMeters, Is.LessThan(1.0f));
+            Assert.That(safety.SupportCount, Is.EqualTo(2));
+            Assert.That(safety.Confidence, Is.GreaterThanOrEqualTo(0.55f));
+        }
+
+        [Test]
+        public void DisconnectedNearSamplesDoNotCreateSafetyCluster()
+        {
+            PersonDepthSample[] samples =
+            {
+                Indexed(0, 0.05f, 0.20f, 0.72f),
+                Indexed(1, 0.80f, 0.75f, 0.76f),
+                Indexed(2, 0.35f, 0.30f, 2.20f),
+                Indexed(3, 0.45f, 0.38f, 2.24f),
+                Indexed(4, 0.55f, 0.46f, 2.28f)
+            };
+
+            PersonDistanceFilter.TrySelectConnectedClusters(
+                samples,
+                0.20f,
+                6f,
+                -1f,
+                out _,
+                out PersonDepthClusterMeasurement safety);
+
+            Assert.That(safety.Available, Is.True);
+            Assert.That(safety.DistanceMeters, Is.GreaterThan(2.0f));
+            Assert.That((safety.SelectionMask & 0b11UL), Is.Zero);
+        }
+
+        [Test]
+        public void PreviousTrackingDistanceStabilizesClusterSelection()
+        {
+            PersonDepthSample[] samples =
+            {
+                Indexed(0, 0.20f, 0.30f, 1.18f),
+                Indexed(1, 0.32f, 0.36f, 1.22f),
+                Indexed(2, 0.44f, 0.42f, 1.26f),
+                Indexed(3, 0.62f, 0.30f, 2.90f),
+                Indexed(4, 0.70f, 0.36f, 2.94f),
+                Indexed(5, 0.78f, 0.42f, 2.98f),
+                Indexed(6, 0.86f, 0.48f, 3.02f)
+            };
+
+            PersonDistanceFilter.TrySelectConnectedClusters(
+                samples,
+                0.20f,
+                6f,
+                1.20f,
+                out PersonDepthClusterMeasurement tracking,
+                out _);
+
+            Assert.That(tracking.DistanceMeters,
+                Is.EqualTo(1.22f).Within(0.01f));
+            Assert.That(tracking.TemporalConsistency, Is.GreaterThan(0.9f));
+        }
+
+        private static PersonDepthSample Body(float distanceMeters)
+        {
+            return new PersonDepthSample(
+                distanceMeters,
+                2f,
+                true,
+                true);
+        }
+
+        private static PersonDepthSample Background(float distanceMeters)
+        {
+            return new PersonDepthSample(
+                distanceMeters,
+                1f,
+                false,
+                false);
+        }
+
+        private static PersonDepthSample Indexed(
+            int index,
+            float x,
+            float y,
+            float distanceMeters)
+        {
+            return new PersonDepthSample(
+                index,
+                new UnityEngine.Vector2(x, y),
+                new UnityEngine.Vector2(x, 1f - y),
+                distanceMeters,
+                1f,
+                false,
+                false,
+                true,
+                new UnityEngine.Vector3(x, y, distanceMeters));
         }
     }
 }

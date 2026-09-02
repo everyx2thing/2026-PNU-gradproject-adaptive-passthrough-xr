@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Text;
 using TeamVR.AdaptivePassthrough;
 using TMPro;
 using UnityEngine;
@@ -65,6 +66,14 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
         public TMP_Text Value;
     }
 
+    private sealed class DepthSampleCell
+    {
+        public GameObject Root;
+        public RectTransform Rect;
+        public Image Background;
+        public TMP_Text Text;
+    }
+
     [SerializeField] private PersonalizationRuntimeController personalization;
     [SerializeField] private StaticPassthroughPolicyController staticPolicy;
     [SerializeField] private DynamicPassthroughPolicyController dynamicPolicy;
@@ -103,6 +112,7 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
     private MetricTile dynamicClosingTile;
     private MetricTile dynamicTtcTile;
     private MetricTile dynamicTrackTile;
+    private MetricTile dynamicPresentationTile;
     private readonly MetricTile[] featureTiles = new MetricTile[7];
     private MetricTile stableThresholdTile;
     private MetricTile rapidThresholdTile;
@@ -117,6 +127,12 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
     private MetricTile trackingInferenceTile;
     private MetricTile trackingFrameTile;
     private MetricTile trackingThresholdTile;
+    private readonly DepthSampleCell[] depthSampleCells =
+        new DepthSampleCell[25];
+    private TMP_Text depthSampleSummaryText;
+    private TMP_Text depthSampleDetailText;
+    private readonly StringBuilder depthSampleTextBuilder =
+        new StringBuilder(768);
     private Button feedbackModeButton;
     private TMP_Text feedbackModeLabel;
     private CanvasGroup panelCanvasGroup;
@@ -145,6 +161,8 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
         new Color(0.48f, 0.15f, 0.16f, 0.98f);
     private static readonly Color WarningColor =
         new Color(0.72f, 0.43f, 0.08f, 0.98f);
+    private static readonly Color DangerColor =
+        new Color(0.78f, 0.12f, 0.14f, 0.98f);
     private static readonly Color AccentColor =
         new Color(0.08f, 0.58f, 0.86f, 0.98f);
     private static readonly Color MutedColor =
@@ -233,6 +251,7 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
         ResolveReferences();
         RefreshHeader();
         RefreshLivePage();
+        RefreshDepthSamplesPage();
         RefreshHelpText();
 
         for (int i = 0; i < sliderBindings.Count; i++)
@@ -263,7 +282,7 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
                     == SafetyFeedbackMode.Passthrough;
             feedbackModeLabel.text = passthrough
                 ? "OUTPUT: PASSTHROUGH"
-                : "OUTPUT: RED BORDER + VIBRATION";
+                : "OUTPUT: RED + HAPTICS";
             Image image = feedbackModeButton.targetGraphic as Image;
             if (image != null)
             {
@@ -364,24 +383,31 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
             AccentColor);
         CreateActionButton(
             dashboard.transform,
-            "SAVE SETTINGS",
+            "DEPTH",
             new Vector2(0.47f, 0.855f),
-            new Vector2(0.57f, 0.918f),
+            new Vector2(0.535f, 0.918f),
+            () => SetPage(2),
+            AccentColor);
+        CreateActionButton(
+            dashboard.transform,
+            "SAVE SETTINGS",
+            new Vector2(0.54f, 0.855f),
+            new Vector2(0.615f, 0.918f),
             SaveRuntimeSettings,
             ButtonColor);
         CreateActionButton(
             dashboard.transform,
             "RESET SETTINGS",
-            new Vector2(0.575f, 0.855f),
-            new Vector2(0.68f, 0.918f),
+            new Vector2(0.62f, 0.855f),
+            new Vector2(0.695f, 0.918f),
             ResetRuntimeSettings,
             WarningColor);
 
         TMP_Text opacityLabel = CreateText(
             dashboard.transform,
             "PanelOpacityLabel",
-            new Vector2(0.685f, 0.855f),
-            new Vector2(0.79f, 0.918f),
+            new Vector2(0.70f, 0.855f),
+            new Vector2(0.80f, 0.918f),
             14f,
             TextAlignmentOptions.MidlineRight);
         opacityLabel.text = "PANEL OPACITY";
@@ -389,14 +415,14 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
         opacityLabel.color = new Color(0.62f, 0.76f, 0.88f);
         Slider opacitySlider = CreateSlider(
             dashboard.transform,
-            new Vector2(0.79f, 0.86f),
-            new Vector2(0.925f, 0.915f),
+            new Vector2(0.80f, 0.86f),
+            new Vector2(0.93f, 0.915f),
             0.35f,
             1f);
         TMP_Text opacityValue = CreateText(
             dashboard.transform,
             "PanelOpacityValue",
-            new Vector2(0.93f, 0.855f),
+            new Vector2(0.935f, 0.855f),
             new Vector2(0.98f, 0.918f),
             15f,
             TextAlignmentOptions.MidlineRight);
@@ -432,6 +458,11 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
             "PanelPlacementPage");
         pages.Add(panelPage);
         BuildPanelPlacementPage(panelPage.transform);
+        GameObject depthPage = CreatePage(
+            dashboard.transform,
+            "PersonDepthSamplesPage");
+        pages.Add(depthPage);
+        BuildDepthSamplesPage(depthPage.transform);
         SetPage(currentPage);
     }
 
@@ -499,6 +530,95 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
             new Vector2(0.95f, 0.17f),
             () => panelPlacement?.ResetPanel(),
             WarningColor);
+    }
+
+    private void BuildDepthSamplesPage(Transform parent)
+    {
+        GameObject card = CreateCard(
+            parent,
+            "PersonDepthSamplesCard",
+            new Vector2(0.025f, 0.04f),
+            new Vector2(0.975f, 0.96f),
+            "PERSON DEPTH SAMPLES · CAMERA BOX SPACE");
+
+        GameObject plot = CreateRect(
+            "DepthSamplePlot",
+            card.transform,
+            new Vector2(0.035f, 0.10f),
+            new Vector2(0.66f, 0.86f),
+            Vector2.zero,
+            Vector2.zero);
+        Image plotImage = plot.AddComponent<Image>();
+        plotImage.color = new Color(0.025f, 0.035f, 0.05f, 0.98f);
+        plotImage.raycastTarget = false;
+
+        for (int i = 0; i < depthSampleCells.Length; i++)
+        {
+            GameObject cell = CreateRect(
+                "DepthSample" + i,
+                plot.transform,
+                new Vector2(0.5f, 0.5f),
+                new Vector2(0.5f, 0.5f),
+                new Vector2(-34f, -22f),
+                new Vector2(34f, 22f));
+            Image background = cell.AddComponent<Image>();
+            background.color = MutedColor;
+            background.raycastTarget = false;
+            TMP_Text text = CreateText(
+                cell.transform,
+                "Value",
+                Vector2.zero,
+                Vector2.one,
+                12f,
+                TextAlignmentOptions.Center);
+            text.text = string.Empty;
+            text.textWrappingMode = TextWrappingModes.NoWrap;
+            ConfigureAutoSizedText(text, 7f, 12f);
+            cell.SetActive(false);
+            depthSampleCells[i] = new DepthSampleCell
+            {
+                Root = cell,
+                Rect = cell.GetComponent<RectTransform>(),
+                Background = background,
+                Text = text
+            };
+        }
+
+        GameObject summary = CreateRect(
+            "DepthSampleSummary",
+            card.transform,
+            new Vector2(0.68f, 0.10f),
+            new Vector2(0.965f, 0.86f),
+            Vector2.zero,
+            Vector2.zero);
+        Image summaryImage = summary.AddComponent<Image>();
+        summaryImage.color = TileColor;
+        summaryImage.raycastTarget = false;
+        depthSampleSummaryText = CreateText(
+            summary.transform,
+            "Summary",
+            new Vector2(0.04f, 0.64f),
+            new Vector2(0.96f, 0.96f),
+            16f,
+            TextAlignmentOptions.TopLeft);
+        depthSampleSummaryText.textWrappingMode = TextWrappingModes.Normal;
+        depthSampleSummaryText.overflowMode = TextOverflowModes.Ellipsis;
+        depthSampleDetailText = CreateText(
+            summary.transform,
+            "SelectedDetails",
+            new Vector2(0.04f, 0.05f),
+            new Vector2(0.96f, 0.62f),
+            12f,
+            TextAlignmentOptions.TopLeft);
+        depthSampleDetailText.textWrappingMode = TextWrappingModes.Normal;
+        depthSampleDetailText.overflowMode = TextOverflowModes.Ellipsis;
+
+        CreateInfoStrip(
+            card.transform,
+            "DepthLegend",
+            "GREEN TRACKING · CYAN SAFETY · AMBER OTHER SURFACE · RED INVALID · GRAY NO HIT",
+            new Vector2(0.035f, 0.015f),
+            new Vector2(0.965f, 0.085f));
     }
 
     private void CreatePanelPlacementSlider(
@@ -661,12 +781,15 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
         dynamicTrackTile = CreateMetricTile(
             dynamicCard.transform, "DynamicTrack", "TRACK",
             0.795f, 0.965f, 0.31f, 0.55f);
-        CreateInfoStrip(
+        dynamicPresentationTile = CreateMetricTile(
             dynamicCard.transform,
-            "DynamicGuardrail",
-            "CRITICAL PERSON OVERRIDE REMAINS SAFETY-LOCKED",
-            new Vector2(0.035f, 0.06f),
-            new Vector2(0.965f, 0.26f));
+            "DynamicPresentation",
+            "PRESENTATION PIPELINE",
+            0.035f,
+            0.965f,
+            0.06f,
+            0.26f);
+        MakeCompact(dynamicPresentationTile);
 
         GameObject mlCard = CreateCard(
             parent,
@@ -720,21 +843,21 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
             new Vector2(0.02f, 0.39f), new Vector2(0.15f, 0.51f),
             () => trackingQuality?.AddGroundTruthMarker(3.0f), MutedColor);
         CreateActionButton(
-            mlCard.transform, "2.0m",
+            mlCard.transform, "2.5m",
             new Vector2(0.155f, 0.39f), new Vector2(0.285f, 0.51f),
+            () => trackingQuality?.AddGroundTruthMarker(2.5f), MutedColor);
+        CreateActionButton(
+            mlCard.transform, "2.0m",
+            new Vector2(0.29f, 0.39f), new Vector2(0.42f, 0.51f),
             () => trackingQuality?.AddGroundTruthMarker(2.0f), MutedColor);
         CreateActionButton(
             mlCard.transform, "1.5m",
-            new Vector2(0.29f, 0.39f), new Vector2(0.42f, 0.51f),
+            new Vector2(0.425f, 0.39f), new Vector2(0.555f, 0.51f),
             () => trackingQuality?.AddGroundTruthMarker(1.5f), MutedColor);
         CreateActionButton(
             mlCard.transform, "1.0m",
-            new Vector2(0.425f, 0.39f), new Vector2(0.555f, 0.51f),
-            () => trackingQuality?.AddGroundTruthMarker(1.0f), MutedColor);
-        CreateActionButton(
-            mlCard.transform, "0.6m",
             new Vector2(0.56f, 0.39f), new Vector2(0.69f, 0.51f),
-            () => trackingQuality?.AddGroundTruthMarker(0.6f), WarningColor);
+            () => trackingQuality?.AddGroundTruthMarker(1.0f), WarningColor);
         CreateActionButton(
             mlCard.transform, "0.25m",
             new Vector2(0.695f, 0.39f), new Vector2(0.825f, 0.51f),
@@ -757,7 +880,7 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
             mlCard.transform, "TrackingPerson", "PERSON ID / MOTION / MISS",
             0.46f, 0.59f, 0.04f, 0.36f);
         trackingDistanceTile = CreateMetricTile(
-            mlCard.transform, "TrackingDistance", "RAW / FILTERED",
+            mlCard.transform, "TrackingDistance", "TRACK / SAFETY",
             0.60f, 0.72f, 0.04f, 0.36f);
         trackingInferenceTile = CreateMetricTile(
             mlCard.transform, "TrackingInference", "INFER HZ / MS",
@@ -1479,9 +1602,11 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
                         : snapshot.PersonDepthRejectedReason));
         SetMetric(
             trackingDistanceTile,
-            snapshot.PersonRawDistanceMeters.ToString("F2") + " / "
-                + snapshot.PersonFilteredDistanceMeters.ToString("F2")
-                + " m");
+            "T " + snapshot.PersonFilteredDistanceMeters.ToString("F2")
+                + " / S "
+                + snapshot.PersonSafetyDistanceMeters.ToString("F2")
+                + " m\ntrack " + snapshot.PersonTorsoSupportCount
+                + " / safety " + snapshot.PersonSafetySupportCount);
         SetMetric(
             trackingInferenceTile,
             (snapshot.CameraReady ? "CAM OK " : "CAM -- ")
@@ -1506,6 +1631,140 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
             trackingFrameTile,
             snapshot.FramesPerSecond.ToString("F0") + " / "
                 + snapshot.FrameP95Milliseconds.ToString("F1") + "ms");
+    }
+
+    private void RefreshDepthSamplesPage()
+    {
+        if (depthSampleSummaryText == null)
+        {
+            return;
+        }
+
+        PersonDepthSamplingSnapshot snapshot = trackingQuality == null
+            ? PersonDepthSamplingSnapshot.Empty
+            : trackingQuality.LatestPersonDepthSamples;
+        bool available = snapshot != null
+            && snapshot.TrackId > 0
+            && snapshot.Samples.Length > 0;
+        for (int i = 0; i < depthSampleCells.Length; i++)
+        {
+            DepthSampleCell cell = depthSampleCells[i];
+            if (cell == null)
+            {
+                continue;
+            }
+
+            bool visible = available && i < snapshot.Samples.Length;
+            cell.Root.SetActive(visible);
+            if (!visible)
+            {
+                continue;
+            }
+
+            PersonDepthSampleDiagnostic sample = snapshot.Samples[i];
+            Vector2 relative = sample.BoxRelativePosition;
+            cell.Rect.anchorMin = new Vector2(
+                Mathf.Clamp01(relative.x),
+                Mathf.Clamp01(1f - relative.y));
+            cell.Rect.anchorMax = cell.Rect.anchorMin;
+            cell.Rect.anchoredPosition = Vector2.zero;
+            cell.Text.text = sample.HasHit
+                ? "#" + sample.SampleIndex + "\n"
+                    + sample.DistanceMeters.ToString("F2") + "m"
+                : "#" + sample.SampleIndex + "\n--";
+            cell.Background.color = DepthSampleColor(sample.Decision);
+        }
+
+        if (!available)
+        {
+            depthSampleSummaryText.text =
+                "NO PERSON DEPTH SAMPLE\nWaiting for a tracked person and a fresh camera/depth frame.";
+            depthSampleDetailText.text = string.Empty;
+            return;
+        }
+
+        PersonDepthClusterMeasurement tracking = snapshot.TrackingCluster;
+        PersonDepthClusterMeasurement safety = snapshot.SafetyCluster;
+        depthSampleSummaryText.text = string.Format(
+            "TRACK #{0} · {1}\nrequested {2} · hit {3}\nT c{4} n{5} q{6:F2} span {7:F2}m\nS c{8} n{9} q{10:F2} span {11:F2}m\n{12}",
+            snapshot.TrackId,
+            snapshot.ExpandedPattern ? "25 POINT" : "13 POINT",
+            snapshot.RequestedSampleCount,
+            snapshot.HitSampleCount,
+            tracking.ClusterId,
+            tracking.SupportCount,
+            tracking.Confidence,
+            tracking.SpanMeters,
+            safety.ClusterId,
+            safety.SupportCount,
+            safety.Confidence,
+            safety.SpanMeters,
+            snapshot.SelectionReason);
+
+        depthSampleTextBuilder.Length = 0;
+        if (snapshot.HasTrackingWorldCenter)
+        {
+            Vector3 center = snapshot.TrackingWorldCenter;
+            depthSampleTextBuilder.Append("TRACK CLUSTER CENTER\n")
+                .Append(center.x.ToString("F2")).Append(", ")
+                .Append(center.y.ToString("F2")).Append(", ")
+                .Append(center.z.ToString("F2")).Append(" m\n\n");
+        }
+        else
+        {
+            depthSampleTextBuilder.Append("TRACK CLUSTER CENTER --\n\n");
+        }
+
+        depthSampleTextBuilder.Append("SELECTED HIT POINTS\n");
+        for (int i = 0; i < snapshot.Samples.Length; i++)
+        {
+            PersonDepthSampleDiagnostic sample = snapshot.Samples[i];
+            if (sample.Decision != PersonDepthSampleDecision.SelectedTracking
+                && sample.Decision != PersonDepthSampleDecision.SelectedSafety)
+            {
+                continue;
+            }
+
+            depthSampleTextBuilder.Append('#').Append(sample.SampleIndex)
+                .Append(' ').Append(sample.DistanceMeters.ToString("F2"));
+            if (sample.HasWorldPoint)
+            {
+                depthSampleTextBuilder.Append("  [")
+                    .Append(sample.WorldPoint.x.ToString("F2")).Append(',')
+                    .Append(sample.WorldPoint.y.ToString("F2")).Append(',')
+                    .Append(sample.WorldPoint.z.ToString("F2")).Append(']');
+            }
+            depthSampleTextBuilder.Append('\n');
+        }
+        depthSampleDetailText.text = depthSampleTextBuilder.ToString();
+    }
+
+    private static Color DepthSampleColor(PersonDepthSampleDecision decision)
+    {
+        switch (decision)
+        {
+            case PersonDepthSampleDecision.SelectedSafety:
+                return AccentColor;
+            case PersonDepthSampleDecision.SelectedTracking:
+                return EnabledColor;
+            case PersonDepthSampleDecision.OtherCluster:
+                return WarningColor;
+            case PersonDepthSampleDecision.InvalidDistance:
+                return DangerColor;
+            default:
+                return MutedColor;
+        }
+    }
+
+    private static int CountBits(ulong value)
+    {
+        int count = 0;
+        while (value != 0UL)
+        {
+            value &= value - 1UL;
+            count++;
+        }
+        return count;
     }
 
     private static string FormatSpatialOwner(
@@ -1600,6 +1859,7 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
             SetMetric(dynamicClosingTile, "--");
             SetMetric(dynamicTtcTile, "--");
             SetMetric(dynamicTrackTile, "--");
+            SetMetric(dynamicPresentationTile, "FRAME -- · WINDOW 0");
             return;
         }
 
@@ -1614,10 +1874,24 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
         }
 
         bool enabled = decision != null && decision.Enabled;
+        bool safetyOverride = frame.ForcePassthrough;
+        int renderedWindows = presentation == null
+            ? 0
+            : presentation.ActivePersonWindowCount;
+        PersonPresentationStatus presentationStatus = presentation == null
+            ? PersonPresentationStatus.NoFrame
+            : presentation.LatestPersonPresentationStatus;
         SetChip(
             dynamicStateChip,
-            enabled ? "ON · VISIBLE" : "OFF",
-            enabled ? EnabledColor : DisabledColor);
+            safetyOverride
+                ? "SAFETY OVERRIDE"
+                : renderedWindows > 0
+                ? "WINDOW " + renderedWindows
+                : enabled ? "POLICY ON" : "POLICY OFF",
+            safetyOverride
+                ? DangerColor
+                : renderedWindows > 0
+                ? EnabledColor : enabled ? WarningColor : DisabledColor);
         SetRiskBar(dynamicRiskBar, frame.MaximumRisk, true);
         SetMetric(dynamicPeopleTile, frame.ConfirmedPersonCount.ToString());
         SetMetric(
@@ -1639,6 +1913,83 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
         SetMetric(
             dynamicTrackTile,
             primary == null ? "--" : primary.TrackId.ToString());
+        SetMetric(
+            dynamicPresentationTile,
+            FormatPersonPresentationStatus(
+                presentationStatus,
+                presentation == null
+                    ? 0
+                    : presentation.LatestQualifiedPersonCount,
+                presentation == null
+                    ? 0
+                    : presentation.LatestGeometryReadyPersonCount,
+                renderedWindows,
+                presentation == null
+                    ? PersonPresentationGeometrySource.Unavailable
+                    : presentation.LatestPersonGeometrySource),
+            renderedWindows > 0
+                ? EnabledColor
+                : enabled ? WarningColor : MutedColor);
+    }
+
+    private static string FormatPersonPresentationStatus(
+        PersonPresentationStatus status,
+        int qualifiedCount,
+        int geometryReadyCount,
+        int renderedCount,
+        PersonPresentationGeometrySource geometrySource)
+    {
+        string statusLabel;
+        switch (status)
+        {
+            case PersonPresentationStatus.FeatureDisabled:
+                statusLabel = "FEATURE OFF";
+                break;
+            case PersonPresentationStatus.NoFrame:
+                statusLabel = "NO FRAME";
+                break;
+            case PersonPresentationStatus.PolicyOff:
+                statusLabel = "POLICY OFF";
+                break;
+            case PersonPresentationStatus.NoQualifiedPerson:
+                statusLabel = "NO QUALIFIED PERSON";
+                break;
+            case PersonPresentationStatus.GeometryUnavailable:
+                statusLabel = "NO GEOMETRY";
+                break;
+            case PersonPresentationStatus.RevealAreaLimited:
+                statusLabel = "AREA LIMITED";
+                break;
+            case PersonPresentationStatus.SlotUnavailable:
+                statusLabel = "NO FREE SLOT";
+                break;
+            default:
+                statusLabel = "RENDERED";
+                break;
+        }
+
+        string sourceLabel;
+        switch (geometrySource)
+        {
+            case PersonPresentationGeometrySource.MetricDepth:
+                sourceLabel = "DEPTH";
+                break;
+            case PersonPresentationGeometrySource.TrackHistory:
+                sourceLabel = "TRACK HOLD";
+                break;
+            case PersonPresentationGeometrySource.BoundingBoxEstimate:
+                sourceLabel = "BBOX EST";
+                break;
+            default:
+                sourceLabel = "NO SOURCE";
+                break;
+        }
+
+        return statusLabel
+            + "  Q/G/W " + Mathf.Max(0, qualifiedCount)
+            + "/" + Mathf.Max(0, geometryReadyCount)
+            + "/" + Mathf.Max(0, renderedCount)
+            + "  " + sourceLabel;
     }
 
     private void RefreshHelpText()
@@ -1723,6 +2074,7 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
         Image background = chipObject.AddComponent<Image>();
         background.color = MutedColor;
         background.raycastTarget = false;
+        chipObject.AddComponent<RectMask2D>();
         TMP_Text text = CreateText(
             chipObject.transform,
             "Value",
@@ -1731,6 +2083,7 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
             16f,
             TextAlignmentOptions.Center);
         text.fontStyle = FontStyles.Bold;
+        ConfigureAutoSizedText(text, 9f, 16f);
         return new StatusChip
         {
             Background = background,
@@ -1757,6 +2110,7 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
         Image background = tileObject.AddComponent<Image>();
         background.color = TileColor;
         background.raycastTarget = false;
+        tileObject.AddComponent<RectMask2D>();
 
         TMP_Text labelText = CreateText(
             tileObject.transform,
@@ -1768,6 +2122,7 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
         labelText.text = label;
         labelText.fontStyle = FontStyles.Bold;
         labelText.color = new Color(0.56f, 0.66f, 0.76f);
+        ConfigureAutoSizedText(labelText, 8f, 13f);
 
         TMP_Text valueText = CreateText(
             tileObject.transform,
@@ -1778,6 +2133,7 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
             TextAlignmentOptions.Center);
         valueText.text = "--";
         valueText.fontStyle = FontStyles.Bold;
+        ConfigureAutoSizedText(valueText, 8f, 18f);
         return new MetricTile
         {
             Background = background,
@@ -1820,6 +2176,7 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
         labelText.text = label;
         labelText.fontStyle = FontStyles.Bold;
         labelText.color = new Color(0.68f, 0.76f, 0.84f);
+        ConfigureAutoSizedText(labelText, 8f, 14f);
 
         GameObject track = CreateRect(
             "Track",
@@ -1851,6 +2208,7 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
             TextAlignmentOptions.MidlineRight);
         valueText.text = "--";
         valueText.fontStyle = FontStyles.Bold;
+        ConfigureAutoSizedText(valueText, 9f, 17f);
         return new RiskBar
         {
             Fill = fillImage,
@@ -1885,6 +2243,7 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
         text.text = message;
         text.color = new Color(0.56f, 0.78f, 0.92f);
         text.fontStyle = FontStyles.Bold;
+        ConfigureAutoSizedText(text, 8f, 14f);
     }
 
     private static void SetChip(
@@ -2029,6 +2388,7 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
         Image image = buttonObject.AddComponent<Image>();
         image.color = color;
         image.raycastTarget = true;
+        buttonObject.AddComponent<RectMask2D>();
         Button button = buttonObject.AddComponent<Button>();
         button.targetGraphic = image;
         button.onClick.AddListener(() => action?.Invoke());
@@ -2042,6 +2402,8 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
             TextAlignmentOptions.Center);
         text.text = label;
         text.fontStyle = FontStyles.Bold;
+        ConfigureAutoSizedText(text, 9f, 17f);
+        text.margin = new Vector4(8f, 3f, 8f, 3f);
         text.raycastTarget = false;
         return button;
     }
@@ -2139,6 +2501,23 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
         text.overflowMode = TextOverflowModes.Ellipsis;
         text.raycastTarget = false;
         return text;
+    }
+
+    private static void ConfigureAutoSizedText(
+        TMP_Text text,
+        float minimumFontSize,
+        float maximumFontSize)
+    {
+        if (text == null)
+        {
+            return;
+        }
+
+        text.enableAutoSizing = true;
+        text.fontSizeMin = Mathf.Max(6f, minimumFontSize);
+        text.fontSizeMax = Mathf.Max(text.fontSizeMin, maximumFontSize);
+        text.textWrappingMode = TextWrappingModes.NoWrap;
+        text.overflowMode = TextOverflowModes.Truncate;
     }
 
     private static GameObject CreateRect(

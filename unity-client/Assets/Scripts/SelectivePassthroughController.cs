@@ -10,8 +10,11 @@ public sealed class SelectivePassthroughController :
     MonoBehaviour,
     IStaticPresentationDiagnosticsProvider,
     IPersonWindowSnapshotProvider,
+    IPersonPresentationDiagnosticsProvider,
     IPassthroughPresentationSnapshotProvider,
-    IPassthroughVisibilityEventSource
+    IPassthroughVisibilityEventSource,
+    IDynamicPresentationModeProvider,
+    IPersonPresentationFrameProvider
 {
     private sealed class WindowSlot
     {
@@ -85,7 +88,6 @@ public sealed class SelectivePassthroughController :
     [SerializeField] private Rect cameraViewport =
         new Rect(0.05f, 0.18f, 0.90f, 0.72f);
     [SerializeField, Range(0.001f, 0.5f)] private float personEdgeFeather = 0.065f;
-    [SerializeField, Range(0f, 1f)] private float minimumPersonWindowRisk = 0.50f;
     [SerializeField, Range(1, 5)] private int maximumPersonWindows = 3;
     [SerializeField, Range(0.01f, 1f)] private float personMinimumWidth = 0.10f;
     [SerializeField, Range(0.01f, 1f)] private float personMaximumWidth = 0.42f;
@@ -97,6 +99,10 @@ public sealed class SelectivePassthroughController :
     [SerializeField, Min(0.001f)] private float personFadeInSeconds = 0.125f;
     [SerializeField, Min(0f)] private float personLostHoldSeconds = 1.50f;
     [SerializeField, Min(0.001f)] private float personFadeOutSeconds = 0.30f;
+    [SerializeField, Min(0.50f)] private float personGeometryFreshnessSeconds =
+        PersonWindowTracker.DefaultGeometryFreshnessSeconds;
+    [SerializeField, Min(0f)] private float maximumAcceptedPersonCaptureAgeSeconds =
+        PersonWindowTracker.DefaultMaximumAcceptedCaptureAgeSeconds;
     [SerializeField, Range(0.001f, 0.5f)] private float wallEdgeFeather = 0.065f;
     [SerializeField, Range(1, 2)] private int maximumStaticWindows = 2;
     [SerializeField, Range(0f, 0.5f)] private float staticReplacementRiskMargin = 0.10f;
@@ -108,6 +114,8 @@ public sealed class SelectivePassthroughController :
         new List<DynamicRiskAssessment>();
     private readonly HashSet<int> renderedPersonTrackIds =
         new HashSet<int>();
+    private readonly PersonRevealEligibilityTracker personRevealEligibility =
+        new PersonRevealEligibilityTracker();
     private readonly List<WindowSlot> staticSlots =
         new List<WindowSlot>();
     private readonly List<StaticPresentationEntry> staticCandidates =
@@ -140,6 +148,22 @@ public sealed class SelectivePassthroughController :
     public event Action<bool, string, double> VisibilityChanged;
 
     public int ActivePersonWindowCount { get; private set; }
+    public bool DynamicPassthroughRendered =>
+        feedbackMode == SafetyFeedbackMode.Passthrough
+        && ActivePersonWindowCount > 0;
+    public bool DynamicFallbackActive => stereoFallbackDynamicRequested;
+    public int LatestQualifiedPersonCount { get; private set; }
+    public int LatestGeometryReadyPersonCount { get; private set; }
+    public PersonPresentationGeometrySource LatestPersonGeometrySource
+    {
+        get;
+        private set;
+    } = PersonPresentationGeometrySource.Unavailable;
+    public PersonPresentationStatus LatestPersonPresentationStatus
+    {
+        get;
+        private set;
+    } = PersonPresentationStatus.NoFrame;
     public bool StaticWindowVisible { get; private set; }
     public int ActiveStaticWindowCount { get; private set; }
     public string LastStaticReplacementReason { get; private set; } = "none";
@@ -409,6 +433,10 @@ public sealed class SelectivePassthroughController :
         if (hasNewFrame)
         {
             lastObservedFrameSequence = controller.LatestFrameSequence;
+            LatestQualifiedPersonCount = 0;
+            LatestGeometryReadyPersonCount = 0;
+            LatestPersonGeometrySource =
+                PersonPresentationGeometrySource.Unavailable;
         }
 
         if (dynamicFeatureEnabled
@@ -431,10 +459,26 @@ public sealed class SelectivePassthroughController :
         for (int i = 0; i < personCandidates.Count; i++)
         {
             DynamicRiskAssessment assessment = personCandidates[i];
+            float presentationPriorityRisk = assessment.ForcePassthrough
+                ? 1f
+                : assessment.Score;
+            bool revealEligible = personRevealEligibility.Evaluate(
+                assessment,
+                dynamicFeatureEnabled,
+                dynamicPolicy == null
+                    ? PersonRevealEligibilityTracker.DefaultOnRisk
+                    : dynamicPolicy.OnThreshold,
+                dynamicPolicy == null
+                    ? PersonRevealEligibilityTracker.DefaultOffRisk
+                    : dynamicPolicy.OffThreshold);
+            if (revealEligible)
+            {
+                LatestQualifiedPersonCount++;
+            }
             Rect rect = SelectivePassthroughMath.FocusedPersonWindowRect(
                 assessment.Detection.boundingBox,
                 cameraViewport,
-                assessment.Score,
+                presentationPriorityRisk,
                 personMinimumWidth,
                 personMaximumWidth,
                 personMinimumHeight,
@@ -453,20 +497,35 @@ public sealed class SelectivePassthroughController :
                         : now;
             }
 
+            bool geometryReady = assessment.Location.HasPresentationGeometry
+                && personWindowTracker.CanAcceptGeometry(
+                    captureRealtime,
+                    presentedRealtime);
+            if (revealEligible && geometryReady)
+            {
+                LatestGeometryReadyPersonCount++;
+                if (LatestPersonGeometrySource
+                    == PersonPresentationGeometrySource.Unavailable)
+                {
+                    LatestPersonGeometrySource = assessment.Location
+                        .PresentationGeometrySource;
+                }
+            }
+
             personWindowTracker.Observe(
                 assessment.TrackId,
                 rect,
-                assessment.Score,
+                presentationPriorityRisk,
                 captureRealtime,
                 presentedRealtime,
-                decision != null
-                    && decision.Enabled
-                    && (assessment.ForcePassthrough
-                        || assessment.Score >= minimumPersonWindowRisk),
+                revealEligible,
                 assessment.Location.PresentationGeometry);
         }
 
-        ReprojectTrackedWorldPoints(frame);
+        if (hasNewFrame && frame != null)
+        {
+            personRevealEligibility.PruneExcept(frame.LiveTrackIds);
+        }
 
         personWindowTracker.Update(
             now,
@@ -478,6 +537,8 @@ public sealed class SelectivePassthroughController :
         renderedPersonTrackIds.Clear();
         int activeCount = 0;
         float renderedRevealArea = 0f;
+        bool revealAreaLimited = false;
+        bool slotUnavailable = false;
         for (int i = 0; i < windows.Count; i++)
         {
             PersonWindowSnapshot window = windows[i];
@@ -485,6 +546,7 @@ public sealed class SelectivePassthroughController :
             if (renderedRevealArea + windowArea > maximumPersonRevealArea
                 && renderedRevealArea > 0f)
             {
+                revealAreaLimited = true;
                 continue;
             }
 
@@ -497,6 +559,7 @@ public sealed class SelectivePassthroughController :
             WindowSlot slot = FindOrAssignPersonSlot(window.TrackId);
             if (slot == null)
             {
+                slotUnavailable = true;
                 continue;
             }
 
@@ -525,6 +588,36 @@ public sealed class SelectivePassthroughController :
         }
 
         ActivePersonWindowCount = activeCount;
+        LatestPersonPresentationStatus = ResolvePersonPresentationStatus(
+            dynamicFeatureEnabled,
+            frame != null,
+            true,
+            activeCount,
+            LatestQualifiedPersonCount,
+            LatestGeometryReadyPersonCount,
+            revealAreaLimited,
+            slotUnavailable);
+    }
+
+    public static PersonPresentationStatus ResolvePersonPresentationStatus(
+        bool featureEnabled,
+        bool hasFrame,
+        bool policyEnabled,
+        int renderedWindowCount,
+        int qualifiedPersonCount,
+        int geometryReadyPersonCount,
+        bool revealAreaLimited,
+        bool slotUnavailable)
+    {
+        return PersonPresentationDiagnostics.ResolveStatus(
+            featureEnabled,
+            hasFrame,
+            policyEnabled,
+            renderedWindowCount,
+            qualifiedPersonCount,
+            geometryReadyPersonCount,
+            revealAreaLimited,
+            slotUnavailable);
     }
 
     private void ReprojectTrackedWorldPoints(DynamicRiskFrame frame)
@@ -599,6 +692,42 @@ public sealed class SelectivePassthroughController :
         return false;
     }
 
+    public bool IsPersonRevealEligible(DynamicRiskAssessment assessment)
+    {
+        if (assessment != null
+            && personRevealEligibility.TryGetLatestEligibility(
+                assessment.TrackId,
+                out bool latestEligible))
+        {
+            return latestEligible;
+        }
+
+        PassthroughSourceDecision decision =
+            dynamicPolicy == null ? null : dynamicPolicy.Latest;
+        return PersonPresentationDiagnostics.IsRevealEligible(
+            assessment,
+            dynamicFeatureEnabled,
+            true,
+            dynamicPolicy == null
+                ? PersonRevealEligibilityTracker.DefaultOnRisk
+                : dynamicPolicy.OnThreshold);
+    }
+
+    public bool TryGetRenderedPersonWindow(
+        int trackId,
+        out Rect rect,
+        out float opacity)
+    {
+        if (!renderedPersonTrackIds.Contains(trackId))
+        {
+            rect = default;
+            opacity = 0f;
+            return false;
+        }
+
+        return TryGetPersonWindow(trackId, out rect, out opacity);
+    }
+
     private void UpdateWallWindow()
     {
         double now = Time.realtimeSinceStartupAsDouble;
@@ -632,6 +761,17 @@ public sealed class SelectivePassthroughController :
             {
                 HazardPresentationGeometry observedGeometry =
                     entry.Decision.PresentationGeometry;
+                if (observedGeometry.Available
+                    && presentationCamera != null)
+                {
+                    observedGeometry = WallPresentationGeometrySizing
+                        .ExpandForRisk(
+                            observedGeometry,
+                            presentationCamera.transform.position,
+                            entry.Decision.Risk,
+                            entry.Decision.EmergencyTrigger
+                                || entry.Decision.EmergencyHold);
+                }
                 double capturedAt = observedGeometry.CaptureTimestampSeconds;
                 double geometryTimestamp = observedGeometry.Available
                     && capturedAt > 0.0
@@ -1371,6 +1511,13 @@ public sealed class SelectivePassthroughController :
         DynamicRiskAssessment left,
         DynamicRiskAssessment right)
     {
+        int forced = right.ForcePassthrough.CompareTo(
+            left.ForcePassthrough);
+        if (forced != 0)
+        {
+            return forced;
+        }
+
         return right.Score.CompareTo(left.Score);
     }
 
@@ -1485,7 +1632,13 @@ public sealed class SelectivePassthroughController :
             staticPresentations[i].Decision = null;
         }
         personWindowTracker?.Reset();
+        personRevealEligibility.Reset();
         ActivePersonWindowCount = 0;
+        LatestQualifiedPersonCount = 0;
+        LatestGeometryReadyPersonCount = 0;
+        LatestPersonGeometrySource =
+            PersonPresentationGeometrySource.Unavailable;
+        LatestPersonPresentationStatus = PersonPresentationStatus.NoFrame;
         ActiveStaticWindowCount = 0;
         StaticWindowVisible = false;
         stereoFallbackStaticRequested = false;
@@ -1661,6 +1814,7 @@ public sealed class SelectivePassthroughController :
         runtimeCueMaterial = null;
         sharedQuad = null;
         personWindowTracker?.Reset();
+        personRevealEligibility.Reset();
         lastObservedFrameSequence = 0;
         initialized = false;
     }
@@ -1674,7 +1828,9 @@ public sealed class SelectivePassthroughController :
             personLostHoldSeconds,
             personFadeOutSeconds,
             0.50f,
-            1.50f);
+            1.50f,
+            personGeometryFreshnessSeconds,
+            maximumAcceptedPersonCaptureAgeSeconds);
     }
 
     private void RefreshPipelineResetSubscription()
@@ -1709,6 +1865,7 @@ public sealed class SelectivePassthroughController :
     private void HandlePipelineReset()
     {
         personWindowTracker?.Reset();
+        personRevealEligibility.Reset();
         lastObservedFrameSequence = 0;
         for (int i = 0; i < personSlots.Count; i++)
         {
@@ -1717,6 +1874,11 @@ public sealed class SelectivePassthroughController :
         }
 
         ActivePersonWindowCount = 0;
+        LatestQualifiedPersonCount = 0;
+        LatestGeometryReadyPersonCount = 0;
+        LatestPersonGeometrySource =
+            PersonPresentationGeometrySource.Unavailable;
+        LatestPersonPresentationStatus = PersonPresentationStatus.NoFrame;
     }
 
     private static void DestroySlot(WindowSlot slot)

@@ -22,6 +22,22 @@ namespace TeamVR.AdaptivePassthrough
         event Action<bool, string, double> VisibilityChanged;
     }
 
+    public interface IDynamicPresentationModeProvider
+    {
+        bool DynamicPassthroughRendered { get; }
+        bool DynamicFallbackActive { get; }
+    }
+
+    public interface IPersonPresentationFrameProvider
+    {
+        bool IsPersonRevealEligible(DynamicRiskAssessment assessment);
+
+        bool TryGetRenderedPersonWindow(
+            int trackId,
+            out Rect rect,
+            out float opacity);
+    }
+
     public readonly struct PassthroughPresentationSnapshot
     {
         public readonly bool AnyVisible;
@@ -92,6 +108,9 @@ namespace TeamVR.AdaptivePassthrough
 
     public sealed class PersonWindowTracker
     {
+        public const float DefaultGeometryFreshnessSeconds = 0.85f;
+        public const float DefaultMaximumAcceptedCaptureAgeSeconds = 0.75f;
+
         private sealed class State
         {
             public int TrackId;
@@ -121,6 +140,8 @@ namespace TeamVR.AdaptivePassthrough
         private readonly float fadeOutSeconds;
         private readonly float maximumPredictionSeconds;
         private readonly float maximumViewportSpeed;
+        private readonly float geometryFreshnessSeconds;
+        private readonly float maximumAcceptedCaptureAgeSeconds;
         private readonly List<int> removalBuffer = new List<int>();
         private readonly List<PersonWindowSnapshot> snapshotBuffer =
             new List<PersonWindowSnapshot>();
@@ -133,7 +154,11 @@ namespace TeamVR.AdaptivePassthrough
             float lostHoldSeconds = 0.60f,
             float fadeOutSeconds = 0.30f,
             float maximumPredictionSeconds = 0.50f,
-            float maximumViewportSpeed = 1.50f)
+            float maximumViewportSpeed = 1.50f,
+            float geometryFreshnessSeconds =
+                DefaultGeometryFreshnessSeconds,
+            float maximumAcceptedCaptureAgeSeconds =
+                DefaultMaximumAcceptedCaptureAgeSeconds)
         {
             this.positionSmoothingSeconds = Mathf.Max(
                 0.001f,
@@ -150,6 +175,26 @@ namespace TeamVR.AdaptivePassthrough
             this.maximumViewportSpeed = Mathf.Max(
                 0.01f,
                 maximumViewportSpeed);
+            this.geometryFreshnessSeconds = Mathf.Max(
+                this.maximumPredictionSeconds,
+                geometryFreshnessSeconds);
+            this.maximumAcceptedCaptureAgeSeconds = Mathf.Max(
+                0f,
+                maximumAcceptedCaptureAgeSeconds);
+        }
+
+        public float GeometryFreshnessSeconds => geometryFreshnessSeconds;
+        public float MaximumAcceptedCaptureAgeSeconds =>
+            maximumAcceptedCaptureAgeSeconds;
+
+        public bool CanAcceptGeometry(
+            double captureTimestampSeconds,
+            double presentedTimestampSeconds)
+        {
+            double age = Math.Max(
+                0.0,
+                presentedTimestampSeconds - captureTimestampSeconds);
+            return age <= maximumAcceptedCaptureAgeSeconds;
         }
 
         public void BeginFrame()
@@ -167,7 +212,7 @@ namespace TeamVR.AdaptivePassthrough
         /// Marks an intentional global presentation-policy transition. Turning
         /// the policy off preserves already qualified world geometry until its
         /// normal hold and fade complete; ordinary missing observations still
-        /// use the 0.5 second sensor-stale expiry.
+        /// use the bounded person-geometry freshness interval.
         /// </summary>
         public void SetPresentationPolicyActive(bool active)
         {
@@ -285,7 +330,9 @@ namespace TeamVR.AdaptivePassthrough
                         PassthroughPresentationState.DefaultPulseSeconds,
                         lostHoldSeconds,
                         fadeOutSeconds,
-                        maximumPredictionSeconds)
+                        maximumPredictionSeconds,
+                        geometryFreshnessSeconds,
+                        true)
                 };
                 states.Add(trackId, state);
             }
@@ -337,10 +384,28 @@ namespace TeamVR.AdaptivePassthrough
                 state.Risk = Mathf.Clamp01(risk);
             }
 
+            if (presentationGeometry.Available
+                && !CanAcceptGeometry(
+                    captureTimestampSeconds,
+                    presentedTimestampSeconds))
+            {
+                presentationGeometry = default;
+            }
+            else if (presentationGeometry.Available)
+            {
+                // Compensate camera/inference latency once, then let the
+                // presentation state predict only the residual render age.
+                presentationGeometry = presentationGeometry.PredictedTo(
+                    presentedTimestampSeconds,
+                    maximumPredictionSeconds);
+            }
+
             state.Presentation.Observe(
                 presentationGeometry,
                 risk,
-                captureTimestampSeconds,
+                presentationGeometry.Available
+                    ? presentationGeometry.CaptureTimestampSeconds
+                    : captureTimestampSeconds,
                 presentedTimestampSeconds,
                 revealEligible);
         }

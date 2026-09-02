@@ -382,6 +382,11 @@ namespace TeamVR.AdaptivePassthrough
         public readonly int PersonTrackId;
         public readonly float PersonRawDistanceMeters;
         public readonly float PersonFilteredDistanceMeters;
+        public readonly float PersonSafetyDistanceMeters;
+        public readonly float PersonSafetyDistanceConfidence;
+        public readonly int PersonTorsoSupportCount;
+        public readonly int PersonSafetySupportCount;
+        public readonly string PersonClusterSelectionReason;
         public readonly string PersonMotion;
         public readonly float PersonMissingSeconds;
         public readonly bool PersonMetricReliable;
@@ -440,7 +445,12 @@ namespace TeamVR.AdaptivePassthrough
             float inferenceSliceBudgetMilliseconds = 0f,
             float targetInferenceRateHz = 0f,
             float measuredInferenceRateHz = 0f,
-            bool hasInferenceMeasurement = false)
+            bool hasInferenceMeasurement = false,
+            float personSafetyDistanceMeters = 0f,
+            float personSafetyDistanceConfidence = 0f,
+            int personTorsoSupportCount = 0,
+            int personSafetySupportCount = 0,
+            string personClusterSelectionReason = null)
         {
             Profile = profile;
             AdaptiveLevel = Mathf.Max(0, adaptiveLevel);
@@ -473,6 +483,15 @@ namespace TeamVR.AdaptivePassthrough
             PersonTrackId = Mathf.Max(0, personTrackId);
             PersonRawDistanceMeters = Mathf.Max(0f, personRawDistanceMeters);
             PersonFilteredDistanceMeters = Mathf.Max(0f, personFilteredDistanceMeters);
+            PersonSafetyDistanceMeters = Mathf.Max(
+                0f,
+                personSafetyDistanceMeters);
+            PersonSafetyDistanceConfidence = Mathf.Clamp01(
+                personSafetyDistanceConfidence);
+            PersonTorsoSupportCount = Mathf.Max(0, personTorsoSupportCount);
+            PersonSafetySupportCount = Mathf.Max(0, personSafetySupportCount);
+            PersonClusterSelectionReason =
+                personClusterSelectionReason ?? string.Empty;
             PersonMotion = personMotion ?? "Unavailable";
             PersonMissingSeconds = Mathf.Max(0f, personMissingSeconds);
             PersonMetricReliable = personMetricReliable;

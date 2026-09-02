@@ -168,6 +168,14 @@ namespace TeamVR.AdaptivePassthrough
             HazardPresentationGeometry measured = BuildScenarioGeometry(
                 timelineSeconds,
                 now);
+            if (measured.Kind == HazardVisualKind.WallPlane && hmd != null)
+            {
+                measured = WallPresentationGeometrySizing.ExpandForRisk(
+                    measured,
+                    hmd.position,
+                    risk,
+                    wallDistance <= 0.25f);
+            }
             UpdateStaticSlotSimulation(now);
             state.BeginFrame();
             state.SetPresentationPolicyActive(policyEnabled);
@@ -502,8 +510,28 @@ namespace TeamVR.AdaptivePassthrough
                 observationTime);
             latestFusionConflictReason = environment.Available
                 ? "person_room_scene_not_applicable"
-                : "person_depth_unavailable";
-            return latestFusionMeasurement.PresentationGeometry;
+                : "person_bbox_presentation_estimate";
+            if (latestFusionMeasurement.PresentationGeometry.Available)
+            {
+                return latestFusionMeasurement.PresentationGeometry;
+            }
+
+            return new HazardPresentationGeometry(
+                plane.StableId,
+                plane.Kind,
+                plane.BottomLeft,
+                plane.BottomRight,
+                plane.TopRight,
+                plane.TopLeft,
+                plane.SurfaceNormal,
+                plane.CaptureTimestampSeconds,
+                Mathf.Clamp01(confidence * 0.55f),
+                plane.Risk,
+                SpatialObstacleSource.Unavailable,
+                plane.Owner,
+                plane.ProbePurpose,
+                plane.HasWorldVelocity,
+                plane.WorldVelocity);
         }
 
         private HazardPresentationGeometry BuildLowObstacle(
