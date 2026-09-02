@@ -37,6 +37,13 @@ namespace TeamVR.Experiment
         [SerializeField] private Transform rightMidSpawnPoint;
         [SerializeField] private Transform rightSpawnPoint;
 
+        [Tooltip(
+            "Optional origin for the authored spawn layout. When omitted, "
+            + "the common parent of the nine spawn points is used. The "
+            + "layout is re-anchored to the HMD position and horizontal yaw "
+            + "at the beginning of every round.")]
+        [SerializeField] private Transform spawnLayoutOrigin;
+
         private readonly List<GameObject> activeBalls = new List<GameObject>();
         private Material mustAvoidMaterial;
         private Material optionalHitMaterial;
@@ -48,6 +55,62 @@ namespace TeamVR.Experiment
         // Read by ExperimentThreatIndicatorController to draw edge-of-screen
         // arrows for balls currently outside the player's field of view.
         public IReadOnlyList<GameObject> ActiveBalls => activeBalls;
+
+        public void Configure(
+            OVRCameraRig rig,
+            GameObject bombPrefab,
+            GameObject targetPrefab,
+            Transform layoutOrigin,
+            Transform[] spawnPoints)
+        {
+            cameraRig = rig;
+            bombBallPrefab = bombPrefab;
+            targetBallPrefab = targetPrefab;
+            spawnLayoutOrigin = layoutOrigin;
+
+            if (spawnPoints == null || spawnPoints.Length != 9)
+            {
+                return;
+            }
+
+            leftSpawnPoint = spawnPoints[0];
+            leftMidSpawnPoint = spawnPoints[1];
+            frontLeftSpawnPoint = spawnPoints[2];
+            frontLeftMidSpawnPoint = spawnPoints[3];
+            frontSpawnPoint = spawnPoints[4];
+            frontRightMidSpawnPoint = spawnPoints[5];
+            frontRightSpawnPoint = spawnPoints[6];
+            rightMidSpawnPoint = spawnPoints[7];
+            rightSpawnPoint = spawnPoints[8];
+        }
+
+        public bool ValidateConfiguration(out string error)
+        {
+            ResolveReferences();
+            if (cameraRig == null || cameraRig.centerEyeAnchor == null)
+            {
+                error = "OVRCameraRig center eye anchor is missing.";
+                return false;
+            }
+
+            if (bombBallPrefab == null || targetBallPrefab == null)
+            {
+                error = "Bomb and target ball prefabs must both be assigned.";
+                return false;
+            }
+
+            for (int i = 0; i < 9; i++)
+            {
+                if (GetSpawnPointTransform((BallDirection)i) == null)
+                {
+                    error = "All nine experiment spawn points must be assigned.";
+                    return false;
+                }
+            }
+
+            error = string.Empty;
+            return true;
+        }
 
         private void Awake()
         {
@@ -112,6 +175,8 @@ namespace TeamVR.Experiment
                 flatForward.normalized,
                 Vector3.up);
 
+            Transform layoutOrigin = ResolveLayoutOrigin();
+
             IReadOnlyList<BallSpawnEntry> entries = scheduleSet.Entries;
             float elapsedSeconds = 0f;
             for (int i = 0; i < entries.Count; i++)
@@ -126,7 +191,11 @@ namespace TeamVR.Experiment
                     elapsedSeconds += waitSeconds;
                 }
 
-                SpawnBall(entry, originPosition, originRotation);
+                SpawnBall(
+                    entry,
+                    originPosition,
+                    originRotation,
+                    layoutOrigin);
             }
 
             while (activeBalls.Count > 0)
@@ -147,12 +216,14 @@ namespace TeamVR.Experiment
         private void SpawnBall(
             BallSpawnEntry entry,
             Vector3 originPosition,
-            Quaternion originRotation)
+            Quaternion originRotation,
+            Transform layoutOrigin)
         {
             Vector3 spawnPosition = ResolveSpawnPosition(
                 entry,
                 originPosition,
-                originRotation);
+                originRotation,
+                layoutOrigin);
             Vector3 targetPosition = originPosition
                 + Vector3.up * entry.targetHeightOffsetMeters;
 
@@ -212,7 +283,8 @@ namespace TeamVR.Experiment
         private Vector3 ResolveSpawnPosition(
             BallSpawnEntry entry,
             Vector3 originPosition,
-            Quaternion originRotation)
+            Quaternion originRotation,
+            Transform layoutOrigin)
         {
             Transform spawnPoint = GetSpawnPointTransform(entry.direction);
             if (spawnPoint == null)
@@ -222,7 +294,16 @@ namespace TeamVR.Experiment
 
             if (spawnPoint != null)
             {
-                return spawnPoint.position
+                Vector3 localOffset = layoutOrigin != null
+                    ? layoutOrigin.InverseTransformPoint(spawnPoint.position)
+                    : spawnPoint.localPosition;
+                // Authored spawn markers sit at a nominal standing height.
+                // The live HMD is the round anchor, so only the horizontal
+                // layout offset is retained; schedule height is relative to
+                // the participant's current head height.
+                localOffset.y = 0f;
+                return originPosition
+                    + originRotation * localOffset
                     + Vector3.up * entry.spawnHeightOffsetMeters;
             }
 
@@ -231,6 +312,33 @@ namespace TeamVR.Experiment
             return originPosition
                 + fallbackDirectionWorld * entry.spawnDistanceMeters
                 + Vector3.up * entry.spawnHeightOffsetMeters;
+        }
+
+        private Transform ResolveLayoutOrigin()
+        {
+            if (spawnLayoutOrigin != null)
+            {
+                return spawnLayoutOrigin;
+            }
+
+            Transform candidate = leftSpawnPoint == null
+                ? null
+                : leftSpawnPoint.parent;
+            if (candidate == null)
+            {
+                return null;
+            }
+
+            for (int i = 1; i < 9; i++)
+            {
+                Transform point = GetSpawnPointTransform((BallDirection)i);
+                if (point == null || point.parent != candidate)
+                {
+                    return null;
+                }
+            }
+
+            return candidate;
         }
 
         private Transform GetSpawnPointTransform(BallDirection direction)

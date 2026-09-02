@@ -263,6 +263,14 @@ namespace TeamVR.AdaptivePassthrough
             public float primaryPolicyGeometryNormalX;
             public float primaryPolicyGeometryNormalY;
             public float primaryPolicyGeometryNormalZ;
+            public string experimentCondition;
+            public bool experimentRoundActive;
+            public long experimentRoundSequence;
+            public string experimentRoundId;
+            public string experimentPresentationOverride;
+            public string experimentBoundaryOverride;
+            public bool experimentBoundarySuppressionRequested;
+            public bool experimentBoundarySuppressed;
         }
 
         private sealed class PendingFrameRecord
@@ -276,6 +284,7 @@ namespace TeamVR.AdaptivePassthrough
         [SerializeField] private MonoBehaviour snapshotSequenceProviderBehaviour;
         [SerializeField] private TrackingQualityController trackingQuality;
         [SerializeField] private MonoBehaviour staticPolicyBehaviour;
+        [SerializeField] private MonoBehaviour experimentConditionProviderBehaviour;
 #if ADAPTIVE_PASSTHROUGH_QUEST_CAMERA
         [SerializeField] private QuestSpatialObstacleProvider spatialProvider;
         [SerializeField] private QuestPersonDepthProvider personDepthProvider;
@@ -294,6 +303,7 @@ namespace TeamVR.AdaptivePassthrough
         private IStaticRiskDiagnosticsProvider staticPolicy;
         private IDynamicPresentationModeProvider selectivePresentation;
         private IPersonPresentationFrameProvider presentationFrameProvider;
+        private IExperimentRuntimeContextProvider experimentConditionProvider;
         private readonly List<PendingFrameRecord> pendingFrameRecords =
             new List<PendingFrameRecord>();
         private bool hasDynamicPresentationMode;
@@ -312,6 +322,7 @@ namespace TeamVR.AdaptivePassthrough
             ResolveSnapshotSequenceProvider();
             ResolvePresentation();
             ResolveQualityReferences();
+            ResolveExperimentConditionProvider();
         }
 
         private void OnEnable()
@@ -531,6 +542,7 @@ namespace TeamVR.AdaptivePassthrough
                     ? 0L
                     : controller.LatestFrameSequence
             };
+            ApplyExperimentContext(record);
             if (controller != null && controller.LatestFrame != null)
             {
                 record.liveTrackCount =
@@ -1209,6 +1221,69 @@ namespace TeamVR.AdaptivePassthrough
                     FindAnyObjectByType<QuestPersonDepthProvider>();
             }
 #endif
+        }
+
+        private void ResolveExperimentConditionProvider()
+        {
+            experimentConditionProvider =
+                experimentConditionProviderBehaviour
+                    as IExperimentRuntimeContextProvider;
+            if (experimentConditionProvider != null)
+            {
+                return;
+            }
+
+            MonoBehaviour[] behaviours =
+                FindObjectsByType<MonoBehaviour>(FindObjectsSortMode.None);
+            for (int i = 0; i < behaviours.Length; i++)
+            {
+                if (behaviours[i]
+                    is IExperimentRuntimeContextProvider provider)
+                {
+                    experimentConditionProviderBehaviour = behaviours[i];
+                    experimentConditionProvider = provider;
+                    return;
+                }
+            }
+        }
+
+        private void ApplyExperimentContext(LogRecord record)
+        {
+            if (record == null)
+            {
+                return;
+            }
+
+            if (experimentConditionProvider == null)
+            {
+                ResolveExperimentConditionProvider();
+            }
+
+            if (experimentConditionProvider == null)
+            {
+                record.experimentCondition = "none";
+                record.experimentRoundId = string.Empty;
+                record.experimentPresentationOverride = "UseUserSettings";
+                record.experimentBoundaryOverride = "UseConfiguredPolicy";
+                return;
+            }
+
+            record.experimentCondition =
+                experimentConditionProvider.ConditionName;
+            record.experimentRoundActive =
+                experimentConditionProvider.RoundActive;
+            record.experimentRoundSequence =
+                experimentConditionProvider.RoundSequence;
+            record.experimentRoundId =
+                experimentConditionProvider.RoundId ?? string.Empty;
+            record.experimentPresentationOverride =
+                experimentConditionProvider.PresentationOverrideName;
+            record.experimentBoundaryOverride =
+                experimentConditionProvider.BoundaryOverrideName;
+            record.experimentBoundarySuppressionRequested =
+                experimentConditionProvider.RequestedBoundarySuppression;
+            record.experimentBoundarySuppressed =
+                experimentConditionProvider.ActualBoundarySuppressed;
         }
 
         private void OpenWriter()

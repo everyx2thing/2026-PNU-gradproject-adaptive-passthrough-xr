@@ -209,11 +209,11 @@ namespace TeamVR.AdaptivePassthrough.Tests
                 MonoBehaviour personalizationPanel = null;
                 MonoBehaviour spatialProvider = null;
                 MonoBehaviour trackingQuality = null;
-                MonoBehaviour panelPlacement = null;
                 MonoBehaviour alertFeedback = null;
                 int legacySnapshotCount = 0;
                 int passthroughLayerCount = 0;
                 int controllerLaserCount = 0;
+                int panelPlacementCount = 0;
                 foreach (GameObject root in scene.GetRootGameObjects())
                 {
                     MonoBehaviour[] behaviours =
@@ -259,7 +259,7 @@ namespace TeamVR.AdaptivePassthrough.Tests
                                 trackingQuality = behaviour;
                                 break;
                             case "WorldSpacePanelPlacementController":
-                                panelPlacement = behaviour;
+                                panelPlacementCount++;
                                 break;
                             case "SafetyAlertFeedbackController":
                                 alertFeedback = behaviour;
@@ -325,7 +325,7 @@ namespace TeamVR.AdaptivePassthrough.Tests
                 Assert.That(experimentLogger, Is.Not.Null);
                 Assert.That(spatialProvider, Is.Not.Null);
                 Assert.That(trackingQuality, Is.Not.Null);
-                Assert.That(panelPlacement, Is.Not.Null);
+                Assert.That(panelPlacementCount, Is.GreaterThanOrEqualTo(3));
                 Assert.That(alertFeedback, Is.Not.Null);
                 Assert.That(
                     AssetDatabase.LoadAssetAtPath<Shader>(
@@ -341,7 +341,20 @@ namespace TeamVR.AdaptivePassthrough.Tests
                 Assert.That(
                     labelRoot.localScale.y,
                     Is.EqualTo(0.00075f).Within(0.000001f));
-                Assert.That(panelPlacement.transform, Is.SameAs(labelRoot));
+                bool diagnosticPlacementFound = false;
+                MonoBehaviour[] labelBehaviours =
+                    labelRoot.GetComponents<MonoBehaviour>();
+                for (int i = 0; i < labelBehaviours.Length; i++)
+                {
+                    if (labelBehaviours[i] != null
+                        && labelBehaviours[i].GetType().Name
+                            == "WorldSpacePanelPlacementController")
+                    {
+                        diagnosticPlacementFound = true;
+                        break;
+                    }
+                }
+                Assert.That(diagnosticPlacementFound, Is.True);
                 CanvasGroup panelCanvasGroup = personalizationPanel
                     .transform.parent.GetComponent<CanvasGroup>();
                 Assert.That(panelCanvasGroup, Is.Not.Null);

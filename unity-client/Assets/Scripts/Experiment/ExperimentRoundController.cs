@@ -4,53 +4,152 @@ using UnityEngine;
 
 namespace TeamVR.Experiment
 {
-    // Orchestrates one round: applies the blind passthrough condition, runs
-    // the fixed ball schedule, and reports back when the round is over
-    // (balls exhausted, or the 5 minute cap is hit).
     [DefaultExecutionOrder(730)]
     [DisallowMultipleComponent]
-    public sealed class ExperimentRoundController : MonoBehaviour
+    public sealed class ExperimentRoundController :
+        MonoBehaviour,
+        IExperimentConditionProvider,
+        TeamVR.AdaptivePassthrough.IExperimentRuntimeContextProvider
     {
         [SerializeField]
         private PassthroughConditionSwitcher conditionSwitcher;
-        [SerializeField] private ExperimentBallSpawner ballSpawner;
+        [SerializeField]
+        private ExperimentBallSpawner ballSpawner;
         [SerializeField, Min(10f)] private float maxRoundSeconds = 300f;
+        [SerializeField, Min(0.1f)]
+        private float guardianReadyTimeoutSeconds = 1f;
 
         private Coroutine timeoutCoroutine;
+        private Coroutine startCoroutine;
         private bool roundActive;
 
         public bool RoundActive => roundActive;
+        public bool Transitioning => startCoroutine != null;
+        public ExperimentCondition CurrentCondition { get; private set; } =
+            ExperimentCondition.Adaptive;
+        public long RoundSequence { get; private set; }
+        public string RoundId { get; private set; } = string.Empty;
+        public string LastStartError { get; private set; } = string.Empty;
+        public string ConditionName => CurrentCondition.ToString();
+        public string PresentationOverrideName =>
+            PresentationOverride.ToString();
+        public string BoundaryOverrideName => BoundaryOverride.ToString();
+
+        public ExperimentPresentationOverride PresentationOverride =>
+            conditionSwitcher == null
+                ? ExperimentPresentationOverride.UseUserSettings
+                : conditionSwitcher.PresentationOverride;
+
+        public BoundaryVisibilityOverride BoundaryOverride =>
+            conditionSwitcher == null
+                ? BoundaryVisibilityOverride.UseConfiguredPolicy
+                : conditionSwitcher.BoundaryOverride;
+
+        public bool RequestedBoundarySuppression =>
+            conditionSwitcher != null
+            && conditionSwitcher.RequestedBoundarySuppression;
+
+        public bool ActualBoundarySuppressed =>
+            conditionSwitcher != null
+            && conditionSwitcher.ActualBoundarySuppressed;
 
         public event Action<ExperimentCondition> RoundStarted;
         public event Action RoundEnded;
+        public event Action<string> RoundStartFailed;
 
         private void Awake()
         {
             ResolveReferences();
         }
 
-        public void BeginRound(
+        private void OnDisable()
+        {
+            StopRuntimeState(false);
+        }
+
+        public void Configure(
+            PassthroughConditionSwitcher switcher,
+            ExperimentBallSpawner spawner)
+        {
+            conditionSwitcher = switcher;
+            ballSpawner = spawner;
+        }
+
+        public bool BeginRound(
             ExperimentCondition condition,
             ProjectileScheduleSet scheduleSet)
         {
-            if (roundActive)
+            if (roundActive || startCoroutine != null)
             {
-                return;
+                return false;
             }
 
             ResolveReferences();
-            if (ballSpawner == null || scheduleSet == null)
+            if (!ValidateStart(scheduleSet, out string error))
             {
-                Debug.LogWarning(
-                    "[ExperimentRoundController] Missing ball spawner or "
-                    + "schedule set - round not started.");
-                return;
+                FailStart(error);
+                return false;
             }
 
+            LastStartError = string.Empty;
+            startCoroutine = StartCoroutine(
+                BeginRoundWhenReady(condition, scheduleSet));
+            return true;
+        }
+
+        public void EndRound()
+        {
+            if (ballSpawner != null)
+            {
+                ballSpawner.StopRound();
+            }
+
+            HandleRoundComplete();
+        }
+
+        private IEnumerator BeginRoundWhenReady(
+            ExperimentCondition condition,
+            ProjectileScheduleSet scheduleSet)
+        {
+            if (!conditionSwitcher.ApplyCondition(condition, out string error))
+            {
+                startCoroutine = null;
+                FailStart(error);
+                yield break;
+            }
+
+            if (condition == ExperimentCondition.GuardianDefault)
+            {
+                float deadline = Time.realtimeSinceStartup
+                    + guardianReadyTimeoutSeconds;
+                while (!conditionSwitcher.IsConditionReady()
+                    && Time.realtimeSinceStartup < deadline)
+                {
+                    yield return null;
+                }
+
+                if (!conditionSwitcher.IsConditionReady())
+                {
+                    string readinessError =
+                        conditionSwitcher.GetReadinessFailure();
+                    conditionSwitcher.RestoreConfiguredBehavior();
+                    startCoroutine = null;
+                    FailStart(readinessError);
+                    yield break;
+                }
+            }
+
+            CurrentCondition = condition;
+            RoundSequence++;
+            RoundId = string.Format(
+                "round-{0:D3}-{1}",
+                RoundSequence,
+                condition);
             roundActive = true;
-            conditionSwitcher?.ApplyCondition(condition);
+            startCoroutine = null;
             ballSpawner.StartRound(scheduleSet, HandleRoundComplete);
-            timeoutCoroutine = StartCoroutine(RoundTimeout(maxRoundSeconds));
+            timeoutCoroutine = StartCoroutine(
+                RoundTimeout(maxRoundSeconds));
             RoundStarted?.Invoke(condition);
         }
 
@@ -78,7 +177,86 @@ namespace TeamVR.Experiment
                 timeoutCoroutine = null;
             }
 
+            conditionSwitcher?.RestoreConfiguredBehavior();
             RoundEnded?.Invoke();
+        }
+
+        private bool ValidateStart(
+            ProjectileScheduleSet scheduleSet,
+            out string error)
+        {
+            if (conditionSwitcher == null)
+            {
+                error = "Passthrough condition switcher is missing.";
+                return false;
+            }
+
+            if (!conditionSwitcher.ValidateReferences(out error))
+            {
+                return false;
+            }
+
+            if (ballSpawner == null)
+            {
+                error = "Ball spawner is missing.";
+                return false;
+            }
+
+            if (scheduleSet == null || scheduleSet.Entries.Count == 0)
+            {
+                error = "Projectile schedule is missing or empty.";
+                return false;
+            }
+
+            ExperimentGameRoot gameRoot =
+                GetComponentInParent<ExperimentGameRoot>();
+            if (gameRoot == null)
+            {
+                error = "Experiment round is not inside ExperimentGameRoot.";
+                return false;
+            }
+
+            if (!gameRoot.ValidateConfiguration(out error))
+            {
+                return false;
+            }
+
+            return ballSpawner.ValidateConfiguration(out error);
+        }
+
+        private void FailStart(string error)
+        {
+            LastStartError = string.IsNullOrWhiteSpace(error)
+                ? "Round could not start."
+                : error;
+            Debug.LogError(
+                "[ExperimentRoundController] " + LastStartError,
+                this);
+            RoundStartFailed?.Invoke(LastStartError);
+        }
+
+        private void StopRuntimeState(bool notify)
+        {
+            if (startCoroutine != null)
+            {
+                StopCoroutine(startCoroutine);
+                startCoroutine = null;
+            }
+
+            if (timeoutCoroutine != null)
+            {
+                StopCoroutine(timeoutCoroutine);
+                timeoutCoroutine = null;
+            }
+
+            ballSpawner?.StopRound();
+            bool wasActive = roundActive;
+            roundActive = false;
+            conditionSwitcher?.RestoreConfiguredBehavior();
+            if (notify && wasActive)
+            {
+                RoundEnded?.Invoke();
+            }
         }
 
         private void ResolveReferences()

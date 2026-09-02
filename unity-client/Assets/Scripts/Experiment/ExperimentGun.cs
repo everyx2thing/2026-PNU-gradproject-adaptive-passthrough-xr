@@ -20,6 +20,7 @@ namespace TeamVR.Experiment
     public sealed class ExperimentGun : MonoBehaviour
     {
         [SerializeField] private OVRCameraRig cameraRig;
+        [SerializeField] private ExperimentRoundController roundController;
         [SerializeField] private bool attachToRightHand = true;
 
         [Header("Muzzle / Hold Pose (tune after first in-headset check)")]
@@ -41,7 +42,38 @@ namespace TeamVR.Experiment
         private SpriteRenderer reticleRenderer;
         private LineRenderer tracer;
         private ParticleSystem muzzleFlashInstance;
+        private Material tracerMaterial;
         private float tracerHideAtTime = -1f;
+
+        public bool CanFire => roundController != null
+            && roundController.RoundActive;
+
+        public void Configure(
+            OVRCameraRig rig,
+            ExperimentRoundController controller)
+        {
+            cameraRig = rig;
+            roundController = controller;
+        }
+
+        public bool ValidateConfiguration(out string error)
+        {
+            ResolveReferences();
+            if (cameraRig == null || roundController == null)
+            {
+                error = "Experiment gun camera rig or round controller is missing.";
+                return false;
+            }
+
+            if (reticleSprite == null || muzzleFlashPrefab == null)
+            {
+                error = "Experiment gun visual references are incomplete.";
+                return false;
+            }
+
+            error = string.Empty;
+            return true;
+        }
 
         private void Awake()
         {
@@ -57,13 +89,25 @@ namespace TeamVR.Experiment
             {
                 Destroy(reticleTransform.gameObject);
             }
+
+            if (tracerMaterial != null)
+            {
+                if (Application.isPlaying)
+                {
+                    Destroy(tracerMaterial);
+                }
+                else
+                {
+                    DestroyImmediate(tracerMaterial);
+                }
+            }
         }
 
         private void Update()
         {
             ResolveReferences();
             UpdateHold();
-            bool isHeld = heldByHand != null;
+            bool isHeld = heldByHand != null && CanFire;
 
             Vector3 muzzleWorldPos = transform.TransformPoint(muzzleLocalPosition);
             Vector3 muzzleWorldDir = transform.forward;
@@ -203,7 +247,7 @@ namespace TeamVR.Experiment
                 lineShader = Shader.Find("Sprites/Default");
             }
 
-            Material tracerMaterial = new Material(lineShader);
+            tracerMaterial = new Material(lineShader);
             tracer.material = tracerMaterial;
             tracer.startColor = new Color(1f, 0.95f, 0.6f, 1f);
             tracer.endColor = new Color(1f, 0.8f, 0.3f, 0f);
@@ -226,6 +270,12 @@ namespace TeamVR.Experiment
             if (cameraRig == null)
             {
                 cameraRig = FindAnyObjectByType<OVRCameraRig>();
+            }
+
+            if (roundController == null)
+            {
+                roundController =
+                    FindAnyObjectByType<ExperimentRoundController>();
             }
         }
     }

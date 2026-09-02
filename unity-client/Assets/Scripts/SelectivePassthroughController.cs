@@ -80,6 +80,9 @@ public sealed class SelectivePassthroughController :
         SafetyFeedbackMode.Passthrough;
     [SerializeField] private SafetyAlertFeedbackController alertFeedback;
 
+    private ExperimentPresentationOverride experimentPresentationOverride =
+        ExperimentPresentationOverride.UseUserSettings;
+
     [Header("Passthrough Rendering")]
     [SerializeField] private OVRPassthroughLayer passthroughLayer;
     [SerializeField] private Shader windowShader;
@@ -149,9 +152,12 @@ public sealed class SelectivePassthroughController :
 
     public int ActivePersonWindowCount { get; private set; }
     public bool DynamicPassthroughRendered =>
+        !IsExperimentOutputSuppressed
+        &&
         feedbackMode == SafetyFeedbackMode.Passthrough
         && ActivePersonWindowCount > 0;
-    public bool DynamicFallbackActive => stereoFallbackDynamicRequested;
+    public bool DynamicFallbackActive =>
+        !IsExperimentOutputSuppressed && stereoFallbackDynamicRequested;
     public int LatestQualifiedPersonCount { get; private set; }
     public int LatestGeometryReadyPersonCount { get; private set; }
     public PersonPresentationGeometrySource LatestPersonGeometrySource
@@ -178,10 +184,19 @@ public sealed class SelectivePassthroughController :
         get { return dynamicFeatureEnabled; }
     }
     public SafetyFeedbackMode FeedbackMode => feedbackMode;
+    public ExperimentPresentationOverride ExperimentPresentationOverride =>
+        experimentPresentationOverride;
+    public bool IsExperimentOutputSuppressed =>
+        experimentPresentationOverride
+            == ExperimentPresentationOverride.SuppressAll;
     public bool PassthroughOutputVisible =>
+        !IsExperimentOutputSuppressed
+        &&
         feedbackMode == SafetyFeedbackMode.Passthrough
         && AnyPassthroughWindowVisible;
     public bool AlertFeedbackActive =>
+        !IsExperimentOutputSuppressed
+        &&
         AnyWindowVisible
         && (feedbackMode == SafetyFeedbackMode.RedBorderAndHaptics
             || stereoFallbackStaticRequested
@@ -192,9 +207,10 @@ public sealed class SelectivePassthroughController :
     {
         get
         {
-            return AnyPassthroughWindowVisible
+            return !IsExperimentOutputSuppressed
+                && (AnyPassthroughWindowVisible
                 || stereoFallbackStaticRequested
-                || stereoFallbackDynamicRequested;
+                || stereoFallbackDynamicRequested);
         }
     }
 
@@ -400,6 +416,25 @@ public sealed class SelectivePassthroughController :
             feedbackMode == SafetyFeedbackMode.Passthrough
                 ? SafetyFeedbackMode.RedBorderAndHaptics
                 : SafetyFeedbackMode.Passthrough);
+    }
+
+    public void SetExperimentPresentationOverride(
+        ExperimentPresentationOverride value)
+    {
+        experimentPresentationOverride = Enum.IsDefined(
+            typeof(ExperimentPresentationOverride),
+            value)
+            ? value
+            : ExperimentPresentationOverride.UseUserSettings;
+
+        if (IsExperimentOutputSuppressed)
+        {
+            SuppressPassthroughWindowRenderers();
+            SetLayerVisible(false);
+            alertFeedback?.SetAlertActive(false, 0f);
+        }
+
+        PublishVisibilityState();
     }
 
     private void UpdatePersonWindows()
@@ -676,7 +711,8 @@ public sealed class SelectivePassthroughController :
         out float opacity)
     {
         PersonWindowSnapshot snapshot;
-        if (feedbackMode == SafetyFeedbackMode.Passthrough
+        if (!IsExperimentOutputSuppressed
+            && feedbackMode == SafetyFeedbackMode.Passthrough
             && personWindowTracker != null
             && personWindowTracker.TryGetSnapshot(
                 trackId,
@@ -1659,6 +1695,14 @@ public sealed class SelectivePassthroughController :
 
     private void ApplyFeedbackOutput()
     {
+        if (IsExperimentOutputSuppressed)
+        {
+            SuppressPassthroughWindowRenderers();
+            SetLayerVisible(false);
+            alertFeedback?.SetAlertActive(false, 0f);
+            return;
+        }
+
         bool feedbackRequested = AnyWindowVisible;
         if (feedbackMode == SafetyFeedbackMode.RedBorderAndHaptics)
         {
@@ -1718,10 +1762,11 @@ public sealed class SelectivePassthroughController :
     public PassthroughPresentationSnapshot GetPresentationSnapshot()
     {
         double now = Time.realtimeSinceStartupAsDouble;
-        bool staticVisible = StaticWindowVisible
-            || stereoFallbackStaticRequested;
-        bool dynamicVisible = ActivePersonWindowCount > 0
-            || stereoFallbackDynamicRequested;
+        bool staticVisible = !IsExperimentOutputSuppressed
+            && (StaticWindowVisible || stereoFallbackStaticRequested);
+        bool dynamicVisible = !IsExperimentOutputSuppressed
+            && (ActivePersonWindowCount > 0
+                || stereoFallbackDynamicRequested);
         return new PassthroughPresentationSnapshot(
             AnyWindowVisible,
             staticVisible,
@@ -1755,6 +1800,13 @@ public sealed class SelectivePassthroughController :
             || stereoFallbackStaticRequested;
         bool dynamicVisible = ActivePersonWindowCount > 0
             || stereoFallbackDynamicRequested;
+        if (IsExperimentOutputSuppressed)
+        {
+            return staticVisible || dynamicVisible
+                ? "experiment-suppressed"
+                : "none";
+        }
+
         if (staticVisible && dynamicVisible)
         {
             return "static+dynamic";

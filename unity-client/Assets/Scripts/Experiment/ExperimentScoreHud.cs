@@ -22,6 +22,19 @@ namespace TeamVR.Experiment
 
         private double nextRefreshAt;
 
+        public bool ValidateConfiguration(out string error)
+        {
+            ResolveReferences();
+            if (scoreSystem == null || scoreText == null)
+            {
+                error = "Experiment score HUD references are incomplete.";
+                return false;
+            }
+
+            error = string.Empty;
+            return true;
+        }
+
         private void Awake()
         {
             ResolveReferences();

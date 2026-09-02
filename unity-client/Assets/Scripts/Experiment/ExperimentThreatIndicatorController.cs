@@ -31,6 +31,20 @@ namespace TeamVR.Experiment
         private readonly List<Image> arrowPool = new List<Image>();
         private readonly List<GameObject> visibleBalls = new List<GameObject>();
 
+        public bool ValidateConfiguration(out string error)
+        {
+            ResolveReferences();
+            if (cameraRig == null || cameraRig.centerEyeAnchor == null
+                || eyeCamera == null || ballSpawner == null)
+            {
+                error = "Threat indicator camera or ball spawner is missing.";
+                return false;
+            }
+
+            error = string.Empty;
+            return true;
+        }
+
         private void Awake()
         {
             ResolveReferences();
@@ -236,6 +250,26 @@ namespace TeamVR.Experiment
                 new Rect(0f, 0f, size, size),
                 new Vector2(0.5f, 0.5f),
                 size);
+        }
+
+        private void OnDestroy()
+        {
+            if (arrowSprite == null)
+            {
+                return;
+            }
+
+            Texture2D texture = arrowSprite.texture;
+            if (Application.isPlaying)
+            {
+                Destroy(arrowSprite);
+                Destroy(texture);
+            }
+            else
+            {
+                DestroyImmediate(arrowSprite);
+                DestroyImmediate(texture);
+            }
         }
 
         private void ResolveReferences()

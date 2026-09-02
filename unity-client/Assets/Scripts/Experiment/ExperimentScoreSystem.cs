@@ -24,6 +24,28 @@ namespace TeamVR.Experiment
 
         public event Action<int> ScoreChanged;
 
+        public bool ValidateConfiguration(out string error)
+        {
+            ResolveReferences();
+            if (roundController == null || audioSource == null)
+            {
+                error = "Experiment score controller or AudioSource is missing.";
+                return false;
+            }
+
+            if (targetHitRewardClip == null
+                || bombShotExplosionClip == null
+                || targetBodyPenaltyClip == null
+                || bombBodyPenaltyClip == null)
+            {
+                error = "All experiment score AudioClips must be assigned.";
+                return false;
+            }
+
+            error = string.Empty;
+            return true;
+        }
+
         private void Awake()
         {
             ResolveReferences();
@@ -54,14 +76,16 @@ namespace TeamVR.Experiment
         // Ball was hit with the gun's hitscan raycast.
         public void RegisterShotHit(BallType ballType)
         {
-            if (ballType == BallType.OptionalHit)
+            bool optionalTarget = ballType == BallType.OptionalHit;
+            SetScore(ExperimentScoreRules.ApplyShotHit(
+                Score,
+                optionalTarget));
+            if (optionalTarget)
             {
-                SetScore(Score + 100);
                 PlayClip(targetHitRewardClip);
             }
             else
             {
-                SetScore(Score / 2);
                 PlayClip(bombShotExplosionClip);
             }
         }
@@ -69,14 +93,16 @@ namespace TeamVR.Experiment
         // Ball touched the participant's body without being shot first.
         public void RegisterBodyHit(BallType ballType)
         {
-            if (ballType == BallType.OptionalHit)
+            bool optionalTarget = ballType == BallType.OptionalHit;
+            SetScore(ExperimentScoreRules.ApplyBodyHit(
+                Score,
+                optionalTarget));
+            if (optionalTarget)
             {
-                SetScore(Score - 100);
                 PlayClip(targetBodyPenaltyClip);
             }
             else
             {
-                SetScore(0);
                 PlayClip(bombBodyPenaltyClip);
             }
         }

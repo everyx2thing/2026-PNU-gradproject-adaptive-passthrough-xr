@@ -14,6 +14,11 @@ public sealed class BoundaryVisibilityController : MonoBehaviour
     [SerializeField] private OVRPassthroughLayer passthroughLayer;
 
     private bool ownsContextualSuppression;
+    private BoundaryVisibilityOverride experimentOverride =
+        BoundaryVisibilityOverride.UseConfiguredPolicy;
+    private bool configuredRequestBeforeExperiment;
+    private bool configuredBoundarylessBeforeExperiment;
+    private bool waitingForExperimentSuppressionRelease;
 
     public bool PreferFullBoundaryless
     {
@@ -31,6 +36,17 @@ public sealed class BoundaryVisibilityController : MonoBehaviour
     {
         get { return ownsContextualSuppression; }
     }
+
+    public BoundaryVisibilityOverride ExperimentOverride =>
+        experimentOverride;
+
+    public bool RequestedBoundarySuppression =>
+        experimentOverride == BoundaryVisibilityOverride.ForceSuppressed
+        || (ovrManager != null
+            && ovrManager.shouldBoundaryVisibilityBeSuppressed);
+
+    public bool ActualBoundarySuppressed =>
+        ovrManager != null && ovrManager.isBoundaryVisibilitySuppressed;
 
     private void Awake()
     {
@@ -73,11 +89,83 @@ public sealed class BoundaryVisibilityController : MonoBehaviour
         ResolveReferences();
     }
 
+    public void SetExperimentOverride(BoundaryVisibilityOverride value)
+    {
+        BoundaryVisibilityOverride next = System.Enum.IsDefined(
+            typeof(BoundaryVisibilityOverride),
+            value)
+            ? value
+            : BoundaryVisibilityOverride.UseConfiguredPolicy;
+
+        bool enteringExperiment =
+            experimentOverride
+                == BoundaryVisibilityOverride.UseConfiguredPolicy
+            && next != BoundaryVisibilityOverride.UseConfiguredPolicy;
+        bool leavingExperiment =
+            experimentOverride
+                != BoundaryVisibilityOverride.UseConfiguredPolicy
+            && next == BoundaryVisibilityOverride.UseConfiguredPolicy;
+
+        ResolveReferences();
+        if (enteringExperiment && ovrManager != null)
+        {
+            configuredRequestBeforeExperiment =
+                ovrManager.shouldBoundaryVisibilityBeSuppressed;
+            configuredBoundarylessBeforeExperiment =
+                FullBoundarylessObserved
+                || (ovrManager.isBoundaryVisibilitySuppressed
+                    && !ownsContextualSuppression);
+        }
+
+        experimentOverride = next;
+        ownsContextualSuppression = false;
+        if (leavingExperiment && ovrManager != null)
+        {
+            FullBoundarylessObserved =
+                configuredBoundarylessBeforeExperiment;
+            ovrManager.shouldBoundaryVisibilityBeSuppressed =
+                configuredRequestBeforeExperiment;
+            waitingForExperimentSuppressionRelease =
+                !configuredBoundarylessBeforeExperiment
+                && !configuredRequestBeforeExperiment
+                && ovrManager.isBoundaryVisibilitySuppressed;
+        }
+
+        SynchronizeBoundaryRequest();
+    }
+
     private void SynchronizeBoundaryRequest()
     {
         if (ovrManager == null)
         {
             return;
+        }
+
+        if (experimentOverride == BoundaryVisibilityOverride.ForceVisible)
+        {
+            ownsContextualSuppression = false;
+            ovrManager.shouldBoundaryVisibilityBeSuppressed = false;
+            return;
+        }
+
+        if (experimentOverride == BoundaryVisibilityOverride.ForceSuppressed)
+        {
+            ownsContextualSuppression = false;
+            ovrManager.shouldBoundaryVisibilityBeSuppressed = true;
+            return;
+        }
+
+        if (waitingForExperimentSuppressionRelease)
+        {
+            ovrManager.shouldBoundaryVisibilityBeSuppressed = false;
+            if (!ovrManager.isBoundaryVisibilitySuppressed)
+            {
+                waitingForExperimentSuppressionRelease = false;
+            }
+            else
+            {
+                return;
+            }
         }
 
         bool systemSuppressed =

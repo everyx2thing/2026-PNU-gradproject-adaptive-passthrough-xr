@@ -59,6 +59,8 @@ namespace TeamVR.Experiment
         [SerializeField] private GameObject menuRoot;
         [Tooltip("The \"NEXT PARTICIPANT (RESET)\" button.")]
         [SerializeField] private Button resetButton;
+        [Tooltip("Operator-only setup/Guardian errors. Never shown as a condition label.")]
+        [SerializeField] private TMP_Text operatorStatusText;
 
         [Header("Style")]
         [SerializeField] private Color idleColor =
@@ -67,6 +69,55 @@ namespace TeamVR.Experiment
             new Color(0.10f, 0.42f, 0.24f, 0.98f);
         [SerializeField] private Color resetColor =
             new Color(0.50f, 0.18f, 0.18f, 0.98f);
+
+        private ExperimentRoundSlot pendingSlot;
+        private CanvasGroup menuCanvasGroup;
+
+        public void Configure(
+            ExperimentRoundController controller,
+            GameObject root,
+            Button reset,
+            TMP_Text status,
+            ExperimentRoundSlot[] roundSlots)
+        {
+            roundController = controller;
+            menuRoot = root;
+            resetButton = reset;
+            operatorStatusText = status;
+            slots = roundSlots ?? Array.Empty<ExperimentRoundSlot>();
+        }
+
+        public bool ValidateConfiguration(out string error)
+        {
+            ResolveReferences();
+            if (roundController == null || menuRoot == null
+                || resetButton == null || operatorStatusText == null)
+            {
+                error = "Experiment menu controller references are incomplete.";
+                return false;
+            }
+
+            if (slots == null || slots.Length != 3)
+            {
+                error = "Exactly three experiment round slots are required.";
+                return false;
+            }
+
+            for (int i = 0; i < slots.Length; i++)
+            {
+                ExperimentRoundSlot slot = slots[i];
+                if (slot == null || slot.scheduleSet == null
+                    || slot.button == null || slot.buttonImage == null
+                    || slot.experiencedTag == null)
+                {
+                    error = "Every round slot needs schedule and UI references.";
+                    return false;
+                }
+            }
+
+            error = string.Empty;
+            return true;
+        }
 
         private void Awake()
         {
@@ -81,6 +132,8 @@ namespace TeamVR.Experiment
             {
                 resetButton.image.color = resetColor;
             }
+
+            SetOperatorStatus(string.Empty);
         }
 
         private void OnEnable()
@@ -90,6 +143,7 @@ namespace TeamVR.Experiment
             {
                 roundController.RoundStarted += HandleRoundStarted;
                 roundController.RoundEnded += HandleRoundEnded;
+                roundController.RoundStartFailed += HandleRoundStartFailed;
             }
         }
 
@@ -99,37 +153,53 @@ namespace TeamVR.Experiment
             {
                 roundController.RoundStarted -= HandleRoundStarted;
                 roundController.RoundEnded -= HandleRoundEnded;
+                roundController.RoundStartFailed -= HandleRoundStartFailed;
             }
         }
 
         private void HandleRoundStarted(ExperimentCondition condition)
         {
-            if (menuRoot != null)
+            if (pendingSlot != null)
             {
-                menuRoot.SetActive(false);
+                pendingSlot.experienced = true;
+                RefreshSlotVisual(pendingSlot);
+                pendingSlot = null;
             }
+
+            SetOperatorStatus(string.Empty);
+            SetMenuVisible(false);
         }
 
         private void HandleRoundEnded()
         {
-            if (menuRoot != null)
-            {
-                menuRoot.SetActive(true);
-            }
+            pendingSlot = null;
+            SetMenuVisible(true);
+        }
+
+        private void HandleRoundStartFailed(string error)
+        {
+            pendingSlot = null;
+            SetOperatorStatus(error);
+            SetMenuVisible(true);
         }
 
         private void StartRound(ExperimentRoundSlot slot)
         {
             if (roundController == null
                 || roundController.RoundActive
+                || roundController.Transitioning
                 || slot == null)
             {
                 return;
             }
 
-            slot.experienced = true;
-            RefreshSlotVisual(slot);
-            roundController.BeginRound(slot.condition, slot.scheduleSet);
+            pendingSlot = slot;
+            SetOperatorStatus("Checking experiment condition...");
+            if (!roundController.BeginRound(slot.condition, slot.scheduleSet))
+            {
+                pendingSlot = null;
+                SetOperatorStatus(roundController.LastStartError);
+            }
         }
 
         private void ResetExperiencedState()
@@ -183,6 +253,35 @@ namespace TeamVR.Experiment
             {
                 roundController =
                     FindAnyObjectByType<ExperimentRoundController>();
+            }
+        }
+
+        private void SetMenuVisible(bool visible)
+        {
+            if (menuRoot == null)
+            {
+                return;
+            }
+
+            if (menuCanvasGroup == null)
+            {
+                menuCanvasGroup = menuRoot.GetComponent<CanvasGroup>();
+                if (menuCanvasGroup == null)
+                {
+                    menuCanvasGroup = menuRoot.AddComponent<CanvasGroup>();
+                }
+            }
+
+            menuCanvasGroup.alpha = visible ? 1f : 0f;
+            menuCanvasGroup.interactable = visible;
+            menuCanvasGroup.blocksRaycasts = visible;
+        }
+
+        private void SetOperatorStatus(string message)
+        {
+            if (operatorStatusText != null)
+            {
+                operatorStatusText.text = message ?? string.Empty;
             }
         }
     }
