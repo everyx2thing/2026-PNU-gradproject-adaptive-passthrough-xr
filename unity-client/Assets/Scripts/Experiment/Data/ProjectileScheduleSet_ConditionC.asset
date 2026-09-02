@@ -1,0 +1,519 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 88ebeba88fbb59e4bbafda1024377ed4, type: 3}
+  m_Name: ProjectileScheduleSet_ConditionC
+  m_EditorClassIdentifier: Assembly-CSharp::TeamVR.Experiment.ProjectileScheduleSet
+  entries:
+  - spawnTimeSeconds: 5
+    direction: 6
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: 0.05
+    targetHeightOffsetMeters: 0
+    speedMetersPerSecond: 1.3
+    ballType: 1
+  - spawnTimeSeconds: 10
+    direction: 4
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: -0.05
+    targetHeightOffsetMeters: -0.2
+    speedMetersPerSecond: 1.4
+    ballType: 0
+  - spawnTimeSeconds: 15
+    direction: 2
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: 0.05
+    targetHeightOffsetMeters: -0.2
+    speedMetersPerSecond: 1.5
+    ballType: 0
+  - spawnTimeSeconds: 20
+    direction: 0
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: -0.05
+    targetHeightOffsetMeters: -0.2
+    speedMetersPerSecond: 1.6
+    ballType: 0
+  - spawnTimeSeconds: 25
+    direction: 7
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: 0.05
+    targetHeightOffsetMeters: 0
+    speedMetersPerSecond: 1.7
+    ballType: 1
+  - spawnTimeSeconds: 30
+    direction: 5
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: -0.05
+    targetHeightOffsetMeters: 0
+    speedMetersPerSecond: 1.3
+    ballType: 1
+  - spawnTimeSeconds: 35
+    direction: 3
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: 0.05
+    targetHeightOffsetMeters: 0
+    speedMetersPerSecond: 1.4
+    ballType: 1
+  - spawnTimeSeconds: 40
+    direction: 1
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: -0.05
+    targetHeightOffsetMeters: 0
+    speedMetersPerSecond: 1.5
+    ballType: 1
+  - spawnTimeSeconds: 45
+    direction: 8
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: 0.05
+    targetHeightOffsetMeters: 0
+    speedMetersPerSecond: 1.6
+    ballType: 1
+  - spawnTimeSeconds: 50
+    direction: 6
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: -0.05
+    targetHeightOffsetMeters: 0
+    speedMetersPerSecond: 1.7
+    ballType: 1
+  - spawnTimeSeconds: 55
+    direction: 4
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: 0.05
+    targetHeightOffsetMeters: 0
+    speedMetersPerSecond: 1.3
+    ballType: 1
+  - spawnTimeSeconds: 60
+    direction: 2
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: -0.05
+    targetHeightOffsetMeters: -0.2
+    speedMetersPerSecond: 1.4
+    ballType: 0
+  - spawnTimeSeconds: 65
+    direction: 0
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: 0.05
+    targetHeightOffsetMeters: -0.2
+    speedMetersPerSecond: 1.5
+    ballType: 0
+  - spawnTimeSeconds: 70
+    direction: 7
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: -0.05
+    targetHeightOffsetMeters: -0.2
+    speedMetersPerSecond: 1.6
+    ballType: 0
+  - spawnTimeSeconds: 75
+    direction: 5
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: 0.05
+    targetHeightOffsetMeters: 0
+    speedMetersPerSecond: 1.7
+    ballType: 1
+  - spawnTimeSeconds: 80
+    direction: 3
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: -0.05
+    targetHeightOffsetMeters: 0
+    speedMetersPerSecond: 1.3
+    ballType: 1
+  - spawnTimeSeconds: 85
+    direction: 1
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: 0.05
+    targetHeightOffsetMeters: 0
+    speedMetersPerSecond: 1.4
+    ballType: 1
+  - spawnTimeSeconds: 90
+    direction: 8
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: -0.05
+    targetHeightOffsetMeters: 0
+    speedMetersPerSecond: 1.5
+    ballType: 1
+  - spawnTimeSeconds: 90
+    direction: 6
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: 0.05
+    targetHeightOffsetMeters: 0
+    speedMetersPerSecond: 1.6
+    ballType: 1
+  - spawnTimeSeconds: 95
+    direction: 4
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: -0.05
+    targetHeightOffsetMeters: 0
+    speedMetersPerSecond: 1.7
+    ballType: 1
+  - spawnTimeSeconds: 100
+    direction: 2
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: 0.05
+    targetHeightOffsetMeters: 0
+    speedMetersPerSecond: 1.3
+    ballType: 1
+  - spawnTimeSeconds: 105
+    direction: 0
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: -0.05
+    targetHeightOffsetMeters: -0.2
+    speedMetersPerSecond: 1.4
+    ballType: 0
+  - spawnTimeSeconds: 110
+    direction: 7
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: 0.05
+    targetHeightOffsetMeters: -0.2
+    speedMetersPerSecond: 1.5
+    ballType: 0
+  - spawnTimeSeconds: 115
+    direction: 5
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: -0.05
+    targetHeightOffsetMeters: -0.2
+    speedMetersPerSecond: 1.6
+    ballType: 0
+  - spawnTimeSeconds: 120
+    direction: 3
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: 0.05
+    targetHeightOffsetMeters: 0
+    speedMetersPerSecond: 1.7
+    ballType: 1
+  - spawnTimeSeconds: 120
+    direction: 1
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: -0.05
+    targetHeightOffsetMeters: 0
+    speedMetersPerSecond: 1.3
+    ballType: 1
+  - spawnTimeSeconds: 125
+    direction: 8
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: 0.05
+    targetHeightOffsetMeters: 0
+    speedMetersPerSecond: 1.4
+    ballType: 1
+  - spawnTimeSeconds: 130
+    direction: 6
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: -0.05
+    targetHeightOffsetMeters: 0
+    speedMetersPerSecond: 1.5
+    ballType: 1
+  - spawnTimeSeconds: 135
+    direction: 4
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: 0.05
+    targetHeightOffsetMeters: 0
+    speedMetersPerSecond: 1.6
+    ballType: 1
+  - spawnTimeSeconds: 140
+    direction: 2
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: -0.05
+    targetHeightOffsetMeters: 0
+    speedMetersPerSecond: 1.7
+    ballType: 1
+  - spawnTimeSeconds: 145
+    direction: 0
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: 0.05
+    targetHeightOffsetMeters: 0
+    speedMetersPerSecond: 1.3
+    ballType: 1
+  - spawnTimeSeconds: 150
+    direction: 7
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: -0.05
+    targetHeightOffsetMeters: -0.2
+    speedMetersPerSecond: 1.4
+    ballType: 0
+  - spawnTimeSeconds: 150
+    direction: 5
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: 0.05
+    targetHeightOffsetMeters: -0.2
+    speedMetersPerSecond: 1.5
+    ballType: 0
+  - spawnTimeSeconds: 155
+    direction: 3
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: -0.05
+    targetHeightOffsetMeters: -0.2
+    speedMetersPerSecond: 1.6
+    ballType: 0
+  - spawnTimeSeconds: 160
+    direction: 1
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: 0.05
+    targetHeightOffsetMeters: 0
+    speedMetersPerSecond: 1.7
+    ballType: 1
+  - spawnTimeSeconds: 165
+    direction: 8
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: -0.05
+    targetHeightOffsetMeters: 0
+    speedMetersPerSecond: 1.3
+    ballType: 1
+  - spawnTimeSeconds: 170
+    direction: 6
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: 0.05
+    targetHeightOffsetMeters: 0
+    speedMetersPerSecond: 1.4
+    ballType: 1
+  - spawnTimeSeconds: 175
+    direction: 4
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: -0.05
+    targetHeightOffsetMeters: 0
+    speedMetersPerSecond: 1.5
+    ballType: 1
+  - spawnTimeSeconds: 180
+    direction: 2
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: 0.05
+    targetHeightOffsetMeters: 0
+    speedMetersPerSecond: 1.6
+    ballType: 1
+  - spawnTimeSeconds: 180
+    direction: 0
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: -0.05
+    targetHeightOffsetMeters: 0
+    speedMetersPerSecond: 1.7
+    ballType: 1
+  - spawnTimeSeconds: 185
+    direction: 7
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: 0.05
+    targetHeightOffsetMeters: 0
+    speedMetersPerSecond: 1.3
+    ballType: 1
+  - spawnTimeSeconds: 190
+    direction: 5
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: -0.05
+    targetHeightOffsetMeters: -0.2
+    speedMetersPerSecond: 1.4
+    ballType: 0
+  - spawnTimeSeconds: 195
+    direction: 3
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: 0.05
+    targetHeightOffsetMeters: -0.2
+    speedMetersPerSecond: 1.5
+    ballType: 0
+  - spawnTimeSeconds: 200
+    direction: 1
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: -0.05
+    targetHeightOffsetMeters: -0.2
+    speedMetersPerSecond: 1.6
+    ballType: 0
+  - spawnTimeSeconds: 205
+    direction: 8
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: 0.05
+    targetHeightOffsetMeters: 0
+    speedMetersPerSecond: 1.7
+    ballType: 1
+  - spawnTimeSeconds: 210
+    direction: 6
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: -0.05
+    targetHeightOffsetMeters: 0
+    speedMetersPerSecond: 1.3
+    ballType: 1
+  - spawnTimeSeconds: 210
+    direction: 4
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: 0.05
+    targetHeightOffsetMeters: 0
+    speedMetersPerSecond: 1.4
+    ballType: 1
+  - spawnTimeSeconds: 210
+    direction: 2
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: -0.05
+    targetHeightOffsetMeters: 0
+    speedMetersPerSecond: 1.5
+    ballType: 1
+  - spawnTimeSeconds: 215
+    direction: 0
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: 0.05
+    targetHeightOffsetMeters: 0
+    speedMetersPerSecond: 1.6
+    ballType: 1
+  - spawnTimeSeconds: 220
+    direction: 7
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: -0.05
+    targetHeightOffsetMeters: 0
+    speedMetersPerSecond: 1.7
+    ballType: 1
+  - spawnTimeSeconds: 225
+    direction: 5
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: 0.05
+    targetHeightOffsetMeters: 0
+    speedMetersPerSecond: 1.3
+    ballType: 1
+  - spawnTimeSeconds: 230
+    direction: 3
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: -0.05
+    targetHeightOffsetMeters: -0.2
+    speedMetersPerSecond: 1.4
+    ballType: 0
+  - spawnTimeSeconds: 235
+    direction: 1
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: 0.05
+    targetHeightOffsetMeters: -0.2
+    speedMetersPerSecond: 1.5
+    ballType: 0
+  - spawnTimeSeconds: 240
+    direction: 8
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: -0.05
+    targetHeightOffsetMeters: -0.2
+    speedMetersPerSecond: 1.6
+    ballType: 0
+  - spawnTimeSeconds: 240
+    direction: 6
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: 0.05
+    targetHeightOffsetMeters: 0
+    speedMetersPerSecond: 1.7
+    ballType: 1
+  - spawnTimeSeconds: 240
+    direction: 4
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: -0.05
+    targetHeightOffsetMeters: 0
+    speedMetersPerSecond: 1.3
+    ballType: 1
+  - spawnTimeSeconds: 245
+    direction: 2
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: 0.05
+    targetHeightOffsetMeters: 0
+    speedMetersPerSecond: 1.4
+    ballType: 1
+  - spawnTimeSeconds: 250
+    direction: 0
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: -0.05
+    targetHeightOffsetMeters: 0
+    speedMetersPerSecond: 1.5
+    ballType: 1
+  - spawnTimeSeconds: 255
+    direction: 7
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: 0.05
+    targetHeightOffsetMeters: 0
+    speedMetersPerSecond: 1.6
+    ballType: 1
+  - spawnTimeSeconds: 260
+    direction: 5
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: -0.05
+    targetHeightOffsetMeters: 0
+    speedMetersPerSecond: 1.7
+    ballType: 1
+  - spawnTimeSeconds: 265
+    direction: 3
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: 0.05
+    targetHeightOffsetMeters: 0
+    speedMetersPerSecond: 1.3
+    ballType: 1
+  - spawnTimeSeconds: 270
+    direction: 1
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: -0.05
+    targetHeightOffsetMeters: -0.2
+    speedMetersPerSecond: 1.4
+    ballType: 0
+  - spawnTimeSeconds: 270
+    direction: 8
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: 0.05
+    targetHeightOffsetMeters: -0.2
+    speedMetersPerSecond: 1.5
+    ballType: 0
+  - spawnTimeSeconds: 270
+    direction: 6
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: -0.05
+    targetHeightOffsetMeters: -0.2
+    speedMetersPerSecond: 1.6
+    ballType: 0
+  - spawnTimeSeconds: 275
+    direction: 4
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: 0.05
+    targetHeightOffsetMeters: 0
+    speedMetersPerSecond: 1.7
+    ballType: 1
+  - spawnTimeSeconds: 280
+    direction: 2
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: -0.05
+    targetHeightOffsetMeters: 0
+    speedMetersPerSecond: 1.3
+    ballType: 1
+  - spawnTimeSeconds: 285
+    direction: 0
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: 0.05
+    targetHeightOffsetMeters: 0
+    speedMetersPerSecond: 1.4
+    ballType: 1
+  - spawnTimeSeconds: 290
+    direction: 7
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: -0.05
+    targetHeightOffsetMeters: 0
+    speedMetersPerSecond: 1.5
+    ballType: 1
+  - spawnTimeSeconds: 295
+    direction: 5
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: 0.05
+    targetHeightOffsetMeters: 0
+    speedMetersPerSecond: 1.6
+    ballType: 1
+  - spawnTimeSeconds: 300
+    direction: 3
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: -0.05
+    targetHeightOffsetMeters: 0
+    speedMetersPerSecond: 1.7
+    ballType: 1
+  - spawnTimeSeconds: 300
+    direction: 1
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: 0.05
+    targetHeightOffsetMeters: 0
+    speedMetersPerSecond: 1.3
+    ballType: 1
+  - spawnTimeSeconds: 300
+    direction: 8
+    spawnDistanceMeters: 4
+    spawnHeightOffsetMeters: -0.05
+    targetHeightOffsetMeters: -0.2
+    speedMetersPerSecond: 1.4
+    ballType: 0
