@@ -340,6 +340,54 @@ namespace TeamVR.AdaptivePassthrough.Tests
         }
 
         [Test]
+        public void StaticSpatialSourcesCanBeToggledIndependently()
+        {
+            var gameObject = new GameObject("spatial-source-toggle-test");
+            try
+            {
+                var provider = gameObject.AddComponent<
+                    QuestSpatialObstacleProvider>();
+                Assert.That(provider.EnvironmentDepthStaticEnabled, Is.True);
+                Assert.That(provider.RoomSceneStaticEnabled, Is.True);
+
+                provider.SetEnvironmentDepthStaticEnabled(false);
+                Assert.That(provider.EnvironmentDepthStaticEnabled, Is.False);
+                Assert.That(provider.RoomSceneStaticEnabled, Is.True);
+
+                provider.SetRoomSceneStaticEnabled(false);
+                Assert.That(provider.EnvironmentDepthStaticEnabled, Is.False);
+                Assert.That(provider.RoomSceneStaticEnabled, Is.False);
+
+                provider.SetEnvironmentDepthStaticEnabled(true);
+                Assert.That(provider.EnvironmentDepthStaticEnabled, Is.True);
+                Assert.That(provider.RoomSceneStaticEnabled, Is.False);
+            }
+            finally
+            {
+                Object.DestroyImmediate(gameObject);
+            }
+        }
+
+        [Test]
+        public void RuntimePanelPersistsBothStaticSourceControls()
+        {
+            string source = System.IO.File.ReadAllText(
+                System.IO.Path.Combine(
+                    Application.dataPath,
+                    "Scripts/PersonalizationRuntimePanel.cs"));
+            Assert.That(
+                source,
+                Does.Contain("EnvironmentDepthStaticEnabled"));
+            Assert.That(source, Does.Contain("RoomSceneStaticEnabled"));
+            Assert.That(
+                source,
+                Does.Contain("SetEnvironmentDepthStaticEnabled(true)"));
+            Assert.That(
+                source,
+                Does.Contain("SetRoomSceneStaticEnabled(true)"));
+        }
+
+        [Test]
         public void TorsoAndHandSpreadUseGravityAlignedAxes()
         {
             Vector3 point = new Vector3(0f, 1.2f, -0.08f);
@@ -642,6 +690,43 @@ namespace TeamVR.AdaptivePassthrough.Tests
                 Assert.That(
                     Vector3.Angle(panel.transform.forward, expectedForward),
                     Is.LessThan(0.1f));
+            }
+            finally
+            {
+                Object.DestroyImmediate(panel);
+                Object.DestroyImmediate(head);
+            }
+        }
+
+        [Test]
+        public void WorldPanelBToggleHidesCanvasAndRecentersWhenOpened()
+        {
+            var head = new GameObject("head");
+            var panel = new GameObject("settings-panel");
+            Canvas canvas = panel.AddComponent<Canvas>();
+            try
+            {
+                head.transform.position = new Vector3(1f, 1.6f, 2f);
+                head.transform.rotation = Quaternion.Euler(0f, 45f, 0f);
+                var placement = panel.AddComponent<
+                    WorldSpacePanelPlacementController>();
+                placement.Configure(panel.transform, head.transform);
+                placement.ConfigureBButtonVisibilityToggle(true);
+
+                placement.SetPanelVisible(false);
+                Assert.That(placement.PanelVisible, Is.False);
+                Assert.That(canvas.enabled, Is.False);
+
+                panel.transform.position = new Vector3(20f, 20f, 20f);
+                placement.TogglePanelVisibility();
+                Vector3 expected = head.transform.position
+                    + head.transform.forward * placement.DistanceMeters
+                    + Vector3.up * placement.HeightMeters;
+                Assert.That(placement.PanelVisible, Is.True);
+                Assert.That(canvas.enabled, Is.True);
+                Assert.That(
+                    Vector3.Distance(panel.transform.position, expected),
+                    Is.LessThan(0.001f));
             }
             finally
             {

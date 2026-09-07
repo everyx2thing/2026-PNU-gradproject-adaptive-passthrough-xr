@@ -24,13 +24,21 @@ public sealed class SafetyAlertFeedbackController : MonoBehaviour
     private MeshRenderer borderRenderer;
     private MaterialPropertyBlock propertyBlock;
     private bool alertRequested;
+    private bool borderRequested;
     private float alertIntensity;
+    private SafetyHapticTarget hapticTarget = SafetyHapticTarget.Both;
+    private float feedbackStartedAt;
     private bool hapticPulseOn;
     private float appliedHapticAmplitude = -1f;
+    private float appliedHapticFrequency = -1f;
+    private OVRInput.Controller appliedHapticControllers =
+        OVRInput.Controller.None;
 
     public bool AlertActive => alertRequested && isActiveAndEnabled;
     public float AlertIntensity => alertIntensity;
     public bool HapticPulseOn => hapticPulseOn;
+    public bool BorderRequested => borderRequested;
+    public SafetyHapticTarget HapticTarget => hapticTarget;
 
     private void Awake()
     {
@@ -103,8 +111,30 @@ public sealed class SafetyAlertFeedbackController : MonoBehaviour
 
     public void SetAlertActive(bool active, float intensity)
     {
+        SetAlertActive(
+            active,
+            intensity,
+            SafetyHapticTarget.Both,
+            active);
+    }
+
+    public void SetAlertActive(
+        bool active,
+        float intensity,
+        SafetyHapticTarget target,
+        bool showBorder)
+    {
+        target = active ? target : SafetyHapticTarget.None;
+        bool newBurst = active
+            && (!alertRequested || hapticTarget != target);
         alertRequested = active;
+        borderRequested = active && showBorder;
         alertIntensity = active ? Mathf.Clamp01(intensity) : 0f;
+        hapticTarget = target;
+        if (newBurst)
+        {
+            feedbackStartedAt = Time.unscaledTime;
+        }
         if (!active)
         {
             if (borderRenderer != null)
@@ -132,7 +162,7 @@ public sealed class SafetyAlertFeedbackController : MonoBehaviour
         bool active = alertRequested && isActiveAndEnabled;
         if (borderRenderer != null)
         {
-            borderRenderer.enabled = active;
+            borderRenderer.enabled = active && borderRequested;
         }
 
         if (!active)
@@ -150,23 +180,33 @@ public sealed class SafetyAlertFeedbackController : MonoBehaviour
                 Mathf.Clamp(borderThickness, 0.01f, 0.12f));
             propertyBlock.SetFloat(
                 PulseProperty,
-                VisualPulse(timeSeconds, alertIntensity));
+                VisualPulse(
+                    Mathf.Max(0f, timeSeconds - feedbackStartedAt),
+                    alertIntensity));
             borderRenderer.SetPropertyBlock(propertyBlock);
         }
 
-        bool pulseOn = IsHapticPulseOn(timeSeconds, alertIntensity);
+        float phaseSeconds = Mathf.Max(0f, timeSeconds - feedbackStartedAt);
+        bool pulseOn = hapticTarget != SafetyHapticTarget.None
+            && IsHapticPulseOn(phaseSeconds, alertIntensity);
         float amplitude = pulseOn
             ? Mathf.Lerp(
                 minimumHapticAmplitude,
                 maximumHapticAmplitude,
                 alertIntensity)
             : 0f;
+        float frequency = pulseOn
+            ? Mathf.Lerp(0.35f, hapticFrequency, alertIntensity)
+            : 0f;
         if (pulseOn != hapticPulseOn
-            || Mathf.Abs(amplitude - appliedHapticAmplitude) > 0.02f)
+            || Mathf.Abs(amplitude - appliedHapticAmplitude) > 0.02f
+            || Mathf.Abs(frequency - appliedHapticFrequency) > 0.02f
+            || appliedHapticControllers != ControllerMaskFor(hapticTarget))
         {
             hapticPulseOn = pulseOn;
             appliedHapticAmplitude = amplitude;
-            ApplyHaptics(amplitude);
+            appliedHapticFrequency = frequency;
+            ApplyHaptics(amplitude, frequency, hapticTarget);
         }
     }
 
@@ -241,24 +281,68 @@ public sealed class SafetyAlertFeedbackController : MonoBehaviour
         return mesh;
     }
 
-    private void ApplyHaptics(float amplitude)
+    private void ApplyHaptics(
+        float amplitude,
+        float frequency,
+        SafetyHapticTarget target)
     {
         if (!Application.isPlaying)
         {
             return;
         }
 
+        OVRInput.Controller controllers = ControllerMaskFor(target);
+        if (appliedHapticControllers != OVRInput.Controller.None
+            && appliedHapticControllers != controllers)
+        {
+            OVRInput.SetControllerVibration(
+                0f,
+                0f,
+                appliedHapticControllers);
+        }
+
+        appliedHapticControllers = controllers;
+        if (controllers == OVRInput.Controller.None)
+        {
+            return;
+        }
+
         OVRInput.SetControllerVibration(
-            Mathf.Clamp01(hapticFrequency),
+            Mathf.Clamp01(frequency),
             Mathf.Clamp01(amplitude),
-            OVRInput.Controller.LTouch | OVRInput.Controller.RTouch);
+            controllers);
     }
 
     private void StopHaptics()
     {
         hapticPulseOn = false;
         appliedHapticAmplitude = 0f;
-        ApplyHaptics(0f);
+        appliedHapticFrequency = 0f;
+        if (Application.isPlaying)
+        {
+            OVRInput.SetControllerVibration(
+                0f,
+                0f,
+                OVRInput.Controller.LTouch | OVRInput.Controller.RTouch);
+        }
+        appliedHapticControllers = OVRInput.Controller.None;
+    }
+
+    private static OVRInput.Controller ControllerMaskFor(
+        SafetyHapticTarget target)
+    {
+        switch (target)
+        {
+            case SafetyHapticTarget.Left:
+                return OVRInput.Controller.LTouch;
+            case SafetyHapticTarget.Right:
+                return OVRInput.Controller.RTouch;
+            case SafetyHapticTarget.Both:
+                return OVRInput.Controller.LTouch
+                    | OVRInput.Controller.RTouch;
+            default:
+                return OVRInput.Controller.None;
+        }
     }
 
     private static void DestroyRuntimeObject(Object target)

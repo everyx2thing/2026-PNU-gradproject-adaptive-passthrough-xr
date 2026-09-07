@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Text;
+using System.Text.RegularExpressions;
 using UnityEditor;
 using UnityEngine;
 
@@ -14,7 +15,7 @@ public static class AdaptivePassthroughBoundarySetup
         "Assets/Plugins/Android/AndroidManifest.xml";
 
     [MenuItem(
-        "TeamVR/Adaptive Passthrough/Configure Boundaryless Priority")]
+        "TeamVR/Adaptive Passthrough/Configure Runtime Boundary Visibility")]
     public static void ConfigureForQuestBuild()
     {
         OVRProjectConfig config = OVRProjectConfig.CachedProjectConfig;
@@ -31,18 +32,19 @@ public static class AdaptivePassthroughBoundarySetup
         EditorUtility.SetDirty(config);
         AssetDatabase.SaveAssets();
 
-        // Meta manages the contextual Boundary API permission. Generate it
-        // first, then add the full-app feature that SDK 203 does not manage.
+        // Meta manages the contextual Boundary API permission. Generate the
+        // manifest first, then remove the full-app Boundaryless declaration:
+        // rounds switch Guardian visibility through the runtime API instead.
         OVRManifestPreprocessor.GenerateOrUpdateAndroidManifest(true);
-        EnsureFullBoundarylessManifestFeature();
+        RemoveFullBoundarylessManifestFeature();
         AssetDatabase.ImportAsset(ManifestAssetPath);
 
         Debug.Log(
-            "[AdaptivePassthrough] Full Boundaryless is the primary mode; "
-            + "contextual boundary suppression is configured as fallback.");
+            "[AdaptivePassthrough] Runtime Guardian visibility is enabled; "
+            + "the forced full-app Boundaryless feature is absent.");
     }
 
-    private static void EnsureFullBoundarylessManifestFeature()
+    private static void RemoveFullBoundarylessManifestFeature()
     {
         string manifestPath = Path.Combine(
             Application.dataPath,
@@ -57,32 +59,34 @@ public static class AdaptivePassthroughBoundarySetup
         }
 
         string manifest = File.ReadAllText(manifestPath);
-        if (manifest.IndexOf(
-                FullBoundarylessFeature,
-                StringComparison.Ordinal) >= 0)
+        string updated = RemoveFullBoundarylessFeature(manifest);
+        if (string.Equals(manifest, updated, StringComparison.Ordinal))
         {
             return;
         }
 
-        int closingTag = manifest.LastIndexOf(
-            "</manifest>",
-            StringComparison.Ordinal);
-        if (closingTag < 0)
-        {
-            throw new InvalidDataException(
-                "AndroidManifest.xml has no closing manifest tag.");
-        }
-
-        string newline = manifest.Contains("\r\n") ? "\r\n" : "\n";
-        string feature =
-            "  <uses-feature android:name=\""
-            + FullBoundarylessFeature
-            + "\" android:required=\"true\" />"
-            + newline;
-        manifest = manifest.Insert(closingTag, feature);
         File.WriteAllText(
             manifestPath,
-            manifest,
+            updated,
             new UTF8Encoding(false));
+    }
+
+    public static string RemoveFullBoundarylessFeature(string manifest)
+    {
+        if (string.IsNullOrEmpty(manifest))
+        {
+            return manifest ?? string.Empty;
+        }
+
+        string escapedFeature = Regex.Escape(FullBoundarylessFeature);
+        string pattern =
+            "^[ \\t]*<uses-feature\\b(?=[^>]*\\bandroid:name\\s*=\\s*[\"']"
+            + escapedFeature
+            + "[\"'])[^>]*/>[ \\t]*(?:\\r?\\n)?";
+        return Regex.Replace(
+            manifest,
+            pattern,
+            string.Empty,
+            RegexOptions.Multiline | RegexOptions.CultureInvariant);
     }
 }

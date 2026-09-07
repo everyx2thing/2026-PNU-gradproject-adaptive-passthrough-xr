@@ -339,6 +339,14 @@ namespace TeamVR.AdaptivePassthrough
         StaticBoundaryRiskFrame CurrentStaticBoundaryFrame { get; }
     }
 
+    public interface IStaticSpatialSourceControls
+    {
+        bool EnvironmentDepthStaticEnabled { get; }
+        bool RoomSceneStaticEnabled { get; }
+        void SetEnvironmentDepthStaticEnabled(bool enabled);
+        void SetRoomSceneStaticEnabled(bool enabled);
+    }
+
     public static class SpatialProviderSelection
     {
         public static bool ShouldUseRoomSceneFallback(

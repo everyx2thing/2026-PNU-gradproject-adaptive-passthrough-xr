@@ -1,7 +1,9 @@
 public enum ExperimentPresentationOverride
 {
     UseUserSettings = 0,
-    SuppressAll = 1
+    SuppressAll = 1,
+    StaticOnly = 2,
+    StaticAndDynamic = 3
 }
 
 public enum BoundaryVisibilityOverride
@@ -22,14 +24,15 @@ public static class ExperimentRuntimeOverrideResolver
         {
             case 0:
                 presentation = ExperimentPresentationOverride.SuppressAll;
-                boundary = BoundaryVisibilityOverride.ForceSuppressed;
-                return true;
-            case 1:
-                presentation = ExperimentPresentationOverride.SuppressAll;
                 boundary = BoundaryVisibilityOverride.ForceVisible;
                 return true;
+            case 1:
+                presentation = ExperimentPresentationOverride.StaticOnly;
+                boundary = BoundaryVisibilityOverride.ForceSuppressed;
+                return true;
             case 2:
-                presentation = ExperimentPresentationOverride.UseUserSettings;
+                presentation =
+                    ExperimentPresentationOverride.StaticAndDynamic;
                 boundary = BoundaryVisibilityOverride.ForceSuppressed;
                 return true;
             default:

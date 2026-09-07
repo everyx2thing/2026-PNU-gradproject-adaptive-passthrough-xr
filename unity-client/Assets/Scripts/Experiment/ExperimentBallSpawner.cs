@@ -179,9 +179,21 @@ namespace TeamVR.Experiment
 
             IReadOnlyList<BallSpawnEntry> entries = scheduleSet.Entries;
             float elapsedSeconds = 0f;
-            for (int i = 0; i < entries.Count; i++)
+            for (int i = 0;
+                i < ExperimentRoundSchedulePlanner.PlannedProjectileCount;
+                i++)
             {
-                BallSpawnEntry entry = entries[i];
+                int sourceIndex = ExperimentRoundSchedulePlanner.GetSourceIndex(
+                    i,
+                    entries.Count);
+                if (sourceIndex < 0)
+                {
+                    break;
+                }
+
+                BallSpawnEntry entry = entries[sourceIndex];
+                entry.spawnTimeSeconds =
+                    ExperimentRoundSchedulePlanner.GetSpawnTimeSeconds(i);
                 float waitSeconds = Mathf.Max(
                     0f,
                     entry.spawnTimeSeconds - elapsedSeconds);
@@ -224,8 +236,13 @@ namespace TeamVR.Experiment
                 originPosition,
                 originRotation,
                 layoutOrigin);
-            Vector3 targetPosition = originPosition
-                + Vector3.up * entry.targetHeightOffsetMeters;
+            // Spawn locations remain anchored to the round-start layout, but
+            // every projectile aims at the participant's latest head position.
+            // ExperimentBall stores this direction once, so the projectile is
+            // still dodgeable and never homes after launch.
+            Vector3 targetPosition = ResolveTargetPosition(
+                cameraRig.centerEyeAnchor.position,
+                entry.targetHeightOffsetMeters);
 
             GameObject prefab = entry.ballType == BallType.MustAvoid
                 ? bombBallPrefab
@@ -271,6 +288,14 @@ namespace TeamVR.Experiment
                 fallbackMaterial);
 
             activeBalls.Add(ball);
+        }
+
+        public static Vector3 ResolveTargetPosition(
+            Vector3 currentHeadPosition,
+            float targetHeightOffsetMeters)
+        {
+            return currentHeadPosition
+                + Vector3.up * targetHeightOffsetMeters;
         }
 
         // Spawn origin resolution order:
@@ -423,6 +448,103 @@ namespace TeamVR.Experiment
             else
             {
                 DestroyImmediate(material);
+            }
+        }
+    }
+
+    // Reduces the authored five-minute/72-projectile schedule to a fixed
+    // three-minute plan without changing the beginning or ending difficulty.
+    // The first 30 seconds keep the original six single shots. Burst density
+    // then rises sooner and reaches the original eight-projectile final phase.
+    public static class ExperimentRoundSchedulePlanner
+    {
+        public const float RoundDurationSeconds = 180f;
+        public const int PlannedProjectileCount = 44;
+
+        private const int FirstPreservedCount = 6;
+        private const int FinalPreservedCount = 3;
+        private const int LastBeat = 35;
+        private const float BeatSeconds = 5f;
+
+        public static float GetSpawnTimeSeconds(int plannedIndex)
+        {
+            ValidatePlannedIndex(plannedIndex);
+            int remaining = plannedIndex;
+            for (int beat = 1; beat <= LastBeat; beat++)
+            {
+                int burstSize = GetBurstSize(beat);
+                if (remaining < burstSize)
+                {
+                    return beat * BeatSeconds;
+                }
+
+                remaining -= burstSize;
+            }
+
+            throw new ArgumentOutOfRangeException(nameof(plannedIndex));
+        }
+
+        public static int GetSourceIndex(int plannedIndex, int sourceCount)
+        {
+            ValidatePlannedIndex(plannedIndex);
+            if (sourceCount <= 0)
+            {
+                return -1;
+            }
+
+            if (sourceCount <= FirstPreservedCount + FinalPreservedCount)
+            {
+                float normalized = plannedIndex
+                    / (float)(PlannedProjectileCount - 1);
+                return Mathf.RoundToInt(normalized * (sourceCount - 1));
+            }
+
+            if (plannedIndex < FirstPreservedCount)
+            {
+                return plannedIndex;
+            }
+
+            int finalPlanStart =
+                PlannedProjectileCount - FinalPreservedCount;
+            if (plannedIndex >= finalPlanStart)
+            {
+                return sourceCount
+                    - (PlannedProjectileCount - plannedIndex);
+            }
+
+            int middleIndex = plannedIndex - FirstPreservedCount;
+            int middleCount = PlannedProjectileCount
+                - FirstPreservedCount
+                - FinalPreservedCount;
+            int sourceStart = FirstPreservedCount;
+            int sourceEnd = sourceCount - FinalPreservedCount - 1;
+            float middleNormalized = middleIndex / (float)(middleCount - 1);
+            return Mathf.RoundToInt(
+                Mathf.Lerp(sourceStart, sourceEnd, middleNormalized));
+        }
+
+        private static int GetBurstSize(int beat)
+        {
+            switch (beat)
+            {
+                case 12: // 60 seconds: first two-projectile burst.
+                case 18: // 90 seconds: reinforce the intermediate level.
+                case 33: // 165 seconds: final-phase lead-in.
+                    return 2;
+                case 24: // 120 seconds: first three-projectile burst.
+                case 30: // 150 seconds: sustained final difficulty.
+                case 35: // 175 seconds: original three-shot ending.
+                    return 3;
+                default:
+                    return 1;
+            }
+        }
+
+        private static void ValidatePlannedIndex(int plannedIndex)
+        {
+            if (plannedIndex < 0 || plannedIndex >= PlannedProjectileCount)
+            {
+                throw new ArgumentOutOfRangeException(nameof(plannedIndex));
             }
         }
     }

@@ -111,6 +111,10 @@ public sealed class SelectivePassthroughController :
     [SerializeField, Range(0f, 0.5f)] private float staticReplacementRiskMargin = 0.10f;
     [SerializeField, Min(0f)] private float staticReplacementConfirmSeconds = 0.30f;
 
+    [Header("Rear Static Hazard Warning")]
+    [SerializeField] private RearHazardWarningSettings rearWarningSettings =
+        new RearHazardWarningSettings();
+
     private readonly List<WindowSlot> personSlots =
         new List<WindowSlot>();
     private readonly List<DynamicRiskAssessment> personCandidates =
@@ -147,17 +151,18 @@ public sealed class SelectivePassthroughController :
     private DynamicRiskController subscribedDynamicRiskController;
     private bool stereoFallbackStaticRequested;
     private bool stereoFallbackDynamicRequested;
+    private RearHazardWarningPolicy rearHazardWarningPolicy;
+    private RearHazardWarningSnapshot latestRearHazardWarning;
 
     public event Action<bool, string, double> VisibilityChanged;
 
     public int ActivePersonWindowCount { get; private set; }
     public bool DynamicPassthroughRendered =>
-        !IsExperimentOutputSuppressed
-        &&
-        feedbackMode == SafetyFeedbackMode.Passthrough
+        EffectiveDynamicFeatureEnabled
+        && EffectiveFeedbackMode == SafetyFeedbackMode.Passthrough
         && ActivePersonWindowCount > 0;
     public bool DynamicFallbackActive =>
-        !IsExperimentOutputSuppressed && stereoFallbackDynamicRequested;
+        EffectiveDynamicFeatureEnabled && stereoFallbackDynamicRequested;
     public int LatestQualifiedPersonCount { get; private set; }
     public int LatestGeometryReadyPersonCount { get; private set; }
     public PersonPresentationGeometrySource LatestPersonGeometrySource
@@ -175,6 +180,8 @@ public sealed class SelectivePassthroughController :
     public string LastStaticReplacementReason { get; private set; } = "none";
     public StaticPassthroughDecision LatestStaticDecision =>
         staticPolicy == null ? null : staticPolicy.LatestStatic;
+    public RearHazardWarningSnapshot LatestRearHazardWarning =>
+        latestRearHazardWarning;
     public bool StaticFeatureEnabled
     {
         get { return staticFeatureEnabled; }
@@ -189,16 +196,64 @@ public sealed class SelectivePassthroughController :
     public bool IsExperimentOutputSuppressed =>
         experimentPresentationOverride
             == ExperimentPresentationOverride.SuppressAll;
+    public bool EffectiveStaticFeatureEnabled
+    {
+        get
+        {
+            switch (experimentPresentationOverride)
+            {
+                case ExperimentPresentationOverride.SuppressAll:
+                    return false;
+                case ExperimentPresentationOverride.StaticOnly:
+                case ExperimentPresentationOverride.StaticAndDynamic:
+                    return true;
+                default:
+                    return staticFeatureEnabled;
+            }
+        }
+    }
+    public bool EffectiveDynamicFeatureEnabled
+    {
+        get
+        {
+            switch (experimentPresentationOverride)
+            {
+                case ExperimentPresentationOverride.StaticAndDynamic:
+                    return true;
+                case ExperimentPresentationOverride.SuppressAll:
+                case ExperimentPresentationOverride.StaticOnly:
+                    return false;
+                default:
+                    return dynamicFeatureEnabled;
+            }
+        }
+    }
+    public StaticRiskChannelMask EffectiveStaticChannels =>
+        experimentPresentationOverride
+            == ExperimentPresentationOverride.StaticOnly
+        || experimentPresentationOverride
+            == ExperimentPresentationOverride.StaticAndDynamic
+            ? StaticRiskChannelMask.All
+            : experimentPresentationOverride
+                == ExperimentPresentationOverride.SuppressAll
+                ? StaticRiskChannelMask.None
+                : EnabledStaticChannels;
+    public SafetyFeedbackMode EffectiveFeedbackMode =>
+        experimentPresentationOverride
+            == ExperimentPresentationOverride.StaticOnly
+        || experimentPresentationOverride
+            == ExperimentPresentationOverride.StaticAndDynamic
+            ? SafetyFeedbackMode.Passthrough
+            : feedbackMode;
     public bool PassthroughOutputVisible =>
         !IsExperimentOutputSuppressed
-        &&
-        feedbackMode == SafetyFeedbackMode.Passthrough
+        && EffectiveFeedbackMode == SafetyFeedbackMode.Passthrough
         && AnyPassthroughWindowVisible;
     public bool AlertFeedbackActive =>
         !IsExperimentOutputSuppressed
         &&
         AnyWindowVisible
-        && (feedbackMode == SafetyFeedbackMode.RedBorderAndHaptics
+        && (EffectiveFeedbackMode == SafetyFeedbackMode.RedBorderAndHaptics
             || stereoFallbackStaticRequested
             || stereoFallbackDynamicRequested);
     private bool AnyPassthroughWindowVisible =>
@@ -222,6 +277,7 @@ public sealed class SelectivePassthroughController :
     private void Awake()
     {
         ResolveReferences();
+        EnsureRearHazardWarningPolicy();
         RebuildPersonWindowTracker();
         InitializeRendering();
     }
@@ -229,6 +285,7 @@ public sealed class SelectivePassthroughController :
     private void OnEnable()
     {
         ResolveReferences();
+        EnsureRearHazardWarningPolicy();
         if (personWindowTracker == null)
         {
             RebuildPersonWindowTracker();
@@ -331,6 +388,12 @@ public sealed class SelectivePassthroughController :
             : enabledStaticChannels & ~channel;
         enabledStaticChannels &= StaticRiskChannelMask.All;
         staticPolicy?.SetEnabledChannels(enabledStaticChannels);
+        staticPolicy?.SetExperimentEnabledChannelsOverride(
+            experimentPresentationOverride
+                    == ExperimentPresentationOverride.StaticOnly
+                || experimentPresentationOverride
+                    == ExperimentPresentationOverride.StaticAndDynamic,
+            StaticRiskChannelMask.All);
         if (!enabled)
         {
             CancelStaticPresentationHolds(channel);
@@ -397,7 +460,7 @@ public sealed class SelectivePassthroughController :
         feedbackMode = Enum.IsDefined(typeof(SafetyFeedbackMode), mode)
             ? mode
             : SafetyFeedbackMode.Passthrough;
-        if (feedbackMode == SafetyFeedbackMode.Passthrough)
+        if (EffectiveFeedbackMode == SafetyFeedbackMode.Passthrough)
         {
             alertFeedback?.SetAlertActive(false, 0f);
         }
@@ -427,6 +490,14 @@ public sealed class SelectivePassthroughController :
             ? value
             : ExperimentPresentationOverride.UseUserSettings;
 
+        bool forceAllStaticChannels = experimentPresentationOverride
+                == ExperimentPresentationOverride.StaticOnly
+            || experimentPresentationOverride
+                == ExperimentPresentationOverride.StaticAndDynamic;
+        staticPolicy?.SetExperimentEnabledChannelsOverride(
+            forceAllStaticChannels,
+            StaticRiskChannelMask.All);
+
         if (IsExperimentOutputSuppressed)
         {
             SuppressPassthroughWindowRenderers();
@@ -455,7 +526,8 @@ public sealed class SelectivePassthroughController :
                 : dynamicPolicy.DynamicRiskController;
         DynamicRiskFrame frame =
             controller == null ? null : controller.LatestFrame;
-        bool dynamicPresentationActive = dynamicFeatureEnabled
+        bool dynamicFeatureActive = EffectiveDynamicFeatureEnabled;
+        bool dynamicPresentationActive = dynamicFeatureActive
             && decision != null
             && decision.Enabled;
         personWindowTracker.SetPresentationPolicyActive(
@@ -474,7 +546,7 @@ public sealed class SelectivePassthroughController :
                 PersonPresentationGeometrySource.Unavailable;
         }
 
-        if (dynamicFeatureEnabled
+        if (dynamicFeatureActive
             && frame != null
             && hasNewFrame)
         {
@@ -499,7 +571,7 @@ public sealed class SelectivePassthroughController :
                 : assessment.Score;
             bool revealEligible = personRevealEligibility.Evaluate(
                 assessment,
-                dynamicFeatureEnabled,
+                dynamicFeatureActive,
                 dynamicPolicy == null
                     ? PersonRevealEligibilityTracker.DefaultOnRisk
                     : dynamicPolicy.OnThreshold,
@@ -565,9 +637,10 @@ public sealed class SelectivePassthroughController :
         personWindowTracker.Update(
             now,
             Time.unscaledDeltaTime);
-        IReadOnlyList<PersonWindowSnapshot> windows =
-            personWindowTracker.GetSnapshots(
-                Mathf.Max(1, maximumPersonWindows));
+        IReadOnlyList<PersonWindowSnapshot> windows = dynamicFeatureActive
+            ? personWindowTracker.GetSnapshots(
+                Mathf.Max(1, maximumPersonWindows))
+            : Array.Empty<PersonWindowSnapshot>();
         EnsurePersonSlots(windows.Count);
         renderedPersonTrackIds.Clear();
         int activeCount = 0;
@@ -624,7 +697,7 @@ public sealed class SelectivePassthroughController :
 
         ActivePersonWindowCount = activeCount;
         LatestPersonPresentationStatus = ResolvePersonPresentationStatus(
-            dynamicFeatureEnabled,
+            dynamicFeatureActive,
             frame != null,
             true,
             activeCount,
@@ -711,8 +784,8 @@ public sealed class SelectivePassthroughController :
         out float opacity)
     {
         PersonWindowSnapshot snapshot;
-        if (!IsExperimentOutputSuppressed
-            && feedbackMode == SafetyFeedbackMode.Passthrough
+        if (EffectiveDynamicFeatureEnabled
+            && EffectiveFeedbackMode == SafetyFeedbackMode.Passthrough
             && personWindowTracker != null
             && personWindowTracker.TryGetSnapshot(
                 trackId,
@@ -742,7 +815,7 @@ public sealed class SelectivePassthroughController :
             dynamicPolicy == null ? null : dynamicPolicy.Latest;
         return PersonPresentationDiagnostics.IsRevealEligible(
             assessment,
-            dynamicFeatureEnabled,
+            EffectiveDynamicFeatureEnabled,
             true,
             dynamicPolicy == null
                 ? PersonRevealEligibilityTracker.DefaultOnRisk
@@ -787,9 +860,10 @@ public sealed class SelectivePassthroughController :
             StaticPresentationEntry entry = staticPresentations[i];
             entry.State.BeginFrame();
             entry.Decision = FindHazardDecision(decision, entry.Key);
-            bool channelActive = staticFeatureEnabled
+            bool channelActive = EffectiveStaticFeatureEnabled
                 && entry.Decision != null
-                && entry.Decision.ChannelEnabled;
+                && (EffectiveStaticChannels & entry.Decision.Channel)
+                    != StaticRiskChannelMask.None;
             bool policyActive = channelActive
                 && entry.Decision.Enabled;
             entry.State.SetPresentationPolicyActive(policyActive, now);
@@ -1679,6 +1753,8 @@ public sealed class SelectivePassthroughController :
         StaticWindowVisible = false;
         stereoFallbackStaticRequested = false;
         stereoFallbackDynamicRequested = false;
+        rearHazardWarningPolicy?.Reset();
+        latestRearHazardWarning = RearHazardWarningSnapshot.Inactive;
         lastObservedStaticDecisionSequence = 0;
         staticSlotArbiter?.Reset();
     }
@@ -1688,13 +1764,14 @@ public sealed class SelectivePassthroughController :
         if (passthroughLayer != null)
         {
             passthroughLayer.hidden =
-                feedbackMode != SafetyFeedbackMode.Passthrough
+                EffectiveFeedbackMode != SafetyFeedbackMode.Passthrough
                 || !visible;
         }
     }
 
     private void ApplyFeedbackOutput()
     {
+        UpdateRearHazardWarning();
         if (IsExperimentOutputSuppressed)
         {
             SuppressPassthroughWindowRenderers();
@@ -1703,23 +1780,159 @@ public sealed class SelectivePassthroughController :
             return;
         }
 
-        bool feedbackRequested = AnyWindowVisible;
-        if (feedbackMode == SafetyFeedbackMode.RedBorderAndHaptics)
+        bool staticFeedbackRequested = HasGeneralStaticFeedbackCandidate();
+        bool dynamicFeedbackRequested = ActivePersonWindowCount > 0
+            || stereoFallbackDynamicRequested;
+        bool feedbackRequested = staticFeedbackRequested
+            || dynamicFeedbackRequested;
+        bool generalAlertActive;
+        if (EffectiveFeedbackMode
+            == SafetyFeedbackMode.RedBorderAndHaptics)
         {
             SuppressPassthroughWindowRenderers();
             SetLayerVisible(false);
-            alertFeedback?.SetAlertActive(
-                feedbackRequested,
-                FeedbackRiskIntensity());
-            return;
+            generalAlertActive = feedbackRequested;
+        }
+        else
+        {
+            generalAlertActive = (stereoFallbackStaticRequested
+                    && staticFeedbackRequested)
+                || stereoFallbackDynamicRequested;
+            SetLayerVisible(AnyPassthroughWindowVisible);
         }
 
-        bool stereoFallbackRequested = stereoFallbackStaticRequested
-            || stereoFallbackDynamicRequested;
+        bool showBorder = generalAlertActive
+            || latestRearHazardWarning.BorderPulseActive;
+        bool playHaptics = generalAlertActive
+            || latestRearHazardWarning.HapticBurstActive;
+        bool alertActive = showBorder || playHaptics;
+        float intensity = generalAlertActive
+            ? FeedbackRiskIntensity()
+            : 0f;
+        if (latestRearHazardWarning.BorderPulseActive
+            || latestRearHazardWarning.HapticBurstActive)
+        {
+            intensity = Mathf.Max(
+                intensity,
+                latestRearHazardWarning.Intensity);
+        }
+
+        SafetyHapticTarget target =
+            latestRearHazardWarning.HapticBurstActive
+                ? latestRearHazardWarning.HapticTarget
+                : playHaptics
+                    ? SafetyHapticTarget.Both
+                    : SafetyHapticTarget.None;
         alertFeedback?.SetAlertActive(
-            stereoFallbackRequested,
-            FeedbackRiskIntensity());
-        SetLayerVisible(AnyPassthroughWindowVisible);
+            alertActive,
+            intensity,
+            target,
+            showBorder);
+    }
+
+    private void UpdateRearHazardWarning()
+    {
+        EnsureRearHazardWarningPolicy();
+        StaticPassthroughDecision decision =
+            staticPolicy == null ? null : staticPolicy.LatestStatic;
+        Vector3 forward = presentationCamera == null
+            ? Vector3.zero
+            : presentationCamera.transform.forward;
+        Vector3 right = presentationCamera == null
+            ? Vector3.zero
+            : presentationCamera.transform.right;
+        latestRearHazardWarning = rearHazardWarningPolicy.Evaluate(
+            Time.realtimeSinceStartupAsDouble,
+            forward,
+            right,
+            decision == null ? null : decision.Hazards,
+            EffectiveStaticFeatureEnabled && !IsExperimentOutputSuppressed,
+            EffectiveStaticChannels);
+    }
+
+    private void EnsureRearHazardWarningPolicy()
+    {
+        if (rearHazardWarningPolicy == null)
+        {
+            rearHazardWarningPolicy = new RearHazardWarningPolicy(
+                rearWarningSettings ?? new RearHazardWarningSettings());
+        }
+    }
+
+    private bool HasGeneralStaticFeedbackCandidate()
+    {
+        if (!EffectiveStaticFeatureEnabled
+            || (!StaticWindowVisible && !stereoFallbackStaticRequested))
+        {
+            return false;
+        }
+
+        StaticPassthroughDecision decision =
+            staticPolicy == null ? null : staticPolicy.LatestStatic;
+        if (decision == null || decision.Hazards == null)
+        {
+            return false;
+        }
+
+        Vector3 forward = presentationCamera == null
+            ? Vector3.zero
+            : Vector3.ProjectOnPlane(
+                presentationCamera.transform.forward,
+                Vector3.up);
+        if (forward.sqrMagnitude <= 0.0001f)
+        {
+            return true;
+        }
+        forward.Normalize();
+
+        RearHazardWarningSettings settings = rearWarningSettings
+            ?? new RearHazardWarningSettings();
+        for (int i = 0; i < decision.Hazards.Length; i++)
+        {
+            StaticHazardDecision hazard = decision.Hazards[i];
+            if (hazard == null
+                || !hazard.Available
+                || !hazard.Enabled
+                || (EffectiveStaticChannels & hazard.Channel)
+                    == StaticRiskChannelMask.None)
+            {
+                continue;
+            }
+
+            if (!hazard.HazardDirectionAvailable)
+            {
+                return true;
+            }
+
+            Vector3 direction = Vector3.ProjectOnPlane(
+                hazard.HazardDirectionWorld,
+                Vector3.up);
+            if (direction.sqrMagnitude <= 0.0001f)
+            {
+                return true;
+            }
+
+            float angle = Vector3.Angle(forward, direction.normalized);
+            bool rear = angle + 0.001f
+                >= Mathf.Clamp(settings.rearAngleDegrees, 90f, 180f);
+            if (!rear)
+            {
+                return true;
+            }
+
+            bool emergency = hazard.DistanceMeters
+                <= Mathf.Max(0f, settings.emergencyDistanceMeters);
+            bool approaching = hazard.ClosingSpeedMetersPerSecond + 0.0001f
+                >= Mathf.Max(
+                    0f,
+                    settings.minimumClosingSpeedMetersPerSecond);
+            if (emergency || approaching)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private float FeedbackRiskIntensity()
@@ -1762,9 +1975,9 @@ public sealed class SelectivePassthroughController :
     public PassthroughPresentationSnapshot GetPresentationSnapshot()
     {
         double now = Time.realtimeSinceStartupAsDouble;
-        bool staticVisible = !IsExperimentOutputSuppressed
+        bool staticVisible = EffectiveStaticFeatureEnabled
             && (StaticWindowVisible || stereoFallbackStaticRequested);
-        bool dynamicVisible = !IsExperimentOutputSuppressed
+        bool dynamicVisible = EffectiveDynamicFeatureEnabled
             && (ActivePersonWindowCount > 0
                 || stereoFallbackDynamicRequested);
         return new PassthroughPresentationSnapshot(

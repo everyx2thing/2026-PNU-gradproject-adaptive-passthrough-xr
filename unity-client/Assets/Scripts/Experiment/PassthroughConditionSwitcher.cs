@@ -13,7 +13,7 @@ namespace TeamVR.Experiment
         private BoundaryVisibilityController boundaryVisibility;
 
         public ExperimentCondition CurrentCondition { get; private set; } =
-            ExperimentCondition.Adaptive;
+            ExperimentCondition.StaticAndDynamic;
 
         public bool OverrideActive { get; private set; }
 
@@ -128,7 +128,7 @@ namespace TeamVR.Experiment
                 && ActualBoundarySuppressed)
             {
                 return "Guardian is still suppressed. Disable full "
-                    + "Boundaryless or complete Roomscale setup before "
+                    + "Boundaryless mode or complete Roomscale setup before "
                     + "starting the Guardian condition.";
             }
 

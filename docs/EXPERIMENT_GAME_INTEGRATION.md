@@ -16,13 +16,13 @@ Scene에서 게임 오브젝트만 추출하고 현재 `SampleScene`을 교체�
 
 | 조건 | 커스텀 안전 출력 | Guardian 요청 | 측정·추론·ML·로그 |
 |---|---|---|---|
-| A `NoPassthrough` | 억제 | 숨김 | 계속 실행 |
-| B `GuardianDefault` | 억제 | 표시 | 계속 실행 |
-| C `Adaptive` | 사용자 설정 유지 | 숨김 | 계속 실행 |
+| Round 1 `GuardianDefault` | 억제 | 표시 | 계속 실행 |
+| Round 2 `StaticOnly` | 정적 HEAD/HANDS/LOW 패스스루 | 숨김 | 계속 실행 |
+| Round 3 `StaticAndDynamic` | 정적·동적 패스스루 | 숨김 | 계속 실행 |
 
 조건 전환은 컴포넌트의 `enabled`나 PlayerPrefs를 바꾸지 않는다. 라운드 종료,
 메뉴 복귀 또는 컨트롤러 비활성화 시 presentation과 boundary override만 기본
-정책으로 복구한다. B 조건은 실제 Guardian suppression이 1초 안에 해제되지
+정책으로 복구한다. Round 1은 실제 Guardian suppression이 2초 안에 해제되지
 않으면 라운드를 시작하지 않고 운영자 상태 문구를 표시한다.
 
 ## 라운드 좌표와 입력
@@ -30,6 +30,10 @@ Scene에서 게임 오브젝트만 추출하고 현재 `SampleScene`을 교체�
 - 9개 Spawn Point는 라운드 시작 시점 HMD 위치와 수평 yaw에 다시 정렬된다.
 - 원본 마커의 수평 오프셋만 사용하고 높이는 HMD 높이와 schedule offset을
   사용하므로 참가자 키와 시작 위치가 달라도 궤적 기준이 유지된다.
+- 발사체는 생성 시점의 최신 HMD 위치를 한 번 조준하고 이후에는 직선으로
+  비행한다. 플레이어가 회피해도 유도하거나 다시 방향을 잡지 않는다.
+- 점수 HUD는 보라색 기둥 상단의 `ScoreAnchor_PurpleTowerTop`에 고정되며,
+  위치를 바꾸지 않고 수평 yaw만 HMD를 향한다.
 - 총은 `RoundActive`일 때만 reticle, raycast와 trigger 발사를 허용한다.
 - 라운드 중 게임 메뉴는 `CanvasGroup`으로 숨기며 진단 패널은 계속 동작한다.
 - 라운드 종료와 중단 시 발사체, coroutine, 효과와 비영속 override를 정리한다.
@@ -44,6 +48,6 @@ Scene에서 게임 오브젝트만 추출하고 현재 `SampleScene`을 교체�
 - PlayMode는 A/B/C를 순서대로 전환하면서 presentation/boundary controller가
   비활성화되지 않고 종료 후 사용자 설정으로 복원되는지 검사한다.
 
-Quest 최종 시험에서는 B 조건의 실제 Guardian 표시 가능 여부와 A/B/C 임의
-순서, C 조건의 기존 정적·사람·ML·피드백 기능, 게임 최대 부하의 72 FPS를
+Quest 최종 시험에서는 Round 1의 실제 Guardian 표시 가능 여부와 세 라운드,
+Round 2의 정적 전용 출력, Round 3의 기존 정적·사람·ML 기능, 게임 최대 부하의 72 FPS를
 별도로 확인해야 한다.

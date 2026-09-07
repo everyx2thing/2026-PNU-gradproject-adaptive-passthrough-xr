@@ -203,6 +203,15 @@ namespace TeamVR.AdaptivePassthrough
             public string inferenceWatchdogState;
             public float inferenceSliceBudgetMilliseconds;
             public string staticEnabledChannels;
+            public bool configuredStaticFeatureEnabled;
+            public bool effectiveStaticFeatureEnabled;
+            public bool configuredDynamicFeatureEnabled;
+            public bool effectiveDynamicFeatureEnabled;
+            public string effectiveStaticChannels;
+            public bool environmentDepthStaticEnabled;
+            public bool roomSceneStaticEnabled;
+            public string configuredFeedbackMode;
+            public string effectiveFeedbackMode;
             public int staticWindowCount;
             public string staticHazardKeys;
             public string staticReplacementReason;
@@ -847,6 +856,33 @@ namespace TeamVR.AdaptivePassthrough
                 record.staticReplacementReason =
                     selective.LastStaticReplacementReason;
             }
+
+            if (selective != null)
+            {
+                record.configuredStaticFeatureEnabled =
+                    selective.StaticFeatureEnabled;
+                record.effectiveStaticFeatureEnabled =
+                    selective.EffectiveStaticFeatureEnabled;
+                record.configuredDynamicFeatureEnabled =
+                    selective.DynamicFeatureEnabled;
+                record.effectiveDynamicFeatureEnabled =
+                    selective.EffectiveDynamicFeatureEnabled;
+                record.effectiveStaticChannels =
+                    selective.EffectiveStaticChannels.ToString();
+                record.configuredFeedbackMode =
+                    selective.FeedbackMode.ToString();
+                record.effectiveFeedbackMode =
+                    selective.EffectiveFeedbackMode.ToString();
+            }
+#if ADAPTIVE_PASSTHROUGH_QUEST_CAMERA
+            if (spatialProvider != null)
+            {
+                record.environmentDepthStaticEnabled =
+                    spatialProvider.EnvironmentDepthStaticEnabled;
+                record.roomSceneStaticEnabled =
+                    spatialProvider.RoomSceneStaticEnabled;
+            }
+#endif
 
             StaticBoundaryRiskFrame frame = staticPolicy == null
                 ? null

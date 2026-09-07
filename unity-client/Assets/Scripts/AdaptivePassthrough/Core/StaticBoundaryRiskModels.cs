@@ -74,6 +74,20 @@ namespace TeamVR.AdaptivePassthrough
     {
         StaticRiskChannelMask EnabledStaticChannels { get; }
 
+        bool StaticFeatureEnabled { get; }
+
+        bool EffectiveStaticFeatureEnabled { get; }
+
+        bool DynamicFeatureEnabled { get; }
+
+        bool EffectiveDynamicFeatureEnabled { get; }
+
+        StaticRiskChannelMask EffectiveStaticChannels { get; }
+
+        SafetyFeedbackMode FeedbackMode { get; }
+
+        SafetyFeedbackMode EffectiveFeedbackMode { get; }
+
         int ActiveStaticWindowCount { get; }
 
         string VisibleStaticHazardKeys { get; }

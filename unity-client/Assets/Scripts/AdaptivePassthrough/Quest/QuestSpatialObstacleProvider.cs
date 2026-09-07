@@ -9,7 +9,8 @@ namespace TeamVR.AdaptivePassthrough
     [DisallowMultipleComponent]
     public sealed class QuestSpatialObstacleProvider : MonoBehaviour,
         ISpatialObstacleProvider,
-        IStaticBoundaryFrameProvider
+        IStaticBoundaryFrameProvider,
+        IStaticSpatialSourceControls
     {
         private const int MaximumProbeCount = 24;
         private const float MovementDirectionSpeed = 0.15f;
@@ -69,6 +70,8 @@ namespace TeamVR.AdaptivePassthrough
         [SerializeField] private EnvironmentRaycastManager raycastManager;
         [SerializeField] private TrackingQualityController qualityController;
         [SerializeField] private MonoBehaviour roomSceneProviderBehaviour;
+        [SerializeField] private bool environmentDepthStaticEnabled = true;
+        [SerializeField] private bool roomSceneStaticEnabled = true;
         [SerializeField, Min(0.25f)] private float maximumDistanceMeters = 6f;
         [SerializeField, Min(0.01f)] private float headSafetyRadius = 0.16f;
         [SerializeField, Min(0.01f)] private float handSafetyRadius = 0.10f;
@@ -158,6 +161,31 @@ namespace TeamVR.AdaptivePassthrough
 
         public bool IsEnvironmentDepthSupported =>
             EnvironmentRaycastManager.IsSupported;
+        public bool EnvironmentDepthStaticEnabled =>
+            environmentDepthStaticEnabled;
+        public bool RoomSceneStaticEnabled => roomSceneStaticEnabled;
+
+        public void SetEnvironmentDepthStaticEnabled(bool enabled)
+        {
+            if (environmentDepthStaticEnabled == enabled)
+            {
+                return;
+            }
+
+            environmentDepthStaticEnabled = enabled;
+            ResetTrackingSession();
+        }
+
+        public void SetRoomSceneStaticEnabled(bool enabled)
+        {
+            if (roomSceneStaticEnabled == enabled)
+            {
+                return;
+            }
+
+            roomSceneStaticEnabled = enabled;
+            ResetTrackingSession();
+        }
 
         private void Awake()
         {
@@ -283,7 +311,8 @@ namespace TeamVR.AdaptivePassthrough
             double now = Time.realtimeSinceStartupAsDouble;
             BodyState state = StateFor(probe.Owner);
             bool isHand = probe.Owner != SpatialProbeOwner.Head;
-            if (raycastManager == null
+            if (!environmentDepthStaticEnabled
+                || raycastManager == null
                 || !EnvironmentRaycastManager.IsSupported)
             {
                 measurement = SpatialObstacleMeasurement.Unavailable(now);
@@ -446,13 +475,29 @@ namespace TeamVR.AdaptivePassthrough
             locomotionState.velocity = headState.velocity;
             UpdateVelocity(leftState, leftHand, deltaSeconds, 0.50f, 2.0f);
             UpdateVelocity(rightState, rightHand, deltaSeconds, 0.50f, 2.0f);
-            UpdateFloorEstimate(now);
+            if (environmentDepthStaticEnabled)
+            {
+                UpdateFloorEstimate(now);
+            }
+            else
+            {
+                hasFloorEstimate = false;
+                lastFloorEstimateAt = 0.0;
+            }
             ClearSelfRejection(leftState);
             ClearSelfRejection(rightState);
-            UpdateSafetyOverlap(
-                headState,
-                head,
-                headSafetyRadius);
+            if (environmentDepthStaticEnabled)
+            {
+                UpdateSafetyOverlap(
+                    headState,
+                    head,
+                    headSafetyRadius);
+            }
+            else
+            {
+                ClearSafetyOverlap(headState);
+                LatestHeadSafetyEdgeRaycastCount = 0;
+            }
             ClearSafetyOverlap(leftState);
             ClearSafetyOverlap(rightState);
 
@@ -1751,7 +1796,9 @@ namespace TeamVR.AdaptivePassthrough
             double now,
             SpatialProbePurpose purpose = SpatialProbePurpose.Standard)
         {
-            if (trackedTransform == null || roomSceneSpatialProvider == null)
+            if (!roomSceneStaticEnabled
+                || trackedTransform == null
+                || roomSceneSpatialProvider == null)
             {
                 return UnavailableEnvironmentMeasurement(
                     owner,
@@ -2149,7 +2196,8 @@ namespace TeamVR.AdaptivePassthrough
 
         private void PublishFallbackOrUnavailable(double now)
         {
-            StaticBoundaryRiskFrame fallback = roomSceneProvider == null
+            StaticBoundaryRiskFrame fallback = !roomSceneStaticEnabled
+                || roomSceneProvider == null
                 ? null
                 : roomSceneProvider.CurrentStaticBoundaryFrame;
             if (fallback != null

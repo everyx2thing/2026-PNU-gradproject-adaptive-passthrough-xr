@@ -4,12 +4,9 @@ using UnityEngine;
 namespace TeamVR.Experiment
 {
     // Drives a hand-authored world-space score readout (see the ScoreHud
-    // GameObject in the scene, positioned via WorldSpacePanelPlacementController
-    // like the experiment menu). This component only pushes the current
-    // score into the Inspector-assigned text field - it does not build or
-    // place any UI itself. Never references the AdaptivePassthrough risk
-    // pipeline. Follows the same refresh-gated LateUpdate pattern as
-    // QuestRiskHud.cs.
+    // GameObject in the scene). Its position is fixed to the purple tower's
+    // authored anchor while its horizontal yaw follows the viewer. Never
+    // references the AdaptivePassthrough risk pipeline.
     [DefaultExecutionOrder(760)]
     [DisallowMultipleComponent]
     public sealed class ExperimentScoreHud : MonoBehaviour
@@ -20,12 +17,18 @@ namespace TeamVR.Experiment
         [Tooltip("Hand-placed in the scene - drag the score readout's text here.")]
         [SerializeField] private TMP_Text scoreText;
 
+        [Tooltip("Fixed anchor generated above the purple tower.")]
+        [SerializeField] private Transform scoreAnchor;
+        [Tooltip("Optional HMD transform. Resolved from OVRCameraRig when empty.")]
+        [SerializeField] private Transform viewer;
+
         private double nextRefreshAt;
 
         public bool ValidateConfiguration(out string error)
         {
             ResolveReferences();
-            if (scoreSystem == null || scoreText == null)
+            if (scoreSystem == null || scoreText == null
+                || scoreAnchor == null || viewer == null)
             {
                 error = "Experiment score HUD references are incomplete.";
                 return false;
@@ -47,6 +50,9 @@ namespace TeamVR.Experiment
 
         private void LateUpdate()
         {
+            ResolveReferences();
+            FaceViewerWithoutMoving();
+
             double now = Time.realtimeSinceStartupAsDouble;
             if (now < nextRefreshAt)
             {
@@ -69,11 +75,55 @@ namespace TeamVR.Experiment
             scoreText.text = "SCORE\n" + score;
         }
 
+        public void ConfigureAnchor(Transform anchor, Transform viewerTransform)
+        {
+            scoreAnchor = anchor;
+            viewer = viewerTransform;
+        }
+
+        public void FaceViewerWithoutMoving()
+        {
+            if (scoreAnchor == null)
+            {
+                return;
+            }
+
+            transform.position = scoreAnchor.position;
+            if (viewer == null)
+            {
+                return;
+            }
+
+            Vector3 direction = Vector3.ProjectOnPlane(
+                transform.position - viewer.position,
+                Vector3.up);
+            if (direction.sqrMagnitude > 0.0001f)
+            {
+                transform.rotation = Quaternion.LookRotation(
+                    direction.normalized,
+                    Vector3.up);
+            }
+        }
+
         private void ResolveReferences()
         {
             if (scoreSystem == null)
             {
                 scoreSystem = FindAnyObjectByType<ExperimentScoreSystem>();
+            }
+
+            if (viewer == null)
+            {
+                OVRCameraRig rig = FindAnyObjectByType<OVRCameraRig>();
+                if (rig != null)
+                {
+                    viewer = rig.centerEyeAnchor;
+                }
+            }
+
+            if (viewer == null && Camera.main != null)
+            {
+                viewer = Camera.main.transform;
             }
         }
     }

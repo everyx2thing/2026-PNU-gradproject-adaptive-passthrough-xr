@@ -25,6 +25,8 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
         public int Version = RuntimeSettingsVersion;
         public int SelectedPage;
         public bool StaticFeatureEnabled = true;
+        public bool EnvironmentDepthStaticEnabled = true;
+        public bool RoomSceneStaticEnabled = true;
         public bool DynamicFeatureEnabled = true;
         public bool MlEnabled;
         public int TrackingProfile;
@@ -78,6 +80,7 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
     [SerializeField] private StaticPassthroughPolicyController staticPolicy;
     [SerializeField] private DynamicPassthroughPolicyController dynamicPolicy;
     [SerializeField] private SelectivePassthroughController presentation;
+    [SerializeField] private MonoBehaviour staticSpatialSourceControlsBehaviour;
     [SerializeField] private TrackingQualityController trackingQuality;
     [SerializeField] private WorldSpacePanelPlacementController panelPlacement;
     [SerializeField, Min(1f)] private float refreshRateHz = 5f;
@@ -144,6 +147,7 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
     private double nextRefreshAt;
     private bool refreshing;
     private int currentPage;
+    private IStaticSpatialSourceControls staticSpatialSourceControls;
 
     private static readonly Color PanelColor =
         new Color(0.025f, 0.035f, 0.055f, 0.96f);
@@ -221,7 +225,8 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
         DynamicPassthroughPolicyController dynamicController,
         SelectivePassthroughController presentationController,
         TrackingQualityController qualityController = null,
-        WorldSpacePanelPlacementController placementController = null)
+        WorldSpacePanelPlacementController placementController = null,
+        MonoBehaviour staticSourceControls = null)
     {
         if (personalization != null)
         {
@@ -234,6 +239,9 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
         presentation = presentationController;
         trackingQuality = qualityController;
         panelPlacement = placementController;
+        staticSpatialSourceControlsBehaviour = staticSourceControls;
+        staticSpatialSourceControls = staticSourceControls
+            as IStaticSpatialSourceControls;
         if (isActiveAndEnabled && personalization != null)
         {
             personalization.SnapshotUpdated += Refresh;
@@ -277,10 +285,17 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
 
         if (feedbackModeButton != null && feedbackModeLabel != null)
         {
-            bool passthrough = presentation == null
-                || presentation.FeedbackMode
-                    == SafetyFeedbackMode.Passthrough;
-            feedbackModeLabel.text = passthrough
+            SafetyFeedbackMode configured = presentation == null
+                ? SafetyFeedbackMode.Passthrough
+                : presentation.FeedbackMode;
+            SafetyFeedbackMode effective = presentation == null
+                ? configured
+                : presentation.EffectiveFeedbackMode;
+            bool passthrough = effective
+                == SafetyFeedbackMode.Passthrough;
+            feedbackModeLabel.text = configured != effective
+                ? "OUTPUT: PASSTHROUGH (ROUND)"
+                : passthrough
                 ? "OUTPUT: PASSTHROUGH"
                 : "OUTPUT: RED + HAPTICS";
             Image image = feedbackModeButton.targetGraphic as Image;
@@ -684,40 +699,62 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
             staticTitle.text = "STATIC";
             staticTitle.fontSize = 15f;
             RectTransform titleRect = staticTitle.rectTransform;
-            titleRect.anchorMax = new Vector2(0.195f, 0.975f);
+            titleRect.anchorMax = new Vector2(0.155f, 0.975f);
         }
         staticStateChip = CreateStatusChip(
             staticCard.transform,
             "StaticState",
-            new Vector2(0.57f, 0.81f),
-            new Vector2(0.76f, 0.965f));
+            new Vector2(0.705f, 0.81f),
+            new Vector2(0.825f, 0.965f));
         staticEmergencyChip = CreateStatusChip(
             staticCard.transform,
             "Emergency",
-            new Vector2(0.77f, 0.81f),
+            new Vector2(0.83f, 0.81f),
             new Vector2(0.97f, 0.965f));
         CreateToggleButton(
             staticCard.transform,
             "HEAD",
-            new Vector2(0.20f, 0.81f),
-            new Vector2(0.315f, 0.965f),
+            new Vector2(0.16f, 0.81f),
+            new Vector2(0.255f, 0.965f),
             () => presentation == null || presentation.HeadFeatureEnabled,
             () => presentation?.ToggleHeadFeature());
         CreateToggleButton(
             staticCard.transform,
             "HANDS",
-            new Vector2(0.32f, 0.81f),
-            new Vector2(0.445f, 0.965f),
+            new Vector2(0.26f, 0.81f),
+            new Vector2(0.375f, 0.965f),
             () => presentation == null || presentation.HandsFeatureEnabled,
             () => presentation?.ToggleHandsFeature());
         CreateToggleButton(
             staticCard.transform,
             "LOW",
-            new Vector2(0.45f, 0.81f),
-            new Vector2(0.565f, 0.965f),
+            new Vector2(0.38f, 0.81f),
+            new Vector2(0.47f, 0.965f),
             () => presentation == null
                 || presentation.LowObstacleFeatureEnabled,
             () => presentation?.ToggleLowObstacleFeature());
+        CreateToggleButton(
+            staticCard.transform,
+            "ROOM",
+            new Vector2(0.475f, 0.81f),
+            new Vector2(0.585f, 0.965f),
+            () => staticSpatialSourceControls == null
+                || staticSpatialSourceControls.RoomSceneStaticEnabled,
+            () => staticSpatialSourceControls
+                ?.SetRoomSceneStaticEnabled(
+                    !staticSpatialSourceControls.RoomSceneStaticEnabled));
+        CreateToggleButton(
+            staticCard.transform,
+            "DEPTH",
+            new Vector2(0.59f, 0.81f),
+            new Vector2(0.70f, 0.965f),
+            () => staticSpatialSourceControls == null
+                || staticSpatialSourceControls
+                    .EnvironmentDepthStaticEnabled,
+            () => staticSpatialSourceControls
+                ?.SetEnvironmentDepthStaticEnabled(
+                    !staticSpatialSourceControls
+                        .EnvironmentDepthStaticEnabled));
         headRiskBar = CreateRiskBar(
             staticCard.transform,
             "HEAD",
@@ -2593,6 +2630,12 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
             SelectedPage = currentPage,
             StaticFeatureEnabled = presentation == null
                 || presentation.StaticFeatureEnabled,
+            EnvironmentDepthStaticEnabled =
+                staticSpatialSourceControls == null
+                || staticSpatialSourceControls
+                    .EnvironmentDepthStaticEnabled,
+            RoomSceneStaticEnabled = staticSpatialSourceControls == null
+                || staticSpatialSourceControls.RoomSceneStaticEnabled,
             HeadFeatureEnabled = presentation == null
                 || presentation.HeadFeatureEnabled,
             HandsFeatureEnabled = presentation == null
@@ -2649,10 +2692,24 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
             // Missing additive fields must preserve the historical all-on
             // behavior instead of deserializing as false.
             settings.PreserveAllOnForLegacyJson(settingsJson);
+            if (!settingsJson.Contains(
+                    "\"EnvironmentDepthStaticEnabled\""))
+            {
+                settings.EnvironmentDepthStaticEnabled = true;
+            }
+            if (!settingsJson.Contains("\"RoomSceneStaticEnabled\""))
+            {
+                settings.RoomSceneStaticEnabled = true;
+            }
 
             currentPage = Mathf.Max(0, settings.SelectedPage);
             presentation?.SetStaticFeatureEnabled(
                 settings.StaticFeatureEnabled);
+            staticSpatialSourceControls
+                ?.SetEnvironmentDepthStaticEnabled(
+                    settings.EnvironmentDepthStaticEnabled);
+            staticSpatialSourceControls?.SetRoomSceneStaticEnabled(
+                settings.RoomSceneStaticEnabled);
             presentation?.SetHeadFeatureEnabled(
                 settings.HeadFeatureEnabled);
             presentation?.SetHandsFeatureEnabled(
@@ -2697,6 +2754,9 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
         panelOpacity = 1f;
         currentPage = 0;
         presentation?.SetStaticFeatureEnabled(true);
+        staticSpatialSourceControls
+            ?.SetEnvironmentDepthStaticEnabled(true);
+        staticSpatialSourceControls?.SetRoomSceneStaticEnabled(true);
         presentation?.SetHeadFeatureEnabled(true);
         presentation?.SetHandsFeatureEnabled(true);
         presentation?.SetLowObstacleFeatureEnabled(true);
@@ -2782,6 +2842,25 @@ public sealed class PersonalizationRuntimePanel : MonoBehaviour
         {
             presentation =
                 FindAnyObjectByType<SelectivePassthroughController>();
+        }
+
+        staticSpatialSourceControls =
+            staticSpatialSourceControlsBehaviour
+                as IStaticSpatialSourceControls;
+        if (staticSpatialSourceControls == null)
+        {
+            MonoBehaviour[] behaviours = FindObjectsByType<MonoBehaviour>(
+                FindObjectsInactive.Include,
+                FindObjectsSortMode.None);
+            for (int i = 0; i < behaviours.Length; i++)
+            {
+                if (behaviours[i] is IStaticSpatialSourceControls controls)
+                {
+                    staticSpatialSourceControlsBehaviour = behaviours[i];
+                    staticSpatialSourceControls = controls;
+                    break;
+                }
+            }
         }
 
         if (trackingQuality == null)

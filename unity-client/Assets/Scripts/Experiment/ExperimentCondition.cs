@@ -2,8 +2,8 @@ namespace TeamVR.Experiment
 {
     public enum ExperimentCondition
     {
-        NoPassthrough,
-        GuardianDefault,
-        Adaptive
+        GuardianDefault = 0,
+        StaticOnly = 1,
+        StaticAndDynamic = 2
     }
 }

@@ -37,13 +37,13 @@ namespace TeamVR.AdaptivePassthrough.PlayModeTests
                 ExperimentPresentationOverride[] expectedPresentation =
                 {
                     ExperimentPresentationOverride.SuppressAll,
-                    ExperimentPresentationOverride.SuppressAll,
-                    ExperimentPresentationOverride.UseUserSettings
+                    ExperimentPresentationOverride.StaticOnly,
+                    ExperimentPresentationOverride.StaticAndDynamic
                 };
                 BoundaryVisibilityOverride[] expectedBoundary =
                 {
-                    BoundaryVisibilityOverride.ForceSuppressed,
                     BoundaryVisibilityOverride.ForceVisible,
+                    BoundaryVisibilityOverride.ForceSuppressed,
                     BoundaryVisibilityOverride.ForceSuppressed
                 };
 
@@ -68,6 +68,16 @@ namespace TeamVR.AdaptivePassthrough.PlayModeTests
                     Assert.That(
                         ReadProperty(boundary, "ExperimentOverride"),
                         Is.EqualTo(expectedBoundary[i]));
+                    Assert.That(
+                        ReadProperty(
+                            presentation,
+                            "EffectiveStaticFeatureEnabled"),
+                        Is.EqualTo(i > 0));
+                    Assert.That(
+                        ReadProperty(
+                            presentation,
+                            "EffectiveDynamicFeatureEnabled"),
+                        Is.EqualTo(i == 2));
                 }
 
                 switcherType.GetMethod("RestoreConfiguredBehavior")

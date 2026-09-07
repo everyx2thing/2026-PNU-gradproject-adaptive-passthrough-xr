@@ -11,13 +11,16 @@ namespace TeamVR.Experiment
         IExperimentConditionProvider,
         TeamVR.AdaptivePassthrough.IExperimentRuntimeContextProvider
     {
+        public const float DefaultRoundDurationSeconds = 180f;
+
         [SerializeField]
         private PassthroughConditionSwitcher conditionSwitcher;
         [SerializeField]
         private ExperimentBallSpawner ballSpawner;
-        [SerializeField, Min(10f)] private float maxRoundSeconds = 300f;
+        [SerializeField, Min(10f)]
+        private float maxRoundSeconds = DefaultRoundDurationSeconds;
         [SerializeField, Min(0.1f)]
-        private float guardianReadyTimeoutSeconds = 1f;
+        private float guardianReadyTimeoutSeconds = 2f;
 
         private Coroutine timeoutCoroutine;
         private Coroutine startCoroutine;
@@ -26,7 +29,7 @@ namespace TeamVR.Experiment
         public bool RoundActive => roundActive;
         public bool Transitioning => startCoroutine != null;
         public ExperimentCondition CurrentCondition { get; private set; } =
-            ExperimentCondition.Adaptive;
+            ExperimentCondition.StaticAndDynamic;
         public long RoundSequence { get; private set; }
         public string RoundId { get; private set; } = string.Empty;
         public string LastStartError { get; private set; } = string.Empty;
@@ -147,7 +150,9 @@ namespace TeamVR.Experiment
                 condition);
             roundActive = true;
             startCoroutine = null;
-            ballSpawner.StartRound(scheduleSet, HandleRoundComplete);
+            // The experiment duration is fixed. Finishing the last projectile
+            // early must not shorten a participant's round.
+            ballSpawner.StartRound(scheduleSet, null);
             timeoutCoroutine = StartCoroutine(
                 RoundTimeout(maxRoundSeconds));
             RoundStarted?.Invoke(condition);

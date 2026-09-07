@@ -26,5 +26,4 @@
   <uses-feature android:name="com.oculus.feature.RENDER_MODEL" />
   <uses-permission android:name="com.oculus.permission.RENDER_MODEL" />
   <uses-permission android:name="com.oculus.permission.BOUNDARY_VISIBILITY" />
-  <uses-feature android:name="com.oculus.feature.BOUNDARYLESS_APP" android:required="true" />
 </manifest>

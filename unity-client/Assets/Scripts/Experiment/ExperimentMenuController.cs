@@ -13,12 +13,6 @@ namespace TeamVR.Experiment
             + "Must not reveal which condition this button maps to.")]
         public string displayLabel = "Round 1";
 
-        [Tooltip(
-            "Actual condition this button triggers. Not shown to the "
-            + "participant - change per participant to counterbalance "
-            + "condition order.")]
-        public ExperimentCondition condition = ExperimentCondition.Adaptive;
-
         public ProjectileScheduleSet scheduleSet;
 
         [Tooltip("Hand-placed in the scene - drag the round's Button here.")]
@@ -37,8 +31,8 @@ namespace TeamVR.Experiment
     // out and restyled by clicking around in the Editor - this controller
     // only wires click handlers and pushes idle/experienced colors onto the
     // Inspector-assigned references below. Button-to-condition mapping is
-    // set per slot in the inspector so the experimenter can counterbalance
-    // condition order without touching code.
+    // deliberately fixed by slot index so an Inspector edit cannot change
+    // the experiment protocol.
     [DefaultExecutionOrder(740)]
     [DisallowMultipleComponent]
     public sealed class ExperimentMenuController : MonoBehaviour
@@ -183,7 +177,22 @@ namespace TeamVR.Experiment
             SetMenuVisible(true);
         }
 
-        private void StartRound(ExperimentRoundSlot slot)
+        public static ExperimentCondition ConditionForRoundIndex(
+            int roundIndex)
+        {
+            switch (roundIndex)
+            {
+                case 0: return ExperimentCondition.GuardianDefault;
+                case 1: return ExperimentCondition.StaticOnly;
+                case 2: return ExperimentCondition.StaticAndDynamic;
+                default:
+                    throw new ArgumentOutOfRangeException(
+                        nameof(roundIndex),
+                        "Experiment rounds are indexed from 0 through 2.");
+            }
+        }
+
+        private void StartRound(int roundIndex, ExperimentRoundSlot slot)
         {
             if (roundController == null
                 || roundController.RoundActive
@@ -195,7 +204,9 @@ namespace TeamVR.Experiment
 
             pendingSlot = slot;
             SetOperatorStatus("Checking experiment condition...");
-            if (!roundController.BeginRound(slot.condition, slot.scheduleSet))
+            ExperimentCondition condition =
+                ConditionForRoundIndex(roundIndex);
+            if (!roundController.BeginRound(condition, slot.scheduleSet))
             {
                 pendingSlot = null;
                 SetOperatorStatus(roundController.LastStartError);
@@ -230,6 +241,7 @@ namespace TeamVR.Experiment
         {
             for (int i = 0; i < slots.Length; i++)
             {
+                int roundIndex = i;
                 ExperimentRoundSlot slot = slots[i];
                 if (slot.button == null)
                 {
@@ -237,7 +249,8 @@ namespace TeamVR.Experiment
                 }
 
                 slot.button.onClick.RemoveAllListeners();
-                slot.button.onClick.AddListener(() => StartRound(slot));
+                slot.button.onClick.AddListener(
+                    () => StartRound(roundIndex, slot));
             }
 
             if (resetButton != null)

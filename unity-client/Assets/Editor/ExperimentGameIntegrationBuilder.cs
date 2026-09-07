@@ -39,6 +39,9 @@ public static class ExperimentGameIntegrationBuilder
         GameObject systems = FindSceneObject(source, "Experiment Systems");
         GameObject menu = FindSceneObject(source, "ExperimentMenuCanvas");
         GameObject score = FindSceneObject(source, "ScoreHud");
+        GameObject purpleTower = FindSceneObject(
+            source,
+            "tower-round-build-d (1)");
         ExperimentThreatIndicatorController threat =
             UnityEngine.Object.FindFirstObjectByType<
                 ExperimentThreatIndicatorController>(
@@ -48,6 +51,7 @@ public static class ExperimentGameIntegrationBuilder
         Require(systems, "Experiment Systems");
         Require(menu, "ExperimentMenuCanvas");
         Require(score, "ScoreHud");
+        Require(purpleTower, "tower-round-build-d (1)");
         Require(threat, "ExperimentThreatIndicator");
 
         var root = new GameObject("ExperimentGameRoot");
@@ -80,6 +84,11 @@ public static class ExperimentGameIntegrationBuilder
         Require(scoreHud, nameof(ExperimentScoreHud));
 
         round.Configure(switcher, spawner);
+        SetFloat(
+            round,
+            "maxRoundSeconds",
+            ExperimentRoundController.DefaultRoundDurationSeconds);
+        SetFloat(round, "guardianReadyTimeoutSeconds", 2f);
         SetObjectReference(scoreSystem, "roundController", round);
         SetObjectReference(gun, "roundController", round);
         SetObjectReference(threat, "ballSpawner", spawner);
@@ -133,7 +142,9 @@ public static class ExperimentGameIntegrationBuilder
             operatorStatus);
 
         ConfigurePanelPlacement(menu, 1.15f, 0.32f, 0.75f);
-        ConfigurePanelPlacement(score, 0.90f, 0.62f, 0.60f);
+        Transform scoreAnchor = CreateScoreAnchor(purpleTower, score);
+        SetObjectReference(scoreHud, "scoreAnchor", scoreAnchor);
+        SetObjectReference(scoreHud, "viewer", null);
 
         ExperimentGameRoot gameRoot = root.AddComponent<ExperimentGameRoot>();
         SetObjectReference(gameRoot, "roundController", round);
@@ -237,6 +248,53 @@ public static class ExperimentGameIntegrationBuilder
         serialized.ApplyModifiedPropertiesWithoutUndo();
     }
 
+    private static Transform CreateScoreAnchor(
+        GameObject purpleTower,
+        GameObject score)
+    {
+        Renderer[] renderers = purpleTower.GetComponentsInChildren<Renderer>(
+            true);
+        if (renderers.Length == 0)
+        {
+            throw new InvalidOperationException(
+                "The purple tower has no Renderer bounds.");
+        }
+
+        Bounds bounds = renderers[0].bounds;
+        for (int i = 1; i < renderers.Length; i++)
+        {
+            bounds.Encapsulate(renderers[i].bounds);
+        }
+
+        Transform oldAnchor = purpleTower.transform.Find(
+            "ScoreAnchor_PurpleTowerTop");
+        if (oldAnchor != null)
+        {
+            UnityEngine.Object.DestroyImmediate(oldAnchor.gameObject);
+        }
+
+        var anchorObject = new GameObject("ScoreAnchor_PurpleTowerTop");
+        Transform anchor = anchorObject.transform;
+        anchor.SetParent(purpleTower.transform, true);
+        anchor.position = new Vector3(
+            bounds.center.x,
+            bounds.max.y + 0.10f,
+            bounds.center.z);
+        anchor.rotation = Quaternion.identity;
+
+        WorldSpacePanelPlacementController placement =
+            score.GetComponent<WorldSpacePanelPlacementController>();
+        if (placement != null)
+        {
+            UnityEngine.Object.DestroyImmediate(placement);
+        }
+
+        score.transform.SetParent(anchor, true);
+        score.transform.position = anchor.position;
+        score.transform.rotation = Quaternion.identity;
+        return anchor;
+    }
+
     private static void SetObjectReference(
         UnityEngine.Object target,
         string field,
@@ -250,6 +308,22 @@ public static class ExperimentGameIntegrationBuilder
         }
 
         property.objectReferenceValue = value;
+        serialized.ApplyModifiedPropertiesWithoutUndo();
+    }
+
+    private static void SetFloat(
+        UnityEngine.Object target,
+        string field,
+        float value)
+    {
+        var serialized = new SerializedObject(target);
+        SerializedProperty property = serialized.FindProperty(field);
+        if (property == null)
+        {
+            throw new MissingFieldException(target.GetType().Name, field);
+        }
+
+        property.floatValue = value;
         serialized.ApplyModifiedPropertiesWithoutUndo();
     }
 
@@ -316,6 +390,26 @@ public static class ExperimentGameIntegrationBuilder
             {
                 return true;
             }
+        }
+
+        ExperimentScoreHud scoreHud =
+            prefab.GetComponentInChildren<ExperimentScoreHud>(true);
+        if (scoreHud == null
+            || scoreHud.GetComponent<WorldSpacePanelPlacementController>()
+                != null)
+        {
+            return true;
+        }
+
+        var scoreSerialized = new SerializedObject(scoreHud);
+        SerializedProperty scoreAnchor =
+            scoreSerialized.FindProperty("scoreAnchor");
+        if (scoreAnchor == null
+            || scoreAnchor.objectReferenceValue == null
+            || scoreAnchor.objectReferenceValue.name
+                != "ScoreAnchor_PurpleTowerTop")
+        {
+            return true;
         }
 
         return false;

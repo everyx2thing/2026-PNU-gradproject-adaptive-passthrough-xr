@@ -325,7 +325,10 @@ namespace TeamVR.AdaptivePassthrough.Tests
                 Assert.That(experimentLogger, Is.Not.Null);
                 Assert.That(spatialProvider, Is.Not.Null);
                 Assert.That(trackingQuality, Is.Not.Null);
-                Assert.That(panelPlacementCount, Is.GreaterThanOrEqualTo(3));
+                Assert.That(
+                    panelPlacementCount,
+                    Is.GreaterThanOrEqualTo(2),
+                    "ScoreHud is tower-anchored and no longer contributes a movable panel.");
                 Assert.That(alertFeedback, Is.Not.Null);
                 Assert.That(
                     AssetDatabase.LoadAssetAtPath<Shader>(
@@ -1005,7 +1008,7 @@ namespace TeamVR.AdaptivePassthrough.Tests
         }
 
         [Test]
-        public void BoundarylessManifestPrioritizesFullModeWithContextualFallback()
+        public void ManifestSupportsRuntimeBoundaryVisibilityWithoutForcedBoundaryless()
         {
             ScriptableObject config =
                 AssetDatabase.LoadAssetAtPath<ScriptableObject>(
@@ -1035,7 +1038,7 @@ namespace TeamVR.AdaptivePassthrough.Tests
                 "AndroidManifest.xml");
             Assert.That(File.Exists(manifestPath), Is.True);
             string manifest = File.ReadAllText(manifestPath);
-            StringAssert.Contains(
+            StringAssert.DoesNotContain(
                 "com.oculus.feature.BOUNDARYLESS_APP",
                 manifest);
             StringAssert.Contains(

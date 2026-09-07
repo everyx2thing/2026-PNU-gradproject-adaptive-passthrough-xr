@@ -22,21 +22,30 @@ public sealed class WorldSpacePanelPlacementController : MonoBehaviour
     private float heightMeters = -0.05f;
     [SerializeField, Range(MinimumScale, MaximumScale)]
     private float scaleMultiplier = 1f;
+    [SerializeField] private bool toggleVisibilityWithB;
 
     private Vector3 baseLocalScale;
     private bool baseScaleCaptured;
     private bool initiallyPlaced;
     private float yHoldSeconds;
+    private bool bWasPressed;
+    private bool panelVisible = true;
+    private bool visibilityComponentsResolved;
+    private Canvas panelCanvas;
+    private BaseRaycaster panelRaycaster;
 
     public float DistanceMeters => distanceMeters;
     public float HeightMeters => heightMeters;
     public float ScaleMultiplier => scaleMultiplier;
     public Transform PanelRoot => panelRoot != null ? panelRoot : transform;
+    public bool PanelVisible => panelVisible;
+    public bool ToggleVisibilityWithB => toggleVisibilityWithB;
 
     private void Awake()
     {
         ResolveReferences();
         CaptureBaseScale();
+        ResolveVisibilityComponents();
     }
 
     private void Start()
@@ -63,6 +72,20 @@ public sealed class WorldSpacePanelPlacementController : MonoBehaviour
             yHoldSeconds = 0f;
             BringHere();
         }
+
+        InputDevice rightController = InputDevices.GetDeviceAtXRNode(
+            XRNode.RightHand);
+        bool bPressed = rightController.isValid
+            && rightController.TryGetFeatureValue(
+                CommonUsages.secondaryButton,
+                out bool secondaryPressedRight)
+            && secondaryPressedRight;
+        if (toggleVisibilityWithB && bPressed && !bWasPressed)
+        {
+            TogglePanelVisibility();
+        }
+
+        bWasPressed = bPressed;
     }
 
     public void Configure(Transform target, Transform headTransform = null)
@@ -71,6 +94,39 @@ public sealed class WorldSpacePanelPlacementController : MonoBehaviour
         head = headTransform;
         baseScaleCaptured = false;
         CaptureBaseScale();
+        visibilityComponentsResolved = false;
+        ResolveVisibilityComponents();
+    }
+
+    public void ConfigureBButtonVisibilityToggle(bool enabled)
+    {
+        toggleVisibilityWithB = enabled;
+    }
+
+    public void TogglePanelVisibility()
+    {
+        SetPanelVisible(!panelVisible);
+    }
+
+    public void SetPanelVisible(bool visible)
+    {
+        ResolveVisibilityComponents();
+        if (visible && !panelVisible)
+        {
+            // Opening with B includes the old Y-button recovery behavior.
+            BringHere();
+        }
+
+        panelVisible = visible;
+        if (panelRaycaster != null)
+        {
+            panelRaycaster.enabled = visible;
+        }
+
+        if (panelCanvas != null)
+        {
+            panelCanvas.enabled = visible;
+        }
     }
 
     public void SetDistance(float value)
@@ -220,6 +276,34 @@ public sealed class WorldSpacePanelPlacementController : MonoBehaviour
         }
 
         baseScaleCaptured = true;
+    }
+
+    private void ResolveVisibilityComponents()
+    {
+        if (visibilityComponentsResolved)
+        {
+            return;
+        }
+
+        Transform root = PanelRoot;
+        panelCanvas = root.GetComponent<Canvas>();
+        if (panelCanvas == null)
+        {
+            panelCanvas = root.GetComponentInChildren<Canvas>(true);
+        }
+
+        panelRaycaster = root.GetComponent<BaseRaycaster>();
+        if (panelRaycaster == null)
+        {
+            panelRaycaster = root.GetComponentInChildren<BaseRaycaster>(true);
+        }
+
+        if (panelCanvas != null)
+        {
+            panelVisible = panelCanvas.enabled;
+        }
+
+        visibilityComponentsResolved = true;
     }
 }
 

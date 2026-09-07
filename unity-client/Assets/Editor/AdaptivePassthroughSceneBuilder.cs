@@ -289,7 +289,8 @@ public static class AdaptivePassthroughSceneBuilder
                 dynamicPolicy,
                 presentation,
                 personalization,
-                trackingQuality);
+                trackingQuality,
+                spatialProvider);
             EditorUtility.SetDirty(staticPolicy);
             EditorUtility.SetDirty(dynamicPolicy);
             EditorUtility.SetDirty(presentation);
@@ -424,7 +425,8 @@ public static class AdaptivePassthroughSceneBuilder
         DynamicPassthroughPolicyController dynamicPolicy,
         SelectivePassthroughController presentation,
         PersonalizationRuntimeController personalization,
-        TrackingQualityController trackingQuality)
+        TrackingQualityController trackingQuality,
+        QuestSpatialObstacleProvider spatialProvider)
     {
         var loggerObject = new SerializedObject(experimentLogger);
         Text leftText =
@@ -456,6 +458,7 @@ public static class AdaptivePassthroughSceneBuilder
             GetOrAdd<WorldSpacePanelPlacementController>(
                 labelRoot.gameObject);
         panelPlacement.Configure(labelRoot);
+        panelPlacement.ConfigureBButtonVisibilityToggle(true);
 
         Transform existingPanel = labelRoot.Find("QuestRiskHudPanel");
         GameObject panelObject;
@@ -600,7 +603,8 @@ public static class AdaptivePassthroughSceneBuilder
             dynamicPolicy,
             presentation,
             trackingQuality,
-            panelPlacement);
+            panelPlacement,
+            spatialProvider);
         EditorUtility.SetDirty(experimentLogger);
         EditorUtility.SetDirty(hud);
         EditorUtility.SetDirty(togglePanel);

@@ -18,6 +18,8 @@ public sealed class StaticPassthroughPolicyController : MonoBehaviour,
     private IStaticBoundaryFrameProvider frameProvider;
     private double nextEvaluationAt;
     private long sequence;
+    private bool hasExperimentChannelsOverride;
+    private StaticRiskChannelMask experimentChannelsOverride;
 
     public event Action<PassthroughSourceDecision> DecisionPublished;
     public event Action<StaticPassthroughDecision> StaticDecisionPublished;
@@ -125,6 +127,11 @@ public sealed class StaticPassthroughPolicyController : MonoBehaviour,
         get { return enabledChannels & StaticRiskChannelMask.All; }
     }
 
+    public StaticRiskChannelMask EffectiveEnabledChannels =>
+        hasExperimentChannelsOverride
+            ? experimentChannelsOverride & StaticRiskChannelMask.All
+            : EnabledChannels;
+
     private void Awake()
     {
         ResolveReference();
@@ -192,7 +199,16 @@ public sealed class StaticPassthroughPolicyController : MonoBehaviour,
     public void SetEnabledChannels(StaticRiskChannelMask channels)
     {
         enabledChannels = channels & StaticRiskChannelMask.All;
-        policy?.SetEnabledChannels(enabledChannels);
+        policy?.SetEnabledChannels(EffectiveEnabledChannels);
+    }
+
+    public void SetExperimentEnabledChannelsOverride(
+        bool active,
+        StaticRiskChannelMask channels = StaticRiskChannelMask.All)
+    {
+        hasExperimentChannelsOverride = active;
+        experimentChannelsOverride = channels & StaticRiskChannelMask.All;
+        policy?.SetEnabledChannels(EffectiveEnabledChannels);
     }
 
     public void SetChannelEnabled(
@@ -231,7 +247,7 @@ public sealed class StaticPassthroughPolicyController : MonoBehaviour,
             sequence,
             timestampSeconds,
             frame,
-            enabledChannels);
+            EffectiveEnabledChannels);
         Latest = LatestStatic.SourceDecision;
         StaticDecisionPublished?.Invoke(LatestStatic);
         DecisionPublished?.Invoke(Latest);
@@ -258,7 +274,7 @@ public sealed class StaticPassthroughPolicyController : MonoBehaviour,
         }
 
         policy = new StaticBoundaryPolicy(policySettings);
-        policy.SetEnabledChannels(enabledChannels);
+        policy.SetEnabledChannels(EffectiveEnabledChannels);
         sequence = 0;
         Latest = null;
         LatestStatic = null;
