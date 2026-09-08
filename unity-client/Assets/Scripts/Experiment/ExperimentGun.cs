@@ -21,6 +21,7 @@ namespace TeamVR.Experiment
     {
         [SerializeField] private OVRCameraRig cameraRig;
         [SerializeField] private ExperimentRoundController roundController;
+        [SerializeField] private ExperimentTutorialController tutorialController;
         [SerializeField] private bool attachToRightHand = true;
 
         [Header("Muzzle / Hold Pose (tune after first in-headset check)")]
@@ -45,8 +46,8 @@ namespace TeamVR.Experiment
         private Material tracerMaterial;
         private float tracerHideAtTime = -1f;
 
-        public bool CanFire => roundController != null
-            && roundController.RoundActive;
+        public bool CanFire => (roundController != null && roundController.RoundActive)
+            || (tutorialController != null && tutorialController.IsActive);
 
         public void Configure(
             OVRCameraRig rig,
@@ -77,6 +78,10 @@ namespace TeamVR.Experiment
 
         private void Awake()
         {
+            if (tutorialController == null)
+            {
+                tutorialController = FindAnyObjectByType<ExperimentTutorialController>();
+            }
             ResolveReferences();
             BuildReticle();
             BuildTracer();

@@ -68,7 +68,7 @@ MonoBehaviour:
     spawnHeightOffsetMeters: -0.05
     targetHeightOffsetMeters: -0.2
     speedMetersPerSecond: 1.5
-    ballType: 0
+    ballType: 1
   - spawnTimeSeconds: 45
     direction: 7
     spawnDistanceMeters: 4
@@ -96,7 +96,7 @@ MonoBehaviour:
     spawnHeightOffsetMeters: -0.05
     targetHeightOffsetMeters: 0
     speedMetersPerSecond: 1.4
-    ballType: 1
+    ballType: 0
   - spawnTimeSeconds: 65
     direction: 6
     spawnDistanceMeters: 4
@@ -117,7 +117,7 @@ MonoBehaviour:
     spawnHeightOffsetMeters: 0.05
     targetHeightOffsetMeters: 0
     speedMetersPerSecond: 1.7
-    ballType: 1
+    ballType: 0
   - spawnTimeSeconds: 80
     direction: 3
     spawnDistanceMeters: 4
@@ -131,28 +131,28 @@ MonoBehaviour:
     spawnHeightOffsetMeters: 0.05
     targetHeightOffsetMeters: 0
     speedMetersPerSecond: 1.4
-    ballType: 1
+    ballType: 0
   - spawnTimeSeconds: 90
     direction: 7
     spawnDistanceMeters: 4
     spawnHeightOffsetMeters: -0.05
     targetHeightOffsetMeters: -0.2
     speedMetersPerSecond: 1.5
-    ballType: 0
+    ballType: 1
   - spawnTimeSeconds: 90
     direction: 0
     spawnDistanceMeters: 4
     spawnHeightOffsetMeters: 0.05
     targetHeightOffsetMeters: -0.2
     speedMetersPerSecond: 1.6
-    ballType: 0
+    ballType: 1
   - spawnTimeSeconds: 95
     direction: 2
     spawnDistanceMeters: 4
     spawnHeightOffsetMeters: -0.05
     targetHeightOffsetMeters: -0.2
     speedMetersPerSecond: 1.7
-    ballType: 0
+    ballType: 1
   - spawnTimeSeconds: 100
     direction: 4
     spawnDistanceMeters: 4
@@ -180,7 +180,7 @@ MonoBehaviour:
     spawnHeightOffsetMeters: -0.05
     targetHeightOffsetMeters: 0
     speedMetersPerSecond: 1.6
-    ballType: 1
+    ballType: 0
   - spawnTimeSeconds: 120
     direction: 3
     spawnDistanceMeters: 4
@@ -201,21 +201,21 @@ MonoBehaviour:
     spawnHeightOffsetMeters: 0.05
     targetHeightOffsetMeters: 0
     speedMetersPerSecond: 1.4
-    ballType: 1
+    ballType: 0
   - spawnTimeSeconds: 130
     direction: 0
     spawnDistanceMeters: 4
     spawnHeightOffsetMeters: -0.05
     targetHeightOffsetMeters: -0.2
     speedMetersPerSecond: 1.5
-    ballType: 0
+    ballType: 1
   - spawnTimeSeconds: 135
     direction: 2
     spawnDistanceMeters: 4
     spawnHeightOffsetMeters: 0.05
     targetHeightOffsetMeters: -0.2
     speedMetersPerSecond: 1.6
-    ballType: 0
+    ballType: 1
   - spawnTimeSeconds: 140
     direction: 4
     spawnDistanceMeters: 4
@@ -285,21 +285,21 @@ MonoBehaviour:
     spawnHeightOffsetMeters: 0.05
     targetHeightOffsetMeters: -0.2
     speedMetersPerSecond: 1.6
-    ballType: 0
+    ballType: 1
   - spawnTimeSeconds: 180
     direction: 6
     spawnDistanceMeters: 4
     spawnHeightOffsetMeters: -0.05
     targetHeightOffsetMeters: -0.2
     speedMetersPerSecond: 1.7
-    ballType: 0
+    ballType: 1
   - spawnTimeSeconds: 185
     direction: 8
     spawnDistanceMeters: 4
     spawnHeightOffsetMeters: 0.05
     targetHeightOffsetMeters: 0
     speedMetersPerSecond: 1.3
-    ballType: 1
+    ballType: 0
   - spawnTimeSeconds: 190
     direction: 1
     spawnDistanceMeters: 4
@@ -327,7 +327,7 @@ MonoBehaviour:
     spawnHeightOffsetMeters: 0.05
     targetHeightOffsetMeters: 0
     speedMetersPerSecond: 1.7
-    ballType: 1
+    ballType: 0
   - spawnTimeSeconds: 210
     direction: 0
     spawnDistanceMeters: 4
@@ -341,7 +341,7 @@ MonoBehaviour:
     spawnHeightOffsetMeters: 0.05
     targetHeightOffsetMeters: 0
     speedMetersPerSecond: 1.4
-    ballType: 1
+    ballType: 0
   - spawnTimeSeconds: 210
     direction: 4
     spawnDistanceMeters: 4
@@ -362,14 +362,14 @@ MonoBehaviour:
     spawnHeightOffsetMeters: -0.05
     targetHeightOffsetMeters: -0.2
     speedMetersPerSecond: 1.7
-    ballType: 0
+    ballType: 1
   - spawnTimeSeconds: 225
     direction: 1
     spawnDistanceMeters: 4
     spawnHeightOffsetMeters: 0.05
     targetHeightOffsetMeters: 0
     speedMetersPerSecond: 1.3
-    ballType: 1
+    ballType: 0
   - spawnTimeSeconds: 230
     direction: 3
     spawnDistanceMeters: 4
@@ -411,7 +411,7 @@ MonoBehaviour:
     spawnHeightOffsetMeters: 0.05
     targetHeightOffsetMeters: 0
     speedMetersPerSecond: 1.4
-    ballType: 1
+    ballType: 0
   - spawnTimeSeconds: 250
     direction: 6
     spawnDistanceMeters: 4
@@ -425,14 +425,14 @@ MonoBehaviour:
     spawnHeightOffsetMeters: 0.05
     targetHeightOffsetMeters: -0.2
     speedMetersPerSecond: 1.6
-    ballType: 0
+    ballType: 1
   - spawnTimeSeconds: 260
     direction: 1
     spawnDistanceMeters: 4
     spawnHeightOffsetMeters: -0.05
     targetHeightOffsetMeters: -0.2
     speedMetersPerSecond: 1.7
-    ballType: 0
+    ballType: 1
   - spawnTimeSeconds: 265
     direction: 3
     spawnDistanceMeters: 4
@@ -453,7 +453,7 @@ MonoBehaviour:
     spawnHeightOffsetMeters: 0.05
     targetHeightOffsetMeters: 0
     speedMetersPerSecond: 1.5
-    ballType: 1
+    ballType: 0
   - spawnTimeSeconds: 270
     direction: 0
     spawnDistanceMeters: 4
@@ -481,7 +481,7 @@ MonoBehaviour:
     spawnHeightOffsetMeters: 0.05
     targetHeightOffsetMeters: 0
     speedMetersPerSecond: 1.4
-    ballType: 1
+    ballType: 0
   - spawnTimeSeconds: 290
     direction: 8
     spawnDistanceMeters: 4
@@ -495,7 +495,7 @@ MonoBehaviour:
     spawnHeightOffsetMeters: 0.05
     targetHeightOffsetMeters: -0.2
     speedMetersPerSecond: 1.6
-    ballType: 0
+    ballType: 1
   - spawnTimeSeconds: 300
     direction: 3
     spawnDistanceMeters: 4

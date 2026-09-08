@@ -1,3 +1,4 @@
+using System;
 using UnityEngine;
 
 namespace TeamVR.Experiment
@@ -14,6 +15,15 @@ namespace TeamVR.Experiment
     [DisallowMultipleComponent]
     public sealed class ExperimentBall : MonoBehaviour
     {
+        // Fired right before the GameObject is destroyed, in addition to
+        // (never instead of) the existing ExperimentScoreSystem call below -
+        // lets external systems (e.g. the tutorial controller) observe the
+        // exact outcome of a specific ball without duplicating hit-detection
+        // logic. No round/score code subscribes to these; purely additive.
+        public event Action<ExperimentBall> ShotHit;
+        public event Action<ExperimentBall> BodyHit;
+        public event Action<ExperimentBall> Expired;
+
         [Header("Body Hit Cylinder (horizontal reach + vertical range around eye height)")]
         [SerializeField] private float bodyHitRadiusMeters = 0.4f;
         [SerializeField] private float bodyTopOffsetMeters = 0.15f;
@@ -39,6 +49,7 @@ namespace TeamVR.Experiment
         private bool resolved;
 
         public BallType BallType => ballType;
+        public Vector3 FaceRotationOffsetEulerAngles => faceRotationOffsetEulerAngles;
 
         private void Awake()
         {
@@ -90,6 +101,7 @@ namespace TeamVR.Experiment
 
             resolved = true;
             ResolveReferences();
+            ShotHit?.Invoke(this);
             scoreSystem?.RegisterShotHit(ballType);
 
             if (ballType == BallType.MustAvoid && bombExplosionEffectPrefab != null)
@@ -124,6 +136,7 @@ namespace TeamVR.Experiment
             if (traveledDistanceMeters >= maxTravelDistanceMeters)
             {
                 resolved = true;
+                Expired?.Invoke(this);
                 Destroy(gameObject);
             }
         }
@@ -132,6 +145,7 @@ namespace TeamVR.Experiment
         {
             resolved = true;
             ResolveReferences();
+            BodyHit?.Invoke(this);
             scoreSystem?.RegisterBodyHit(ballType);
             Destroy(gameObject);
         }

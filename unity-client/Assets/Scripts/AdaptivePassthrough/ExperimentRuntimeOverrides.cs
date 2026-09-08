@@ -52,6 +52,6 @@ public static class ExperimentScoreRules
 
     public static int ApplyBodyHit(int currentScore, bool optionalTarget)
     {
-        return optionalTarget ? currentScore - 100 : 0;
+        return optionalTarget ? System.Math.Max(0, currentScore - 100) : 0;
     }
 }

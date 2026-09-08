@@ -129,6 +129,31 @@ namespace TeamVR.Experiment
             roundCoroutine = StartCoroutine(RunRound(scheduleSet));
         }
 
+        // Practice uses the current head pose without starting a timed round.
+        public GameObject SpawnSingleBall(BallSpawnEntry entry)
+        {
+            ResolveReferences();
+            EnsureMaterials();
+            if (cameraRig == null || cameraRig.centerEyeAnchor == null)
+            {
+                return null;
+            }
+
+            Vector3 flatForward = Vector3.ProjectOnPlane(
+                cameraRig.centerEyeAnchor.forward, Vector3.up);
+            if (flatForward.sqrMagnitude < 0.0001f)
+            {
+                flatForward = Vector3.forward;
+            }
+
+            int previousCount = activeBalls.Count;
+            SpawnBall(entry, cameraRig.centerEyeAnchor.position,
+                Quaternion.LookRotation(flatForward.normalized, Vector3.up),
+                ResolveLayoutOrigin());
+            return activeBalls.Count > previousCount
+                ? activeBalls[activeBalls.Count - 1] : null;
+        }
+
         public void StopRound()
         {
             if (roundCoroutine != null)
@@ -177,23 +202,14 @@ namespace TeamVR.Experiment
 
             Transform layoutOrigin = ResolveLayoutOrigin();
 
+            // Play the authored schedule verbatim - every entry, at its own
+            // authored spawnTimeSeconds - so a round runs for the full
+            // duration the schedule asset was designed for.
             IReadOnlyList<BallSpawnEntry> entries = scheduleSet.Entries;
             float elapsedSeconds = 0f;
-            for (int i = 0;
-                i < ExperimentRoundSchedulePlanner.PlannedProjectileCount;
-                i++)
+            for (int i = 0; i < entries.Count; i++)
             {
-                int sourceIndex = ExperimentRoundSchedulePlanner.GetSourceIndex(
-                    i,
-                    entries.Count);
-                if (sourceIndex < 0)
-                {
-                    break;
-                }
-
-                BallSpawnEntry entry = entries[sourceIndex];
-                entry.spawnTimeSeconds =
-                    ExperimentRoundSchedulePlanner.GetSpawnTimeSeconds(i);
+                BallSpawnEntry entry = entries[i];
                 float waitSeconds = Mathf.Max(
                     0f,
                     entry.spawnTimeSeconds - elapsedSeconds);
@@ -319,16 +335,10 @@ namespace TeamVR.Experiment
 
             if (spawnPoint != null)
             {
-                Vector3 localOffset = layoutOrigin != null
-                    ? layoutOrigin.InverseTransformPoint(spawnPoint.position)
-                    : spawnPoint.localPosition;
-                // Authored spawn markers sit at a nominal standing height.
-                // The live HMD is the round anchor, so only the horizontal
-                // layout offset is retained; schedule height is relative to
-                // the participant's current head height.
-                localOffset.y = 0f;
-                return originPosition
-                    + originRotation * localOffset
+                // Spawn exactly where the marker is physically placed in
+                // the room, independent of the participant's current
+                // position or gaze direction.
+                return spawnPoint.position
                     + Vector3.up * entry.spawnHeightOffsetMeters;
             }
 
@@ -448,103 +458,6 @@ namespace TeamVR.Experiment
             else
             {
                 DestroyImmediate(material);
-            }
-        }
-    }
-
-    // Reduces the authored five-minute/72-projectile schedule to a fixed
-    // three-minute plan without changing the beginning or ending difficulty.
-    // The first 30 seconds keep the original six single shots. Burst density
-    // then rises sooner and reaches the original eight-projectile final phase.
-    public static class ExperimentRoundSchedulePlanner
-    {
-        public const float RoundDurationSeconds = 180f;
-        public const int PlannedProjectileCount = 44;
-
-        private const int FirstPreservedCount = 6;
-        private const int FinalPreservedCount = 3;
-        private const int LastBeat = 35;
-        private const float BeatSeconds = 5f;
-
-        public static float GetSpawnTimeSeconds(int plannedIndex)
-        {
-            ValidatePlannedIndex(plannedIndex);
-            int remaining = plannedIndex;
-            for (int beat = 1; beat <= LastBeat; beat++)
-            {
-                int burstSize = GetBurstSize(beat);
-                if (remaining < burstSize)
-                {
-                    return beat * BeatSeconds;
-                }
-
-                remaining -= burstSize;
-            }
-
-            throw new ArgumentOutOfRangeException(nameof(plannedIndex));
-        }
-
-        public static int GetSourceIndex(int plannedIndex, int sourceCount)
-        {
-            ValidatePlannedIndex(plannedIndex);
-            if (sourceCount <= 0)
-            {
-                return -1;
-            }
-
-            if (sourceCount <= FirstPreservedCount + FinalPreservedCount)
-            {
-                float normalized = plannedIndex
-                    / (float)(PlannedProjectileCount - 1);
-                return Mathf.RoundToInt(normalized * (sourceCount - 1));
-            }
-
-            if (plannedIndex < FirstPreservedCount)
-            {
-                return plannedIndex;
-            }
-
-            int finalPlanStart =
-                PlannedProjectileCount - FinalPreservedCount;
-            if (plannedIndex >= finalPlanStart)
-            {
-                return sourceCount
-                    - (PlannedProjectileCount - plannedIndex);
-            }
-
-            int middleIndex = plannedIndex - FirstPreservedCount;
-            int middleCount = PlannedProjectileCount
-                - FirstPreservedCount
-                - FinalPreservedCount;
-            int sourceStart = FirstPreservedCount;
-            int sourceEnd = sourceCount - FinalPreservedCount - 1;
-            float middleNormalized = middleIndex / (float)(middleCount - 1);
-            return Mathf.RoundToInt(
-                Mathf.Lerp(sourceStart, sourceEnd, middleNormalized));
-        }
-
-        private static int GetBurstSize(int beat)
-        {
-            switch (beat)
-            {
-                case 12: // 60 seconds: first two-projectile burst.
-                case 18: // 90 seconds: reinforce the intermediate level.
-                case 33: // 165 seconds: final-phase lead-in.
-                    return 2;
-                case 24: // 120 seconds: first three-projectile burst.
-                case 30: // 150 seconds: sustained final difficulty.
-                case 35: // 175 seconds: original three-shot ending.
-                    return 3;
-                default:
-                    return 1;
-            }
-        }
-
-        private static void ValidatePlannedIndex(int plannedIndex)
-        {
-            if (plannedIndex < 0 || plannedIndex >= PlannedProjectileCount)
-            {
-                throw new ArgumentOutOfRangeException(nameof(plannedIndex));
             }
         }
     }

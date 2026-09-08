@@ -39,6 +39,8 @@ namespace TeamVR.Experiment
     {
         [SerializeField]
         private ExperimentRoundController roundController;
+        [SerializeField]
+        private PassthroughConditionSwitcher conditionSwitcher;
 
         [SerializeField]
         private ExperimentRoundSlot[] slots =
@@ -55,6 +57,13 @@ namespace TeamVR.Experiment
         [SerializeField] private Button resetButton;
         [Tooltip("Operator-only setup/Guardian errors. Never shown as a condition label.")]
         [SerializeField] private TMP_Text operatorStatusText;
+
+        [Header("Tutorial")]
+        [SerializeField] private ExperimentTutorialController tutorialController;
+        [SerializeField] private Button tutorialButton;
+        [SerializeField] private Image tutorialButtonImage;
+        [SerializeField] private TMP_Text tutorialCompletedTag;
+        private bool tutorialCompleted;
 
         [Header("Style")]
         [SerializeField] private Color idleColor =
@@ -128,11 +137,20 @@ namespace TeamVR.Experiment
             }
 
             SetOperatorStatus(string.Empty);
+            RefreshTutorialVisual();
+            conditionSwitcher?.ApplyCondition(
+                ExperimentCondition.GuardianDefault);
         }
 
         private void OnEnable()
         {
             ResolveReferences();
+            if (tutorialController != null)
+            {
+                tutorialController.TutorialStarted += HandleTutorialStarted;
+                tutorialController.TutorialReturnedToMenu += HandleTutorialReturnedToMenu;
+                tutorialController.TutorialCompleted += HandleTutorialCompleted;
+            }
             if (roundController != null)
             {
                 roundController.RoundStarted += HandleRoundStarted;
@@ -143,11 +161,59 @@ namespace TeamVR.Experiment
 
         private void OnDisable()
         {
+            if (tutorialController != null)
+            {
+                tutorialController.TutorialStarted -= HandleTutorialStarted;
+                tutorialController.TutorialReturnedToMenu -= HandleTutorialReturnedToMenu;
+                tutorialController.TutorialCompleted -= HandleTutorialCompleted;
+            }
             if (roundController != null)
             {
                 roundController.RoundStarted -= HandleRoundStarted;
                 roundController.RoundEnded -= HandleRoundEnded;
                 roundController.RoundStartFailed -= HandleRoundStartFailed;
+            }
+        }
+
+        private void HandleTutorialStarted()
+        {
+            SetOperatorStatus(string.Empty);
+            SetMenuVisible(false);
+        }
+
+        private void HandleTutorialReturnedToMenu()
+        {
+            SetMenuVisible(true);
+        }
+
+        private void HandleTutorialCompleted()
+        {
+            tutorialCompleted = true;
+            RefreshTutorialVisual();
+        }
+
+        private void StartTutorial()
+        {
+            if (tutorialController == null
+                || (roundController != null
+                    && (roundController.RoundActive || roundController.Transitioning)))
+            {
+                return;
+            }
+
+            tutorialController.BeginTutorial();
+        }
+
+        private void RefreshTutorialVisual()
+        {
+            if (tutorialButtonImage != null)
+            {
+                tutorialButtonImage.color = tutorialCompleted ? experiencedColor : idleColor;
+            }
+
+            if (tutorialCompletedTag != null)
+            {
+                tutorialCompletedTag.text = tutorialCompleted ? "연습 완료" : string.Empty;
             }
         }
 
@@ -197,6 +263,7 @@ namespace TeamVR.Experiment
             if (roundController == null
                 || roundController.RoundActive
                 || roundController.Transitioning
+                || (tutorialController != null && tutorialController.IsActive)
                 || slot == null)
             {
                 return;
@@ -215,6 +282,8 @@ namespace TeamVR.Experiment
 
         private void ResetExperiencedState()
         {
+            tutorialCompleted = false;
+            RefreshTutorialVisual();
             for (int i = 0; i < slots.Length; i++)
             {
                 slots[i].experienced = false;
@@ -239,6 +308,11 @@ namespace TeamVR.Experiment
 
         private void WireButtons()
         {
+            if (tutorialButton != null)
+            {
+                tutorialButton.onClick.RemoveAllListeners();
+                tutorialButton.onClick.AddListener(StartTutorial);
+            }
             for (int i = 0; i < slots.Length; i++)
             {
                 int roundIndex = i;
@@ -262,10 +336,19 @@ namespace TeamVR.Experiment
 
         private void ResolveReferences()
         {
+            if (tutorialController == null)
+            {
+                tutorialController = FindAnyObjectByType<ExperimentTutorialController>();
+            }
             if (roundController == null)
             {
                 roundController =
                     FindAnyObjectByType<ExperimentRoundController>();
+            }
+            if (conditionSwitcher == null)
+            {
+                conditionSwitcher =
+                    FindAnyObjectByType<PassthroughConditionSwitcher>();
             }
         }
 
@@ -288,6 +371,18 @@ namespace TeamVR.Experiment
             menuCanvasGroup.alpha = visible ? 1f : 0f;
             menuCanvasGroup.interactable = visible;
             menuCanvasGroup.blocksRaycasts = visible;
+
+            // Round 2/3 are the only conditions meant to actually show our
+            // adaptive passthrough - the round-select menu itself is idle
+            // time, not part of any round, so it must never inherit
+            // whatever passthrough state a previous round (or plain user
+            // settings) would otherwise leave active behind it.
+            if (visible)
+            {
+                ResolveReferences();
+                conditionSwitcher?.ApplyCondition(
+                    ExperimentCondition.GuardianDefault);
+            }
         }
 
         private void SetOperatorStatus(string message)

@@ -68,6 +68,11 @@ namespace TeamVR.Experiment
             }
         }
 
+        public void ResetScore()
+        {
+            SetScore(0);
+        }
+
         private void HandleRoundStarted(ExperimentCondition condition)
         {
             SetScore(0);
