@@ -11,7 +11,13 @@ namespace TeamVR.Experiment
         IExperimentConditionProvider,
         TeamVR.AdaptivePassthrough.IExperimentRuntimeContextProvider
     {
-        public const float DefaultRoundDurationSeconds = 180f;
+        // Authored schedules (ProjectileScheduleSet_Condition*) run the full
+        // 72-entry, 300-second beat plan verbatim (see
+        // ExperimentBallSpawner.RunRound) - 305s leaves one 5s beat of
+        // margin for the last projectile(s) to resolve or expire
+        // (max travel ~5.5m / min speed ~1.3m/s =~ 4.2s) before the
+        // timeout would otherwise cut them off.
+        public const float DefaultRoundDurationSeconds = 305f;
 
         [SerializeField]
         private PassthroughConditionSwitcher conditionSwitcher;

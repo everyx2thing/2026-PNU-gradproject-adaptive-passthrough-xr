@@ -1901,7 +1901,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::TeamVR.Experiment.ExperimentRoundController
   conditionSwitcher: {fileID: 6953110756087584619}
   ballSpawner: {fileID: 3735345155551113822}
-  maxRoundSeconds: 180
+  maxRoundSeconds: 305
   guardianReadyTimeoutSeconds: 2
 --- !u!82 &2045294167716954789
 AudioSource:
@@ -2321,6 +2321,10 @@ MonoBehaviour:
   menuRoot: {fileID: 6493315632923134480}
   resetButton: {fileID: 1865496723564518309}
   operatorStatusText: {fileID: 3136239208417524842}
+  tutorialController: {fileID: 0}
+  tutorialButton: {fileID: 0}
+  tutorialButtonImage: {fileID: 0}
+  tutorialCompletedTag: {fileID: 0}
   idleColor: {r: 0.3372549, g: 0, b: 0.68235296, a: 0.98}
   experiencedColor: {r: 0.1, g: 0.42, b: 0.24, a: 0.98}
   resetColor: {r: 0.5, g: 0.18, b: 0.18, a: 0.98}
@@ -4397,6 +4401,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::TeamVR.Experiment.ExperimentGun
   cameraRig: {fileID: 0}
   roundController: {fileID: 5025969564154258531}
+  tutorialController: {fileID: 0}
   attachToRightHand: 1
   muzzleLocalPosition: {x: 0, y: 0.02, z: 0.3}
   handHoldLocalPosition: {x: 0, y: -0.03, z: 0.05}

@@ -17,7 +17,7 @@ namespace TeamVR.Experiment
         [Tooltip("Hand-placed in the scene - drag the score readout's text here.")]
         [SerializeField] private TMP_Text scoreText;
 
-        [Tooltip("Fixed anchor generated above the purple tower.")]
+        [Tooltip("Optional fixed anchor to snap/face toward every frame. Leave empty to keep the HUD wherever it was placed (e.g. by WorldSpacePanelPlacementController).")]
         [SerializeField] private Transform scoreAnchor;
         [Tooltip("Optional HMD transform. Resolved from OVRCameraRig when empty.")]
         [SerializeField] private Transform viewer;
@@ -27,8 +27,7 @@ namespace TeamVR.Experiment
         public bool ValidateConfiguration(out string error)
         {
             ResolveReferences();
-            if (scoreSystem == null || scoreText == null
-                || scoreAnchor == null || viewer == null)
+            if (scoreSystem == null || scoreText == null || viewer == null)
             {
                 error = "Experiment score HUD references are incomplete.";
                 return false;

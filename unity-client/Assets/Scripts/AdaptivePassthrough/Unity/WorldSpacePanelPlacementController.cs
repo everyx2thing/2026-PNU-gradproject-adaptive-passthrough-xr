@@ -8,9 +8,9 @@ using UnityEngine.XR;
 public sealed class WorldSpacePanelPlacementController : MonoBehaviour
 {
     public const float MinimumDistanceMeters = 0.5f;
-    public const float MaximumDistanceMeters = 3f;
+    public const float MaximumDistanceMeters = 7f;
     public const float MinimumHeightMeters = -0.75f;
-    public const float MaximumHeightMeters = 0.75f;
+    public const float MaximumHeightMeters = 4f;
     public const float MinimumScale = 0.5f;
     public const float MaximumScale = 1.5f;
 

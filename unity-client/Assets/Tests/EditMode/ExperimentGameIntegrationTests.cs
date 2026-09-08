@@ -212,6 +212,7 @@ namespace TeamVR.AdaptivePassthrough.Tests
             Assert.That(ExperimentScoreRules.ApplyShotHit(201, false), Is.EqualTo(100));
             Assert.That(ExperimentScoreRules.ApplyBodyHit(200, true), Is.EqualTo(100));
             Assert.That(ExperimentScoreRules.ApplyBodyHit(200, false), Is.Zero);
+            Assert.That(ExperimentScoreRules.ApplyBodyHit(50, true), Is.Zero);
         }
 
         [TestCase("ProjectileScheduleSet_ConditionA.asset")]
@@ -240,62 +241,33 @@ namespace TeamVR.AdaptivePassthrough.Tests
         }
 
         [Test]
-        public void RuntimePlanUsesFortyFourProjectilesAcrossThreeMinutes()
+        public void RuntimePlaysFullSeventyTwoProjectileScheduleVerbatim()
         {
-            Type planner = Type.GetType(
+            // ExperimentBallSpawner.RunRound no longer resamples/compresses
+            // the authored schedule - it plays every entry at its own
+            // authored spawnTimeSeconds, so a round covers the full
+            // five-minute (300s) span the schedule assets are authored for.
+            Type spawnerType = Type.GetType(
+                "TeamVR.Experiment.ExperimentBallSpawner, Assembly-CSharp");
+            Assert.That(spawnerType, Is.Not.Null);
+            Assert.That(
+                spawnerType.GetMethod(
+                    "RunRound",
+                    BindingFlags.NonPublic | BindingFlags.Instance),
+                Is.Not.Null);
+
+            Type plannerType = Type.GetType(
                 "TeamVR.Experiment.ExperimentRoundSchedulePlanner, "
                 + "Assembly-CSharp");
-            Assert.That(planner, Is.Not.Null);
-
-            const BindingFlags flags = BindingFlags.Public
-                | BindingFlags.Static;
-            int plannedCount = (int)planner.GetField(
-                "PlannedProjectileCount",
-                flags).GetRawConstantValue();
-            MethodInfo getTime = planner.GetMethod(
-                "GetSpawnTimeSeconds",
-                flags);
-            MethodInfo getSourceIndex = planner.GetMethod(
-                "GetSourceIndex",
-                flags);
-
-            Assert.That(plannedCount, Is.EqualTo(44));
-            var times = new float[plannedCount];
-            var sourceIndices = new int[plannedCount];
-            for (int i = 0; i < plannedCount; i++)
-            {
-                times[i] = Convert.ToSingle(
-                    getTime.Invoke(null, new object[] { i }));
-                sourceIndices[i] = Convert.ToInt32(
-                    getSourceIndex.Invoke(null, new object[] { i, 72 }));
-            }
-
-            Assert.That(times, Is.Ordered.Ascending);
-            Assert.That(times[0], Is.EqualTo(5f));
-            Assert.That(times[plannedCount - 1], Is.EqualTo(175f));
-            Assert.That(times.Count(value => value == 60f), Is.EqualTo(2));
-            Assert.That(times.Count(value => value == 120f), Is.EqualTo(3));
-            Assert.That(times.Count(value => value == 175f), Is.EqualTo(3));
-
-            int[] phaseCounts = new int[6];
-            foreach (float time in times)
-            {
-                int phase = Mathf.Clamp(
-                    Mathf.CeilToInt(time / 30f) - 1,
-                    0,
-                    phaseCounts.Length - 1);
-                phaseCounts[phase]++;
-            }
-
-            Assert.That(phaseCounts, Is.EqualTo(new[] { 6, 7, 7, 8, 8, 8 }));
-            Assert.That(sourceIndices.Take(6), Is.EqualTo(Enumerable.Range(0, 6)));
-            Assert.That(sourceIndices.Skip(plannedCount - 3),
-                Is.EqualTo(new[] { 69, 70, 71 }));
-            Assert.That(sourceIndices, Is.Ordered.Ascending);
+            Assert.That(
+                plannerType,
+                Is.Null,
+                "The old 72->44/300s->175s schedule compressor should stay "
+                + "removed - rounds must play the authored schedule as-is.");
         }
 
         [Test]
-        public void PrefabUsesFixedThreeMinuteRoundDuration()
+        public void PrefabUsesFiveMinuteRoundDuration()
         {
             GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(
                 PrefabPath);
@@ -305,9 +277,11 @@ namespace TeamVR.AdaptivePassthrough.Tests
                     && item.GetType().FullName
                         == "TeamVR.Experiment.ExperimentRoundController");
             var serialized = new SerializedObject(round);
+            // 305s = the full 300s authored schedule plus one 5s beat of
+            // margin for the last projectile(s) to resolve or expire.
             Assert.That(
                 serialized.FindProperty("maxRoundSeconds").floatValue,
-                Is.EqualTo(180f));
+                Is.EqualTo(305f));
         }
 
         [Test]
