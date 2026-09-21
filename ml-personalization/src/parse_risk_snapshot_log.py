@@ -17,6 +17,13 @@ passthroughEnabled가 False -> True -> False로 바뀌는 구간을
   추가한 로그부터만 실제 값이 들어옴. 없으면 0으로 채움.
 - A_space (공간 크기, m^2): 로그에 없는 값. --space-m2 인자로 직접 입력.
   (세션 찍을 때 방 크기를 팀원한테 물어봐서 넣을 것)
+- peak_risk (2026-09-21 추가): 활성화 구간(passthroughEnabled=True인 스냅샷들)
+  동안의 rtotal 최고값(rtotalAvailable=false면 rstatic/rdynamic 중 큰 값으로
+  대체)을 사용함. 이 rtotal/rstatic/rdynamic은 RiskSnapshotBuilder가 로깅·개인화
+  feature 계산용으로만 만드는 통합 스냅샷 값이라 실제 화면에 표시된 정적/동적
+  독립 정책의 판단과는 다를 수 있음(docs/STATIC_DYNAMIC_RISK_SEPARATION_SPEC.md
+  참고) — 그래도 passthroughEnabled 자체가 이미 이 통합 스냅샷 기준이라 이벤트
+  구간을 나누는 로직과 같은 소스를 쓰는 게 일관적이라 판단함.
 
 ## 사용법
     python parse_risk_snapshot_log.py \
@@ -34,9 +41,24 @@ DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
 
 SESSION_FIELDS = ["session_id", "A_space", "T_session"]
 EVENT_FIELDS = [
-    "session_id", "event_id", "timestamp_sec", "duration_sec",
+    "session_id", "event_id", "timestamp_sec", "duration_sec", "peak_risk",
     "is_manual_cancel", "controller_idle_sec", "head_speed_mps",
 ]
+
+
+def _effective_risk(record):
+    """스냅샷 한 개에서 label_event가 쓸 "이 순간의 위험도"를 뽑아냄.
+
+    rtotal(통합 위험도)이 있으면 그걸 쓰고, 없으면 rstatic/rdynamic 중 더 큰
+    값으로 대체함 (rdynamic은 unavailable일 때도 0.0으로 로깅되므로 그대로
+    max에 넣어도 안전함).
+    """
+    if record.get("rtotalAvailable"):
+        return float(record.get("rtotal", 0.0) or 0.0)
+
+    rstatic = float(record.get("rstatic", 0.0) or 0.0) if record.get("rstaticAvailable") else 0.0
+    rdynamic = float(record.get("rdynamic", 0.0) or 0.0)
+    return max(rstatic, rdynamic)
 
 
 def read_jsonl(path):
@@ -78,11 +100,13 @@ def read_jsonl(path):
 def extract_activation_events(records):
     """passthroughEnabled False->True->False 구간을 이벤트로 변환.
 
-    구간 안의 headSpeedMps는 평균을 낸다 (필드 없으면 0 처리).
+    구간 안의 headSpeedMps는 평균을, 위험도(_effective_risk)는 최고값(peak_risk)을
+    낸다 (필드 없으면 각각 0 처리).
     """
     events = []
     active_start = None
     active_speeds = []
+    active_peak_risk = 0.0
 
     snapshots = [r for r in records if r.get("recordType") == "riskSnapshot"]
     snapshots.sort(key=lambda r: r["timestampSeconds"])
@@ -90,21 +114,26 @@ def extract_activation_events(records):
     for r in snapshots:
         enabled = r.get("passthroughEnabled", False)
         speed = r.get("headSpeedMps", 0.0)
+        risk = _effective_risk(r)
 
         if enabled and active_start is None:
             active_start = r["timestampSeconds"]
             active_speeds = [speed]
+            active_peak_risk = risk
         elif enabled and active_start is not None:
             active_speeds.append(speed)
+            active_peak_risk = max(active_peak_risk, risk)
         elif (not enabled) and active_start is not None:
             end = r["timestampSeconds"]
             events.append({
                 "timestamp_sec": round(active_start, 3),
                 "duration_sec": round(end - active_start, 3),
+                "peak_risk": round(active_peak_risk, 4),
                 "head_speed_mps": round(sum(active_speeds) / len(active_speeds), 4) if active_speeds else 0.0,
             })
             active_start = None
             active_speeds = []
+            active_peak_risk = 0.0
 
     # 파일이 활성화된 채로 끝난 경우 마지막 이벤트 처리
     if active_start is not None and snapshots:
@@ -112,6 +141,7 @@ def extract_activation_events(records):
         events.append({
             "timestamp_sec": round(active_start, 3),
             "duration_sec": round(end - active_start, 3),
+            "peak_risk": round(active_peak_risk, 4),
             "head_speed_mps": round(sum(active_speeds) / len(active_speeds), 4) if active_speeds else 0.0,
         })
 
@@ -147,6 +177,7 @@ def main():
             "event_id": i,
             "timestamp_sec": e["timestamp_sec"],
             "duration_sec": e["duration_sec"],
+            "peak_risk": e["peak_risk"],
             "is_manual_cancel": 0,          # 제어 미구현 -> 항상 0 (한계, 문서 상단 참고)
             "controller_idle_sec": 0,       # 추적 로직 없음 -> 항상 0 (한계, 문서 상단 참고)
             "head_speed_mps": e["head_speed_mps"],

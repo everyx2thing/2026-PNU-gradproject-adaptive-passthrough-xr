@@ -25,6 +25,15 @@ POSITIVE_THRESHOLD = 3.0          # mock용: 이 시간(초) 이상 -> Positive
 REAL_CANCEL_NEGATIVE_THRESHOLD = 0.15  # real용 (TODO: 임시값, 데이터 더 쌓이면 재조정)
 REAL_POSITIVE_THRESHOLD = 0.3          # real용 (TODO: 임시값, 데이터 더 쌓이면 재조정)
 
+# 2026-09-21: duration만으로는 "짧게 켜졌지만 실제로 위험했던 경우"와 "그냥 임계값을
+# 살짝 넘겨서 오탐으로 켜진 경우"를 구분할 수 없음. RiskSnapshot에 이미 있는
+# static/dynamic 위험도의 "활성화 중 최고값(peak_risk)"을 duration과 같이 봐서 구분함
+# (build_features.py의 label_event 참고). mock/real 공용 — 아직 실 데이터로 이 경계값을
+# 검증한 적은 없어서 duration 임계값들처럼 mock/real을 나누지 않음 (TODO: 실 데이터
+# 쌓이면 재조정 검토).
+PEAK_RISK_BORDERLINE_THRESHOLD = 0.65  # 이 아래면 "임계값을 살짝 넘긴 수준" -> 오탐 추정
+PEAK_RISK_HIGH_THRESHOLD = 0.80        # 이 이상이면 짧아도 "실제로 위험했음" -> Positive
+
 # 슬라이딩 윈도우 기본값 (build_features.py)
 # 2026-07-28: real 데이터는 세션/이벤트 수가 아직 적어서 mock과 다른 값 사용.
 DEFAULT_WINDOW_SIZE = 10  # mock용. TODO: hyperparam_tuning.py 실험 결과 보고 재조정 검토

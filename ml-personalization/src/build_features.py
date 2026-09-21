@@ -4,11 +4,14 @@
 입력: data/mock_sessions.csv, data/mock_events.csv (generate_mock_logs.py 결과물)
 출력: data/mock_features.csv (윈도우 단위 feature 벡터 + 집계 라벨)
 
-## 라벨링 규칙
-- Negative (불필요한 활성화): 수동 해제 + 지속시간 2초 미만
-- Positive (필요했던 활성화): 지속시간 3초 이상 + 수동 해제 없음
-- Neutral (경계 케이스, 2~3초 구간): 애매한 구간이라 완충 처리
-  -> 이 규칙은 heuristic이라 나중에 실 데이터 보면서 재조정 필요 (TODO)
+## 라벨링 규칙 (label_event 참고, 2026-09-21 duration+peak_risk 결합으로 변경)
+- Positive (필요했던 활성화): 지속시간 3초 이상, 또는 짧아도 활성화 중 최고
+  위험도(peak_risk)가 아주 높았던 경우(사람이 순간적으로 아주 가까이 왔던 경우 등)
+- Negative (불필요한 활성화로 추정): 지속시간 2초 미만 + peak_risk도 임계값을
+  살짝 넘긴 수준(오탐으로 추정)
+- Neutral (경계 케이스): 나머지 애매한 구간은 완충 처리
+  -> duration 임계값과 peak_risk 임계값 모두 heuristic이라 나중에 실 데이터
+     보면서 재조정 필요 (TODO)
 
 ## Feature 벡터 (7차원)
 x = [f_pt, r_cancel, t_pt_bar, v_h_bar, v_h_max, A_space_norm, T_session_norm]
@@ -37,6 +40,7 @@ from config import (
     DEFAULT_WINDOW_SIZE, DEFAULT_STRIDE,
     REAL_CANCEL_NEGATIVE_THRESHOLD, REAL_POSITIVE_THRESHOLD,
     REAL_WINDOW_SIZE, REAL_STRIDE,
+    PEAK_RISK_BORDERLINE_THRESHOLD, PEAK_RISK_HIGH_THRESHOLD,
 )
 
 EPS = 1e-6
@@ -64,14 +68,32 @@ def label_event(event):
     노이즈성 반짝임(불필요했을 가능성 높음)으로 근사해서 Negative로 판단하도록
     바꿈. is_manual_cancel 필드/컬럼 자체는 앞으로 실제 수동 제어 기능이
     생기면 재도입할 수 있도록 이벤트 데이터에는 그대로 남겨둠 (TODO).
+
+    ## 설계 변경 (2026-09-21, peak_risk 결합)
+    duration만으로는 "짧게 켜졌지만 실제로 위험했던 경우"(예: 사람이 순간적으로
+    아주 가까이 왔다가 바로 멀어짐)와 "그냥 임계값을 살짝 넘겨서 오탐으로 켜진
+    경우"를 구분할 수 없음. RiskSnapshot에 이미 있는 static/dynamic 위험도의
+    "활성화 중 최고값"(peak_risk, 0~1)을 duration과 같이 봐서 이 둘을 구분함.
+    - duration이 충분히 길면(POSITIVE_THRESHOLD 이상) peak_risk와 무관하게
+      Positive로 본다 (지속된 활성화는 대체로 실제 필요했다고 가정).
+    - 짧아도 peak_risk가 아주 높았다면(PEAK_RISK_HIGH_THRESHOLD 이상) Positive.
+    - 짧고 peak_risk도 임계값을 살짝 넘긴 수준(PEAK_RISK_BORDERLINE_THRESHOLD
+      미만)이면 오탐으로 추정해 Negative.
+    - 나머지(짧지만 peak_risk가 애매하게 높은 경우 등)는 Neutral로 완충 처리.
+    peak_risk가 없는 이벤트(과거 데이터, 필드 누락)는 0.0으로 취급해 기존
+    duration-only 동작과 최대한 비슷하게 degrade됨.
     """
     duration = float(event["duration_sec"])
+    peak_risk = float(event.get("peak_risk", 0.0) or 0.0)
 
-    if duration < CANCEL_NEGATIVE_THRESHOLD:
-        return "Negative"
     if duration >= POSITIVE_THRESHOLD:
         return "Positive"
-    # 두 임계값 사이 구간은 애매한 경계 케이스라 Neutral로 완충 처리 (TODO: 재검토)
+    if peak_risk >= PEAK_RISK_HIGH_THRESHOLD:
+        return "Positive"
+    if duration < CANCEL_NEGATIVE_THRESHOLD and peak_risk < PEAK_RISK_BORDERLINE_THRESHOLD:
+        return "Negative"
+    # 나머지(경계 duration, 또는 짧지만 peak_risk가 애매한 경우)는 Neutral로
+    # 완충 처리 (TODO: 재검토)
     return "Neutral"
 
 
