@@ -172,7 +172,6 @@ python test_personalization.py    # 전체 파이프라인 통합 테스트
 - [공간 측정·사람 추적 품질 개선 구현 및 검증](docs/SPATIAL_TRACKING_QUALITY_IMPLEMENTATION.md)
 - [온디바이스(Sentis) ML 개인화 통합 스펙](docs/ONDEVICE_SENTIS_INTEGRATION.md)
 - [실험 게임 통합](docs/EXPERIMENT_GAME_INTEGRATION.md)
-- [착수보고서](docs/착수보고서.pdf) / [2026 중간보고서](docs/2026중간보고서_08_TeamVR_몰입형_XR을_위한_상황_인식_기반_Adaptive_Passthrough_Framework.pdf) / [최종보고서](docs/2026최종보고서_TeamVR_몰입형_XR을_위한_상황_인식_기반_Adaptive_Passthrough_Framework.pdf)
 
 전체 목록은 [`docs/README.md`](docs/README.md)에서도 볼 수 있습니다(일부 최신 문서는 아직 그 인덱스에 반영되지 않았습니다).
 
