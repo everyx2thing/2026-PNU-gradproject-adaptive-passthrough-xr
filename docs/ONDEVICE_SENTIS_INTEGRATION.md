@@ -67,15 +67,19 @@ dynamicPolicy.ApplyPersonalizedThresholds(
 기본값은 다음과 같다.
 
 ```text
-stableOnThreshold = 0.65
+stableOnThreshold = 0.50
 rapidOnThreshold  = 0.45
-handFullThreshold = 0.85
+handFullThreshold = 0.40
 dynamicOnThreshold  = 0.60
 dynamicOffThreshold = 0.45
 minimum sessions  = 5
 adjustment scale  = 0.20
 maximum threshold = 0.95
 ```
+
+(2026-09-21: 실기 테스트로 재조정된 값. `PersonalizationMath.Defaults`/
+`StaticBoundaryPolicySettings`(unity-client Core)와 `ml-personalization/src/config.py`의
+`THRESHOLD_DEFAULT`가 항상 같은 값을 가져야 함 — 한쪽을 바꾸면 다른 쪽도 같이 바꿀 것.)
 
 세션 수가 5 미만이면 자동 추론은 기본값을 유지한다. `APPLY ML NOW`는 명시적인
 사용자 동작이므로 cold-start를 한 번만 우회하여 즉시 추론·적용한다.

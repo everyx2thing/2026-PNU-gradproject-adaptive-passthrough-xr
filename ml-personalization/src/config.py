@@ -43,13 +43,18 @@ N_MIN_SESSIONS = 5  # TODO: 하이퍼파라미터, 실험 필요
 # 가중합 + 단일 tau_viz 임계값" 구조에서 "R_static_head/R_static_hand 두 경로 + UserState로
 # on/off 임계값을 Lerp 조절하는 구조"(QuestRiskExperimentLogger.cs, feature/static-boundary-passthrough
 # 브랜치)로 바뀌어서, 개인화 출력도 그에 맞춰 가중치가 아니라 임계값 조정으로 바꿈.
-# 아래 기본값은 QuestRiskExperimentLogger.cs의 [SerializeField] 기본값과 동일하게 맞춤 —
-# 그쪽 값이 바뀌면 여기도 같이 바꿔야 함 (아직 그 브랜치는 main에 머지되지 않음, TODO: 머지되면
-# 실제 필드명 노출 방식(public setter 등) 확인 후 PersonalizationSentisRunner.cs 연결).
+#
+# 2026-09-21: 위 브랜치가 main에 머지된 뒤 실제 Quest 실기 테스트로 기본값이 재조정된 걸
+# 여기서도 반영함. 기준은 unity-client의 StaticBoundaryRiskModels.cs(StaticBoundaryPolicySettings)
+# 및 PersonalizationModels.cs(PersonalizationMath.Default*) — 그쪽 주석에 따르면 정지 상태
+# head/저장애물 위험은 실측상 0.65까지 거의 안 올라가고(0.25m 비상 경로가 별도 처리), 손
+# 위험도(reach-gated)는 비상 범위 밖에서 0.52를 못 넘어서 기존 0.85는 사실상 절대 도달 못
+# 하는 죽은 임계값이었음. 이 THRESHOLD_DEFAULT는 unity-client 쪽 값과 항상 같아야 함 —
+# 한쪽만 바꾸고 다른 쪽을 안 바꾸면 개인화 결과가 서로 다른 기준선을 가정하게 됨.
 THRESHOLD_DEFAULT = {
-    "stable_on_threshold": 0.65,   # UserState=0(정적)일 때 Passthrough ON 기준
+    "stable_on_threshold": 0.50,   # UserState=0(정적)일 때 Passthrough ON 기준
     "rapid_on_threshold": 0.45,    # UserState=1(동적)일 때 Passthrough ON 기준
-    "hand_full_threshold": 0.85,   # R_static_hand ON 기준
+    "hand_full_threshold": 0.40,   # R_static_hand ON 기준
 }
 
 # 안전장치: 개인화로 인해 임계값이 너무 1에 가까워져서(=사실상 절대 안 켜짐) 안전 기능이
