@@ -5,9 +5,19 @@ Unity InferenceEngine importer cannot consume.  This converter preserves the
 forest decisions with Gather/LessOrEqual/Where/Add/Sub operations and exports
 one float output named ``risk_probability``.
 
-For the current Neutral/Positive model, Neutral is treated as Negative risk:
+build_features.py labels windows Negative/Positive/Neutral, but a given
+training run may not produce all three (e.g. it can land on just
+Negative+Positive, or just Neutral+Positive -- see ml-personalization/README.md
+for why the currently-deployed real model happened to be Neutral+Positive).
+Either binary combination converts the same way, since sklearn always sorts
+string class labels alphabetically and "Positive" sorts after both:
 
-    risk_probability = P(Neutral) = 1 - P(Positive)
+    risk_probability = P(<Negative or Neutral, whichever is present>) = 1 - P(Positive)
+
+A run that produces all three labels at once uses a different sklearn ONNX
+encoding (per-class score arrays instead of the compressed binary weight this
+converter walks) and is not supported -- see the error message from
+``convert()`` for how to work around it.
 """
 
 from __future__ import annotations
@@ -40,7 +50,50 @@ def _decode_labels(values: list[bytes]) -> list[str]:
     ]
 
 
-def convert(source_path: Path, target_path: Path) -> None:
+_SUPPORTED_RISK_CLASS_NAMES = ("Negative", "Neutral")
+
+
+def _resolve_risk_class(labels: list[str]) -> str:
+    """Return the non-Positive class name for a supported binary model.
+
+    sklearn sorts string class labels alphabetically, and "Positive" sorts
+    after both "Negative" and "Neutral", so any supported binary model has
+    labels == [<risk class>, "Positive"] in that order.
+    """
+    if (
+        len(labels) != 2
+        or labels[1] != "Positive"
+        or labels[0] not in _SUPPORTED_RISK_CLASS_NAMES
+    ):
+        raise ValueError(
+            "Expected a binary model with classes ['Negative', 'Positive'] "
+            f"or ['Neutral', 'Positive'], got {labels}. If training "
+            "produced all three labels (Negative, Neutral, Positive) at "
+            "once, this converter does not support 3-class trees -- merge "
+            "Neutral into Negative (or drop Neutral windows) before "
+            "training, or collect more data so one of the two rarer "
+            "classes disappears again."
+        )
+    return labels[0]
+
+
+def _resolve_risk_class_from_path(path: Path) -> str:
+    model = onnx.load(path)
+    classifiers = [
+        node
+        for node in model.graph.node
+        if node.domain == "ai.onnx.ml"
+        and node.op_type == "TreeEnsembleClassifier"
+    ]
+    if len(classifiers) != 1:
+        raise ValueError(
+            "Expected exactly one ai.onnx.ml TreeEnsembleClassifier."
+        )
+    labels = _decode_labels(_attributes(classifiers[0])["classlabels_strings"])
+    return _resolve_risk_class(labels)
+
+
+def convert(source_path: Path, target_path: Path) -> str:
     source = onnx.load(source_path)
     classifiers = [
         node
@@ -55,11 +108,7 @@ def convert(source_path: Path, target_path: Path) -> None:
 
     attributes = _attributes(classifiers[0])
     labels = _decode_labels(attributes["classlabels_strings"])
-    if labels != ["Neutral", "Positive"]:
-        raise ValueError(
-            "Expected class order ['Neutral', 'Positive'], got "
-            f"{labels}."
-        )
+    risk_class = _resolve_risk_class(labels)
     if attributes.get("post_transform", b"NONE") != b"NONE":
         raise ValueError("Only post_transform=NONE is supported.")
     if any(attributes["nodes_missing_value_tracks_true"]):
@@ -226,7 +275,11 @@ def convert(source_path: Path, target_path: Path) -> None:
     converted.ir_version = 8
     converted.metadata_props.add(
         key="teamvr.risk_mapping",
-        value="risk_probability=P(Neutral)=1-P(Positive)",
+        value=f"risk_probability=P({risk_class})=1-P(Positive)",
+    )
+    converted.metadata_props.add(
+        key="teamvr.risk_class",
+        value=risk_class,
     )
     converted.metadata_props.add(
         key="teamvr.source_model",
@@ -235,11 +288,13 @@ def convert(source_path: Path, target_path: Path) -> None:
     onnx.checker.check_model(converted)
     target_path.parent.mkdir(parents=True, exist_ok=True)
     onnx.save(converted, target_path)
+    return risk_class
 
 
 def verify(source_path: Path, target_path: Path) -> float:
     import onnxruntime as ort
 
+    risk_class = _resolve_risk_class_from_path(source_path)
     source_session = ort.InferenceSession(
         str(source_path),
         providers=["CPUExecutionProvider"],
@@ -248,6 +303,11 @@ def verify(source_path: Path, target_path: Path) -> float:
         str(target_path),
         providers=["CPUExecutionProvider"],
     )
+    # The probability output's name isn't stable across skl2onnx
+    # versions/configs (e.g. "output_probability" vs "probabilities") --
+    # look it up by position (label, then probabilities) instead of
+    # hardcoding a name, same approach convert_to_onnx.py already uses.
+    probability_output_name = source_session.get_outputs()[1].name
     random = np.random.default_rng(20260811)
     maxima = np.asarray([1, 1, 10, 3, 5, 1, 1], dtype=np.float32)
     samples = [
@@ -261,10 +321,20 @@ def verify(source_path: Path, target_path: Path) -> float:
     maximum_error = 0.0
     for sample in samples:
         batch = sample.reshape(1, FEATURE_COUNT)
-        source_probability = source_session.run(
-            ["output_probability"],
+        raw_probabilities = source_session.run(
+            [probability_output_name],
             {INPUT_NAME: batch},
-        )[0][0]["Neutral"]
+        )[0][0]
+        # zipmap=True (skl2onnx default) returns a dict per sample; the
+        # zipmap=False export convert_to_onnx.py currently produces returns
+        # a plain array ordered like classlabels_strings, where risk_class
+        # is always index 0 (see _resolve_risk_class). Source models made
+        # before/after that flag changed can be either, so handle both.
+        source_probability = (
+            raw_probabilities[risk_class]
+            if isinstance(raw_probabilities, dict)
+            else float(raw_probabilities[0])
+        )
         converted_probability = float(
             target_session.run(
                 [OUTPUT_NAME],
@@ -305,11 +375,11 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    convert(args.source, args.output)
-    print(f"Unity-compatible ONNX written to {args.output}")
+    risk_class = convert(args.source, args.output)
+    print(f"Unity-compatible ONNX written to {args.output} (risk class: {risk_class})")
     if not args.skip_verify:
         error = verify(args.source, args.output)
-        print(f"Neutral-risk parity verified; max error={error:.8f}")
+        print(f"{risk_class}-risk parity verified; max error={error:.8f}")
 
 
 if __name__ == "__main__":

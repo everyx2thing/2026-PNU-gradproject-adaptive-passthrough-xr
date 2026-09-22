@@ -145,8 +145,11 @@ python ml-personalization/src/convert_tree_onnx_for_unity.py
 1. InferenceEngine 2.6.1에서 오류 없이 임포트된다.
 2. 입력 shape가 `(1, 7)`이고 feature 순서가 위 표와 같다.
 3. 확률 출력이 float tensor다.
-4. 클래스 순서가 `Neutral`, `Positive`이고 `Neutral`이 위험 확률로 변환된다.
-5. 원본 ONNX와 호환 ONNX의 `P(Neutral)` 오차가 `1e-5` 이하다.
+4. 클래스가 이진 분류이고 `Positive`와 `Negative`/`Neutral` 중 하나로 구성된다
+   (2026-09-21부터 `convert_tree_onnx_for_unity.py`가 둘 다 지원함 — 학습이
+   `Negative`/`Neutral`/`Positive` 세 클래스를 동시에 만들어내면 변환이 실패하니
+   그 경우 재학습 전에 Neutral을 Negative로 합치거나 데이터를 더 모을 것).
+5. 원본 ONNX와 호환 ONNX의 위험 클래스 확률 오차가 `1e-5` 이하다.
 6. Unity Editor와 Quest에서 `risk_probability` 출력이 동일하게 읽힌다.
 
 현재 source 모델은 약 25개 표본 기반 파이프라인 검증용이므로 배포 품질 모델로
