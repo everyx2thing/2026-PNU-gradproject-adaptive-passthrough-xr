@@ -21,7 +21,6 @@ XR(Extended Reality) 기술은 가상현실(VR), 증강현실(AR), 혼합현실(
 
 따라서 XR 환경에서는 단순히 고정된 경계를 표시하는 것을 넘어, 사용자의 움직임과 주변 환경을 실시간으로 분석하고 현재 발생하는 위험의 위치와 정도에 따라 적응적으로 대응하는 안전 시스템이 필요하다.
 
----
 
 ## 1.2. 필요성과 기대효과
 
@@ -136,7 +135,6 @@ Threshold Adjustment
 
 개인화 모델은 PC에서 학습하고 ONNX 형식으로 변환한 후 Unity Sentis를 이용하여 Quest에서 추론한 후 위험도 계산에 직접 반영된다.
 
----
 
 ## 2.2. 기존 서비스 대비 차별성
 
@@ -155,7 +153,6 @@ Threshold Adjustment
 
 특히 본 프로젝트는 ML이 안전 판단을 직접 대체하는 방식이 아니라 규칙 기반 안전 로직을 기본 안전망으로 유지하면서 ML을 통해 개인별 판단 임계값을 조정하는 구조를 사용한다. 이를 통해 ML 모델의 예측 오류가 발생하더라도 기본적인 안전 규칙이 유지되도록 설계한다.
 
----
 
 ## 2.3. 사회적 가치 도입 계획
 
@@ -221,8 +218,6 @@ Threshold Adjustment
 
 정적 위험과 동적 위험은 각각 독립적으로 분석한 후 정책 컨트롤러를 통해 최종 Passthrough 표현으로 연결된다.
 
----
-
 ## 3.2. 사용 기술
 
 | 구분                    | 기술                                               |
@@ -275,8 +270,6 @@ Static Policy      Dynamic Policy
 
 각 위험 분석 경로는 측정 → 위험 추정 → 위험 판단 → 경고 유지 및 해제 → Passthrough 표현의 순서로 처리된다.
 
----
-
 ## 4.2. 기능 설명 및 주요 기능 명세서
 
 ### 4.2.1. 정적 경계 위험 분석
@@ -291,7 +284,6 @@ Static Policy      Dynamic Policy
 
 정적 위험도는 사용자와 주변 정적 환경 사이의 거리와 움직임을 기반으로 계산한다.
 
----
 
 ### 4.2.2. 동적 객체 위험 분석
 
@@ -308,7 +300,6 @@ Static Policy      Dynamic Policy
 
 동적 객체가 사용자에게 접근하는 경우 거리와 접근 속도를 기반으로 위험도를 계산하며, 매우 가까운 상황에서는 안전을 위해 Passthrough를 강제로 노출할 수 있도록 설계한다.
 
----
 
 ### 4.2.3. 선택적 Passthrough
 
@@ -329,11 +320,8 @@ Rectangular Surface Window
 Capsule Window
 ```
 
-정적 위험 영역에는 사각형 Surface Window를, 동적 사람 영역에는 상체 중심의 Capsule Window를 오버레이한다.
+정적 위험 영역에는 사각형 Surface Window를, 동적 사람 영역에는 상체 중심의 Capsule Window를 오버레이한다. 추가적으로 낮은 장애물에 대한 바닥 안내선과 후방 위험에 대한 진동 피드백을 제공한다.
 
-추가적으로 낮은 장애물에 대한 바닥 안내선과 후방 위험에 대한 진동 피드백을 제공한다.
-
----
 
 ### 4.2.4. ML 기반 개인화
 
@@ -341,7 +329,6 @@ Capsule Window
 
 개인화 모델은 기본적으로 Shadow Mode를 사용하며, 신규 사용자에게 충분한 로그가 확보되지 않은 경우 기본 임계값을 유지하는 Cold-start 방식을 선택했다. 더불어 사용자의 안전을 위해서 조정 가능한 범위를 ± 10%로 지정한다.
 
----
 
 ### 4.2.5. 사용자 실험
 
@@ -381,25 +368,62 @@ Capsule Window
 
 따라서 본 실험에서는 Guardian 대비 정적 및 정적+동적 위험 인식 조건에서 안전감이 유의하게 높아졌으며 해당 안전감 향상이 몰입감의 유의한 감소와 함께 나타났다는 근거는 확인되지 않았다.
 
----
 
 ## 4.3. 디렉토리 구조
 
 ```text
 .
-├─ unity-client/
-│  └─ Quest 3에서 실제로 빌드·실행되는 Unity 6 / C# 앱
+├─ docs/                             # 설계 및 구현 스펙, 보고서, 포스터, 발표자료
+│  ├─ 01.보고서/                     # 착수,중간,최종보고서
+│  ├─ 02.포스터/                     # 프로젝트 포스터
+│  ├─ 03.발표자료/                   # 발표 슬라이드
+│  └─ *.md                           # 위험도 분석, 개인화, 시스템 통합 등 세부 스펙 문서
 │
-├─ ml-dynamic-object/
-│  └─ 동적 객체(사람) 위험도 Python 참조 구현 및 테스트
+├─ unity-client/                     # Quest 3용 Unity 6 클라이언트
+│  ├─ Assets/
+│  │  ├─ Scripts/
+│  │  │  ├─ AdaptivePassthrough/     # 정적·동적 위험도 계산 및 정책 컨트롤러 핵심 모듈
+│  │  │  ├─ Experiment/              # 사용자 실험용 사격/회피 게임 로직
+│  │  │  ├─ StaticPassthroughPolicyController.cs   # 정적 위험 기반 Passthrough 제어
+│  │  │  ├─ DynamicPassthroughPolicyController.cs  # 동적 위험 기반 Passthrough 제어
+│  │  │  ├─ SelectivePassthroughController.cs      # 선택적 Passthrough(Surface/Capsule Window) 렌더링
+│  │  │  ├─ PersonalizationRuntimeController.cs    # 온디바이스 개인화 모델 추론 및 임계값 조정
+│  │  │  ├─ SafetyAlertFeedbackController.cs       # 시각,진동 경고 피드백
+│  │  │  └─ QuestRisk*Logger.cs                    # 위험도,세션 로그 기록
+│  │  ├─ Scenes/
+│  │  │  ├─ SampleScene.unity            # 실제 앱 실행 Scene (정적·동적 위험도 + 개인화 + 실험 통합)
+│  │  │  ├─ DynamicRiskMock.unity        # 동적 위험도 Mock 데이터 검증용
+│  │  │  └─ ExperimentGameTest.unity     # 실험 게임 단독 테스트용
+│  │  └─ (Models, Prefabs, Materials, XR, Oculus 등 리소스 폴더)
+│  ├─ Packages/                      # Unity 패키지 매니페스트
+│  ├─ ProjectSettings/               # Unity 프로젝트 설정
+│  └─ Tools/Install-Quest3.cmd(.ps1) # Quest 3 APK 설치 스크립트
 │
-├─ ml-personalization/
-│  └─ 세션 로그 → Feature → Random Forest → ONNX 개인화 파이프라인
+├─ ml-dynamic-object/                 # 동적 객체(사람) 위험도 Python 참조 구현
+│  ├─ src/graduate_risk_mvp/
+│  │  ├─ camera.py                   # 카메라 입력 처리
+│  │  ├─ detector.py                 # YOLOv9 기반 사람 검출
+│  │  ├─ tracker.py                  # 검출된 객체 추적
+│  │  ├─ location.py / motion.py     # 위치,이동 정보 계산
+│  │  ├─ risk.py                     # 거리/접근속도/TTC 기반 위험도 산출
+│  │  └─ pipeline.py                 # 전체 파이프라인 조합
+│  ├─ examples/                      # Mock 데모, USB 카메라 실행 예제
+│  ├─ scripts/export_person_model.py # 검출 모델 변환/내보내기
+│  └─ tests/                         # pytest 단위 테스트
 │
-└─ docs/
-   └─ 설계 및 구현 스펙 및 보고서
+├─ ml-personalization/                # 개인화 모델 학습·변환 파이프라인
+│  └─ src/
+│     ├─ generate_mock_logs.py       # Mock 로그 생성
+│     ├─ build_features.py           # 세션 로그 → 7차원 feature 추출
+│     ├─ train_model.py              # Random Forest 학습
+│     ├─ hyperparam_tuning.py        # 하이퍼파라미터 튜닝
+│     ├─ convert_to_onnx.py / convert_tree_onnx_for_unity.py  # ONNX 변환(Unity Sentis용)
+│     ├─ cold_start.py               # 콜드스타트(신규 사용자) 처리
+│     ├─ personalize.py              # 개인별 임계값 매핑
+│     └─ parse_risk_snapshot_log.py  # Quest 로그 파싱
+│
+└─ README.md
 ```
----
 
 ## 4.4. 산업체 멘토링 의견 및 반영 사항
 
@@ -438,8 +462,6 @@ Dynamic Risk ─▶ Dynamic Policy ─┘
 
 ## 5.1. 설치절차 및 실행 방법
 
----
-
 ## 5.2. 오류 발생 시 해결 방법
 
 ---
@@ -448,11 +470,11 @@ Dynamic Risk ─▶ Dynamic Policy ─┘
 
 ## 6.1. 프로젝트 소개 자료
 
+[착수보고서](docs/01.보고서/01. TeamVR_착수보고서.pdf)
+[중간보고서](docs/01.보고서/02. TeamVR_중간보고서.pdf)
+[최종보고서](docs/01.보고서/03. TeamVR_최종보고서.pdf)
 [포스터](docs/02.포스터/TeamVR_포스터.pdf)
-
 [발표 자료](docs/03.발표자료/TeamVR_발표자료.pdf)
-
----
 
 ## 6.2. 시연 영상
 
@@ -466,19 +488,20 @@ Dynamic Risk ─▶ Dynamic Policy ─┘
 
 ### Team VR
 
-| 팀원      | 역할                | 주요 담당                                                                                |
-| ------- | ----------------- | ------------------------------------------------------------------------------------ |
-| **따다소** | 개인화 모델 및 사용자 실험   | Random Forest 기반 On-device 추론, PC 기반 개인화 모델 재학습, 사용자 실험 설계/진행, 비모수 통계 분석, 보고서 및 발표자료 제작 |
-| **최아영** | 정적 위험도 및 실험 게임    | 정적 경계 기반 위험도 알고리즘, 정적 Passthrough 제어, 실험용 VR 게임 개발                                   |
-| **이승주** | 동적 위험 인식 및 시스템 통합 | 사람 검출·추적, 동적 위험도 계산, 선택적 Passthrough 시각화, 시각·진동 피드백, 전체 시스템 통합                       |
+| 팀원          | 역할                       | 주요 담당                                                                                                  |
+| ----------- | ------------------------ | ------------------------------------------------------------------------------------------------------ |
+| **따다소(팀장)** | 개인화 모델 개발 및 사용자 실험 연구 진행 | Random Forest 기반 On-device 로그 수집·추론 파이프라인 구축, PC 기반 개인화 모델 재학습 파이프라인 구현·배포, 사용자 실험 설계·진행 및 비모수 통계 분석, 보고서 작성 및 발표 자료 제작 |
+| **최아영**     | 정적 경계 기반 위험도 알고리즘 및 실험용 게임 개발 | 정적 경계 기반 충돌 위험도 알고리즘 설계·구현, 정적 위험도에 따른 Passthrough 제어 로직 구현, 실험용 VR 게임 개발 및 실험 조건별 위험도 시스템 연동 |
+| **이승주**     | Quest 3 기반 동적 위험 인식 및 안전 시스템 통합 | 카메라·깊이 정보 기반 사람 검출·추적 및 접근 위험도 계산 구현, 위험 위치에 따른 선택적 Passthrough 시각화 및 시각·진동 피드백 구현·안정화, 개인화 모델 및 실험용 VR 게임과 위험도 기반 안전 시스템 통합 |
 
----
 
 ## 7.2. 팀원 별 참여 후기
 
 ### 따다소
 
-아이디어를 실제로 동작하는 시스템으로 만드는 과정이 생각보다 훨씬 복잡하다는 것을 느꼈다. 시행착오는 많았지만 그만큼 배운 것도 많았던, 뜻깊은 프로젝트였다.
+### 따다소
+
+개인화 모델 개발과 사용자 실험을 담당하면서 머릿속에 있던 아이디어를 실제로 동작하는 시스템으로 만드는 과정이 생각보다 훨씬 복잡하다는 것을 몸소 느꼈다. 게다가 팀 하나를 이끄는 데 아직 얼마나 부족한지도 체감했다. 기술적으로는 Random Forest 모델을 학습시키는 것 자체는 어렵지 않았지만 이를 ONNX로 변환하고 Unity Sentis에서 온디바이스로 추론하도록 만드는 과정에서 예상치 못한 문제들을 계속 마주쳤다. 특히 실제 Quest 로그에서는 Negative 표본이 거의 없어서, 처음 설계했던 방식대로 개인화 모델을 검증하기 어려웠던 점이 가장 아쉬웠다. 이 부분은 향후 더 많은 사용자 데이터가 쌓여야 제대로 평가할 수 있을 것 같다. 그리고 처음으로 학술적으로 사용자 실험을 설계하고 직접 진행하면서는 이론과 실제의 차이를 많이 느꼈다. 통계적으로 유의한 결과를 얻는 것도 중요했지만, 실제로 참가자들이 VR 기기를 착용하고 반응하는 모습을 지켜보면서 우리가 만든 시스템이 실제 사용자에게 어떤 의미를 가지는지 체감할 수 있었다. 안전감이 유의하게 향상되면서도 몰입감이 크게 떨어지지 않았다는 결과를 확인했을 때 그동안의 고민과 시행착오가 헛되지 않았다는 생각이 들었다. 6개월 간의 과정 중 배운 모든 것이 앞으로의 실무 경험에 크게 도움될 것 같다는 생각이 들었다. 결론적으로는 한 학기 동안 한 번도 제대로 다뤄 본 적 없는 HMD를 프로젝트의 핵심으로 다루는 과정이 쉽지는 않았지만 그만큼 배운 것도 많았던 프로젝트였다.
 
 ### 최아영
 
@@ -495,31 +518,19 @@ TBA
 ## 연구 및 산업 자료
 
 1. 김성진. *확장현실(XR) 산업의 현황과 과제*. KIET 산업경제, 산업연구원, 2023.
-
 2. *Development and Validation of the Collision Anxiety Questionnaire for VR Applications*. Proceedings of the 2024 CHI Conference on Human Factors in Computing Systems.
-
 3. Cucher, D. J., Kovacs, M. S., Clark, C. E., & Hu, C. K. P. (2023). *Virtual reality consumer product injuries: An analysis of national emergency department data*. Injury, 54(5), 1396–1399.
-
-   - Data Source: National Electronic Injury Surveillance System (NEISS)
-   - 2017년 125건 → 2021년 1,336건
-   - 해당 기간 352% 증가
 
 ## 기술 문서
 
 4. Meta. *Meta Quest에서 패스스루를 사용하는 방법*.
-
 5. Meta for Developers. *Passthrough Camera API Overview*. Meta Horizon Documentation.
-
 6. Meta Platforms, Inc. *Create engaging experiences with anchoring improvements and multi-room support*. Meta Horizon Developer Blog, 2024.
-
 7. Apple Inc. *Important Safety Information for Apple Vision Pro*. 2024.
 
 ## 관련 연구
 
 8. Breiman, L. (2001). *Random Forests*. Machine Learning, 45(1), 5–32.
-
 9. Probst, P., Wright, M. N., & Boulesteix, A.-L. (2019). *Hyperparameters and tuning strategies for random forest*. WIREs Data Mining and Knowledge Discovery, 9(3), e1301.
-
 10. Tseng, W.-J., Kontrazis, P. D., Lecolinet, E., Huron, S., & Gugenheimer, J. (2024). *Understanding Interaction and Breakouts of Safety Boundaries in Virtual Reality through Mixed-Method Studies*. IEEE VR, 2024.
-
 11. Schmelter, T., Küchenmeister, P., Geuter, J., & Hildebrand, K. (2025). *Depth-aware immersive visualization of boundaries using particles in VR*. ACM SUI, 2025.
