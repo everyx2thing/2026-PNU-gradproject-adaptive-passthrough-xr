@@ -1,7 +1,4 @@
 # 몰입형 XR을 위한 상황 인식 기반 Adaptive Passthrough Framework 
-> Context-aware Adaptive Passthrough Framework for Immersive XR
-
----
 
 # 1. 프로젝트 배경
 
