@@ -412,11 +412,7 @@ Capsule Window
 기존 설계에서는 다음과 같은 가중합을 통해 전체 위험도를 계산했다.
 
 ```text
-Rtotal =
-wstatic · Rstatic
-+ wstate · Rstate
-+ wdynamic · Rdynamic
-+ wintent · Rintent
+Rtotal = wstatic · Rstatic + wstate · Rstate + wdynamic · Rdynamic + wintent · Rintent
 ```
 
 그러나 전문가 자문 과정에서 단순 가중평균 방식은 특정 위험 요소가 매우 높더라도 다른 위험 요소의 낮은 값에 의해 최종 위험도가 희석될 수 있다는 문제가 제기되었다. 또한 정적 환경과 동적 객체는 입력 데이터의 특성과 반응해야 하는 시간 스케일이 서로 다르기 때문에 하나의 위험도로 통합하는 것보다 독립적으로 판단하는 것이 적절하다고 판단했다.
@@ -456,17 +452,15 @@ Dynamic Risk ─▶ Dynamic Policy ─┘
 
 ## 6.1. 프로젝트 소개 자료
 
-```markdown
-![포스터](docs/02.포스터/TeamVR_포스터.pdf)
-``
-```markdown
-![발표 자료](docs/03.발표자료/TeamVR_발표자료.pdf)
-``
+[포스터](docs/02.포스터/TeamVR_포스터.pdf)
+
+[발표 자료](docs/03.발표자료/TeamVR_발표자료.pdf)
 
 ---
 
 ## 6.2. 시연 영상
-[![2026 전기 졸업과제 08 TeamVR](https://img.youtube.com/vi/Xw21HWSOwO8/0.jpg)](https://youtu.be/Xw21HWSOwO8)   
+
+[![2026 전기 졸업과제 08 TeamVR](https://img.youtube.com/vi/Xw21HWSOwO8/0.jpg)](https://youtu.be/Xw21HWSOwO8)
 
 ---
 
