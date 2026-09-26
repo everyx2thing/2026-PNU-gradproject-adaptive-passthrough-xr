@@ -1,193 +1,542 @@
-# Adaptive Passthrough Framework for Immersive XR
+# Context-aware Adaptive Passthrough Framework for Immersive XR
 
-몰입형 XR을 위한 상황 인식 기반 Adaptive Passthrough Framework — 정적/동적 위험 분석과 ML 개인화를 결합한 Meta Quest 3 안전 시스템
-
-Context-aware Adaptive Passthrough Framework for Immersive XR combining static/dynamic risk analysis with ML-based personalization for Meta Quest 3
-
-> Team VR · 부산대학교 졸업과제 (2026.05–2026.09) 
+> **몰입형 XR을 위한 상황 인식 기반 Adaptive Passthrough Framework**
+>
+> 정적·동적 위험 분석과 ML 개인화를 결합한 Meta Quest 3 기반 XR 안전 시스템
 
 ---
 
-## 프로젝트 소개
+# 1. 프로젝트 배경
 
-Meta Quest Guardian은 사전에 설정한 경계선에 근접하면 경계 그리드를 표시하는 단순한 방식이며, 모든 사용자에게 동일한 임계값을 적용하고 사람처럼 스스로 움직이는 동적 위험은 인식하지 못한다는 한계가 있습니다. 이 프로젝트는 그 대신 **정적 경계(벽·바닥 장애물)**, **동적 객체(사람)**, **사용자 움직임 상태**를 매 프레임 독립적으로 위험도로 계산하고, 위험이 실제로 있는 방향에만 선택적으로 Passthrough 창을 여는 프로토타입입니다. 세션 로그를 학습한 ML 모델이 사용자별로 그 판단 임계값을 점진적으로(항상 상향으로만) 조정합니다.
+## 1.1. 국내외 시장 현황 및 문제점
 
-지금 저장소에는 이 시스템이 실제로 동작하는 **Unity/C# Quest 3 앱**과, 그 앱이 쓰는 **개인화, 동적 위험 계산을 학습, 검증하는 Python 파이프라인**이 들어 있습니다. 
+XR(Extended Reality) 기술은 가상현실(VR), 증강현실(AR), 혼합현실(MR)을 포함하는 기술로, 다양한 산업과 일상 환경으로 활용 범위가 확대되고 있다. XR 시장은 2021년 약 190억 달러에서 2026년 약 1,008억 달러 규모로 성장할 것으로 전망되며, 연평균 39.7%의 높은 성장률이 예상된다.
 
-12명을 대상으로 한 사용자 실험 결과, 기존 Guardian 방식 대비 안전감이 통계적으로 유의하게 상승했으며 몰입감의 유의한 저하는 관찰되지 않았습니다 — 자세한 내용은 [사용자 실험 결과](#사용자-실험-결과) 참고.
+특히 HMD(Head-Mounted Display)를 사용하는 몰입형 VR 환경에서는 사용자가 가상 콘텐츠에 집중하는 동안 실제 주변 환경에 대한 시각적 인지가 제한되어 벽이나 가구와 같은 주변 환경을 인지하지 못하고 충돌하거나, 주변 사람에게 피해를 주는 안전사고가 발생할 수 있다. National Electronic Injury Surveillance System(NEISS) 데이터를 기반으로 VR 관련 부상 사례를 분석한 연구에 따르면, VR 관련 응급실 방문 추정 건수는 2017년 125건에서 2021년 1,336건으로 증가했으며, 해당 기간 동안 352% 증가한 것으로 나타났다.또한 해당 연구에서는 VR 사용 중 발생하는 주요 부상 원인으로 주변 사물과의 충돌 및 VR 사용자의 움직임으로 인해 VR 컨트롤러 등에 주변 사람이 맞는 Bystander Injury, 즉 주변인에 대한 2차 피해를 제시했다.
 
-## 팀원 및 역할
+기존 VR 기기들은 Passthrough라는 카메라 영상으로 주변 환경을 실시간으로 보여주는 기능을 활용해 물리적 충돌을 방지한다. 대표적으로 Meta Quest의 Guardian은 사용자가 설정한 플레이 영역의 경계에 접근하면 Passthrough 화면을 띄워 위험을 알리는 방식이다. 본 프로젝트는 이 Passthrough 기능을 확장하여, 화면 전체가 아닌 위험이 감지된 영역에만 선택적으로 현실 화면을 노출한다.
 
-| 이름 | 담당 | 세부 내용 |
-|---|---|---|
-| 따다소 (팀장) | 개인화 모델 개발 및 사용자 실험 연구 진행 | Random Forest 기반 On-device 추론 파이프라인 구축, PC 기반 개인화 모델 재학습 파이프라인 구현·배포, 사용자 실험 설계·진행 및 비모수 통계 분석, 보고서·발표자료 작성 |
-| 최아영 | 정적 경계 기반 위험도 알고리즘 및 실험용 게임 개발 | 정적 경계 기반 충돌 위험도 알고리즘 설계·구현, 정적 위험도에 따른 Passthrough 제어 로직 구현, 실험용 VR 게임 개발 및 조건별 위험도 시스템 연동 |
-| 이승주 | Quest 3 기반 동적 위험 인식 및 안전 시스템 통합 | 카메라·깊이 정보 기반 사람 검출·추적 및 접근 위험도 계산 구현, 위험 위치에 따른 선택적 Passthrough 시각화·시각/진동 피드백 구현 및 안정화, 개인화 모델 및 실험용 게임과 안전 시스템 통합 |
+그러나 기존 경계 기반 시스템은 다음과 같은 한계를 가진다.
 
-## 리포지토리 구조
+- 사전에 설정된 경계까지의 거리를 중심으로 위험을 판단한다.
+- 사용자의 현재 이동 속도나 움직임 상태를 충분히 반영하지 않는다.
+- 사람과 같이 위치가 변화하는 동적 객체를 직접적인 위험 요소로 판단하기 어렵다.
+- 협소한 공간에서는 불필요한 경고가 반복적으로 발생할 수 있다.
+- 사용자별 행동 특성이나 위험 인지 차이를 반영하기 어렵다.
+- 위험이 발생했을 때 전체 화면을 현실 환경으로 전환하는 방식은 몰입감을 저하시킬 수 있다.
+
+따라서 XR 환경에서는 단순히 고정된 경계를 표시하는 것을 넘어, 사용자의 움직임과 주변 환경을 실시간으로 분석하고 현재 발생하는 위험의 위치와 정도에 따라 적응적으로 대응하는 안전 시스템이 필요하다.
+
+---
+
+## 1.2. 필요성과 기대효과
+
+VR 환경에서 안전을 확보하기 위해 현실 환경을 지속적으로 노출하면 주변 환경에 대한 인지는 향상되는 반면에 가상 환경에 대한 몰입감이 저하될 수 있다. 반대로 현실 환경의 노출을 최소화하면 몰입감은 유지할 수 있지만 실제 장애물이나 주변 사람에 대한 인지가 늦어질 수 있다. 본 프로젝트는 이러한 안전성과 몰입감 사이의 균형 문제를 해결하기 위해 상황 인식 기반 Adaptive Passthrough Framework를 개발한다.
+
+본 시스템은 각 HMD 및 컨트롤러 정보를 실시간으로 분석하고 분석된 위험 정보를 기반으로 위험이 발생한 영역에만 선택적으로 Passthrough를 노출한다. 전체 화면을 현실 환경으로 전환하는 것이 아니라 위험한 방향과 객체 주변만 국소적으로 노출하여 나머지 시야의 몰입을 유지한다.
+
+이를 통해 다음과 같은 효과를 기대한다.
+
+1. VR 사용 중 물리적 충돌 위험에 대한 인지를 향상한다.
+2. 불필요한 Passthrough 노출을 줄여 몰입감 저하를 최소화한다.
+3. 정적 장애물뿐만 아니라 움직이는 사람에 대한 위험에도 대응한다.
+4. 사용자 로그를 기반으로 위험 판단 기준을 점진적으로 개인화한다.
+5. 향후 시각·청각·촉각을 결합한 멀티모달 안전 시스템으로 확장할 수 있는 기반을 마련한다.
+
+---
+
+# 2. 개발 목표
+
+## 2.1. 목표 및 세부 내용
+
+본 프로젝트의 목표는 Meta Quest 3 기반 몰입형 XR 환경에서 사용자의 안전과 몰입감을 동시에 확보하는 상황 인식 기반 Adaptive Passthrough Framework를 개발하는 것이다. 이를 위해 다음과 같은 기능을 개발한다.
+
+### 2.1.1. 정적 경계 위험 분석
+
+벽, 가구, 낮은 장애물과 같은 정적 환경을 인식하고 사용자와 장애물 사이의 위험도를 계산한다.
+
+주요 위험 요소는 다음과 같다.
+
+- 사용자와 장애물 사이의 거리
+- 장애물 방향으로의 접근 속도
+- TTC(Time to Collision)
+- HMD 위치 및 움직임
+- 양손 위치 및 움직임
+- 사용자 이동 상태
+
+정적 위험은 머리, 양손, 낮은 장애물 등의 채널로 구분하여 판단한다. 또한 히스테리시스와 긴급 상황 오버라이드를 적용하여 위험이 임계값 주변에서 반복적으로 발생하거나 해제되는 현상을 줄인다.
+
+### 2.1.2. 동적 객체 위험 분석
+
+Quest 3의 Passthrough 카메라를 이용하여 주변 사람을 검출하고 추적한다.
+
+```text
+Passthrough Camera
+        ↓
+      YOLOv9
+        ↓
+  Person Detection
+        ↓
+ Object Tracking
+        ↓
+Distance / Approach / TTC / Path
+        ↓
+ Dynamic Risk
+```
+
+동적 위험은 사람과의 거리, 접근 속도, TTC, 이동 경로 등을 기반으로 계산한다.
+
+### 2.1.3. 정적·동적 위험의 독립적인 판단
+
+정적 환경과 동적 객체는 입력 데이터의 특성과 반응해야 하는 시간 스케일이 서로 다르기 때문에 각각 독립적으로 위험을 판단한다.
+
+```text
+Static Risk
+     ↓
+Static Passthrough Policy Controller
+     │
+     ├─────────────────────┐
+                           ↓
+              Selective Passthrough Controller
+                           ↑
+     ┌─────────────────────┘
+     │
+Dynamic Passthrough Policy Controller
+     ↑
+Dynamic Risk
+```
+
+통합된 Risk Snapshot은 로그 기록과 개인화 feature 계산에 활용하며, 정적 위험과 동적 위험은 각각의 정책 컨트롤러를 통해 Passthrough 출력에 반영한다.
+
+### 2.1.4. 선택적 Passthrough
+
+위험이 발생한 전체 시야를 현실 환경으로 전환하지 않고 위험 영역에만 Passthrough 창을 생성한다.
+
+- 정적 위험 → 벽·가구 방향의 사각형 Surface Window
+- 동적 위험 → 사람 주변의 상체 Capsule Window
+- 낮은 장애물 → 바닥 안내선
+- 후방 위험 → 방향 진동
+- 보조 경고 → 붉은 테두리 및 컨트롤러 햅틱
+
+이를 통해 안전을 확보하면서도 불필요한 현실 환경 노출을 줄인다.
+
+### 2.1.5. ML 기반 개인화
+
+사용자의 Passthrough 활성화 로그를 이용하여 개인별 위험 판단 민감도를 조정한다.
+
+```text
+Quest Logs
+    ↓
+Session / Event Extraction
+    ↓
+7-Dimensional Features
+    ↓
+Random Forest
+    ↓
+ONNX
+    ↓
+Unity Sentis
+    ↓
+Threshold Adjustment
+```
+
+개인화 모델은 PC에서 학습하고 ONNX 형식으로 변환한 후 Unity Sentis를 이용하여 Quest에서 추론한 후 위험도 계산에 직접 반영된다.
+
+---
+
+## 2.2. 기존 서비스 대비 차별성
+
+본 프로젝트는 기존 기기들이 사용하는 거리뿐만 아니라 사용자의 움직임과 동적 객체까지 고려하여 상황에 따라 위험도를 계산하고 위험 영역에만 선택적으로 Passthrough를 제공한다.
+
+| 구분             | 기존 시스템              | 본 프로젝트                     |
+| -------------- | ------------------- | -------------------------- |
+| 위험 판단 기준       | 사전 설정 경계까지의 거리      | 거리 + 접근 속도 + TTC 기반 연속 위험도 |
+| 대응 대상          | 주로 정적 경계            | 정적 경계 + 동적 객체              |
+| 사용자 상태 반영      | 제한적                 | HMD 및 컨트롤러 움직임 반영          |
+| 동적 위험          | 직접적인 동적 객체 판단 없음    | 사람 검출·추적 및 동적 위험도 계산       |
+| 제어 방식          | 경계 접근에 따른 경고        | 규칙 기반 위험 판단 + ML 기반 개인화    |
+| Passthrough 범위 | 경계 또는 전체적인 현실 환경 노출 | 위험 영역만 국소적으로 노출            |
+| ML 기반 개인화            | 동일한 기준 적용           | 사용자 로그 기반 점진적 개인화          |
+| 사용자 개입         | 경계 설정 필요            | 시스템이 상황을 자동 판단             |
+
+특히 본 프로젝트는 ML이 안전 판단을 직접 대체하는 방식이 아니라 규칙 기반 안전 로직을 기본 안전망으로 유지하면서 ML을 통해 개인별 판단 임계값을 조정하는 구조를 사용한다. 이를 통해 ML 모델의 예측 오류가 발생하더라도 기본적인 안전 규칙이 유지되도록 설계한다.
+
+---
+
+## 2.3. 사회적 가치 도입 계획
+
+본 프로젝트는 VR 사용 중 발생할 수 있는 물리적 충돌과 주변인에 대한 2차 피해 가능성을 고려하여 XR 환경의 물리적 안전성을 향상하는 것을 주요 사회적 가치로 둔다. 특히 VR 사용자의 안전뿐만 아니라 주변 사람과 실제 공간까지 고려하여 위험을 판단한다는 점에서 기존 사용자 중심 안전 시스템의 범위를 확장한다. 또한 불필요한 현실 환경 노출을 줄이는 선택적 Passthrough 방식을 통해 안전성과 몰입감을 동시에 확보하는 것을 목표로 한다.
+
+향후에는 현재의 시각적,진동 기반 피드백을 3D Spatial Audio 및 추가적인 Haptic Feedback으로 확장하여 다양한 감각을 활용한 멀티모달 안전 경고 시스템으로 발전시킬 수 있다.
+
+---
+
+# 3. 시스템 설계
+
+## 3.1. 시스템 구성도
+
+```text
+┌────────────────────────────────────────────┐
+│                  Meta Quest 3              │
+│                                            │
+│   HMD / Controller / Room Scene / Camera  │
+│                  / Depth                   │
+└──────────────────────┬─────────────────────┘
+                       │
+                       ▼
+┌────────────────────────────────────────────┐
+│            Hardware & Input Layer          │
+│                                            │
+│  Spatial Information / User Movement Data  │
+│       Passthrough Camera / Depth Data      │
+└───────────────┬────────────────┬───────────┘
+                │                │
+                ▼                ▼
+┌────────────────────────┐ ┌────────────────────────┐
+│ Static Risk Pipeline   │ │ Dynamic Risk Pipeline  │
+│                        │ │                        │
+│ Wall / Furniture       │ │ YOLOv9 Person         │
+│ Low Obstacle           │ │ Detection              │
+│ Distance               │ │ Object Tracking        │
+│ Approach Velocity      │ │ Distance / TTC         │
+│ TTC                    │ │ Approach / Path        │
+└────────────┬───────────┘ └───────────┬────────────┘
+             │                         │
+             ▼                         ▼
+┌──────────────────────┐   ┌──────────────────────┐
+│ Static Policy        │   │ Dynamic Policy       │
+│ Controller           │   │ Controller            │
+└────────────┬─────────┘   └────────────┬─────────┘
+             │                          │
+             └────────────┬─────────────┘
+                          ▼
+              ┌────────────────────────┐
+              │ Selective Passthrough  │
+              │ Controller              │
+              │                        │
+              │ Surface Window         │
+              │ Capsule Window         │
+              │ Visual / Haptic Alert  │
+              └────────────┬───────────┘
+                           │
+                           ▼
+                    Meta Quest 3
+```
+
+시스템은 크게 하드웨어 입력 계층, 정적 위험 분석 엔진, 동적 위험 분석 엔진, 정책 제어 계층, 선택적 Passthrough 출력 계층으로 구성된다.
+
+정적 위험과 동적 위험은 각각 독립적으로 분석한 후 정책 컨트롤러를 통해 최종 Passthrough 표현으로 연결된다.
+
+---
+
+## 3.2. 사용 기술
+
+| 구분                    | 기술                                               |
+| --------------------- | ------------------------------------------------ |
+| HMD                   | Meta Quest 3                                     |
+| Engine                | Unity 6                                          |
+| Unity Version         | 6000.4.2f1                                       |
+| Language              | C# / Python                                      |
+| XR                    | Meta XR SDK                                      |
+| Spatial Understanding | Meta XR / Room Scene / EnvironmentRaycastManager |
+| Computer Vision       | YOLOv9                                           |
+| Object Tracking       | SimpleObjectTracker                              |
+| ML Inference          | Unity Sentis                                     |
+| Machine Learning      | Random Forest                                    |
+| ML Framework          | scikit-learn                                     |
+| Model Format          | ONNX                                             |
+| Testing               | Unity EditMode / pytest                          |
+| Camera                | Quest 3 Passthrough Camera API                   |
+
+---
+
+# 4. 개발 결과
+
+## 4.1. 전체 시스템 흐름도
+
+전체 시스템은 다음 순서로 동작한다.
+
+```text
+[Quest Sensor / Camera]
+          ↓
+[환경 및 사용자 데이터 수집]
+          ↓
+ ┌────────┴─────────┐
+ ↓                  ↓
+[정적 위험 분석]   [동적 위험 분석]
+ ↓                  ↓
+거리/속도/TTC      사람 검출/추적
+ ↓                  ↓
+Static Risk        Dynamic Risk
+ ↓                  ↓
+Static Policy      Dynamic Policy
+ └────────┬─────────┘
+          ↓
+[Selective Passthrough]
+          ↓
+[위험 영역만 현실 환경 노출]
+          ↓
+[시각 / 진동 피드백]
+```
+
+각 위험 분석 경로는 측정 → 위험 추정 → 위험 판단 → 경고 유지 및 해제 → Passthrough 표현의 순서로 처리된다.
+
+---
+
+## 4.2. 기능 설명 및 주요 기능 명세서
+
+### 4.2.1. 정적 경계 위험 분석
+
+| 항목    | 내용                               |
+| ----- | -------------------------------- |
+| 입력    | Room Scene, 공간 표면, HMD 위치, 양손 위치 |
+| 주요 요소 | 거리, 접근 속도, TTC, 사용자 상태           |
+| 출력    | 정적 위험도 및 위험 영역                   |
+| 대응    | Surface Window, 바닥 안내선, 진동       |
+| 안전장치  | 히스테리시스, 긴급 Passthrough           |
+
+정적 위험도는 사용자와 주변 정적 환경 사이의 거리와 움직임을 기반으로 계산한다.
+
+---
+
+### 4.2.2. 동적 객체 위험 분석
+
+| 항목    | 내용                        |
+| ----- | ------------------------- |
+| 입력    | Passthrough 카메라 영상, 깊이 정보 |
+| 객체    | 사람                        |
+| 검출    | YOLOv9                    |
+| 추적    | SimpleObjectTracker       |
+| 위험 요소 | 근접, 접근, TTC, 경로           |
+| 출력    | 동적 위험도                    |
+| 대응    | 사람 주변 Capsule Window      |
+| 안전장치  | Force Passthrough         |
+
+동적 객체가 사용자에게 접근하는 경우 거리와 접근 속도를 기반으로 위험도를 계산하며, 매우 가까운 상황에서는 안전을 위해 Passthrough를 강제로 노출할 수 있도록 설계한다.
+
+---
+
+### 4.2.3. 선택적 Passthrough
+
+위험 유형에 따라 서로 다른 형태의 Passthrough를 제공한다.
+
+```text
+정적 위험
+    ↓
+벽 / 가구 방향
+    ↓
+Rectangular Surface Window
+
+
+동적 위험
+    ↓
+사람 위치
+    ↓
+Capsule Window
+```
+
+정적 위험 영역에는 사각형 Surface Window를, 동적 사람 영역에는 상체 중심의 Capsule Window를 오버레이한다.
+
+추가적으로 낮은 장애물에 대한 바닥 안내선과 후방 위험에 대한 진동 피드백을 제공한다.
+
+---
+
+### 4.2.4. ML 기반 개인화
+
+사용자의 Passthrough 활성화 기록을 기반으로 개인별 위험 판단 임계값을 조정한다. Feature를 기반으로 Random Forest 모델을 학습하고 ONNX로 변환한 뒤 Unity Sentis에서 추론한다.
+
+개인화 모델은 기본적으로 Shadow Mode를 사용하며, 신규 사용자에게 충분한 로그가 확보되지 않은 경우 기본 임계값을 유지하는 Cold-start 방식을 선택했다. 더불어 사용자의 안전을 위해서 조정 가능한 범위를 ± 10%로 지정한다.
+
+---
+
+### 4.2.5. 사용자 실험
+
+본 프로젝트에서는 총 12명(N=12)을 대상으로 세 가지 조건을 비교하는 사용자 실험을 수행했다. 개인화 모듈은 사용자 로그가 축적되어야 하는 적응형 요소이므로 짧은 세션과 작은 표본으로 구성된 본 비교실험에서는 통제 변인으로 포함하지 않았다.
+
+| 조건      | 설명            |
+| ------- | ------------- |
+| Round 1 | Guardian      |
+| Round 2 | 정적 위험 인식      |
+| Round 3 | 정적 + 동적 위험 인식 |
+
+안전감과 몰입감을 7점 Likert 척도로 측정하고 Friedman 검정 및 사후 Wilcoxon 검정을 수행했다.
+
+### 실험 결과
+
+| 지표  | Round 1 | Round 2 | Round 3 |
+| --- | ------: | ------: | ------: |
+| 안전감 |    4.50 |    5.45 |    5.73 |
+| 몰입감 |    4.51 |    4.32 |    4.03 |
+
+#### 안전감
+
+- Friedman: χ² = 10.59, p = .005
+- Kendall's W = .44
+- Round 1 vs Round 2: p = .005
+- Round 1 vs Round 3: p = .004
+- Round 2 vs Round 3: p = .141
+
+안전감은 라운드 간 유의한 차이를 보였다. 특히 Guardian 조건인 Round 1보다 정적 위험 인식 조건인 Round 2와 정적, 동적 위험 인식 조건인 Round 3에서 안전감이 유의하게 높았다.
+
+#### 몰입감
+
+- Friedman: χ² = 2.13, p = .345
+- Kendall's W = .089
+
+몰입감은 라운드 간 유의한 차이를 보이지 않았다.
+
+따라서 본 실험에서는 Guardian 대비 정적 및 정적+동적 위험 인식 조건에서 안전감이 유의하게 높아졌으며 해당 안전감 향상이 몰입감의 유의한 감소와 함께 나타났다는 근거는 확인되지 않았다.
+
+---
+
+## 4.3. 디렉토리 구조
 
 ```text
 .
-├─ unity-client/        Quest 3에서 실제로 빌드·실행되는 앱 (Unity 6, C#) — 이 저장소의 핵심 구현체
-├─ ml-dynamic-object/    동적 객체(사람) 위험도 파이프라인의 Python 참조 구현 + 테스트 하네스
-├─ ml-personalization/  세션 로그 → Feature → RandomForest → ONNX 개인화 임계값 학습 파이프라인
-└─ docs/                 설계·구현 스펙 문서, 중간·최종 보고서
+├─ unity-client/
+│  └─ Quest 3에서 실제로 빌드·실행되는 Unity 6 / C# 앱
+│
+├─ ml-dynamic-object/
+│  └─ 동적 객체(사람) 위험도 Python 참조 구현 및 테스트
+│
+├─ ml-personalization/
+│  └─ 세션 로그 → Feature → Random Forest → ONNX 개인화 파이프라인
+│
+└─ docs/
+   └─ 설계 및 구현 스펙 및 보고서
 ```
+---
 
-## 아키텍처 한눈에 보기
+## 4.4. 산업체 멘토링 의견 및 반영 사항
+
+본 프로젝트에서는 KT 책임연구원 안종길 전문가의 자문을 반영하여 위험도 통합 구조를 변경했다.
+
+기존 설계에서는 다음과 같은 가중합을 통해 전체 위험도를 계산했다.
 
 ```text
-[Quest 센서]
- ├─ HMD/컨트롤러 Transform, Scene API 벽 정보
- │    └─▶ QuestRiskExperimentLogger ──▶ 정적 경계 Feature + 사용자 움직임 상태
- ├─ Passthrough 카메라 프레임
- │    └─▶ QuestPersonDetectionRunner (YOLOv9 × Unity Inference Engine) ──▶ 사람 bounding box
- └─ EnvironmentRaycastManager / Room Scene
-      └─▶ QuestSpatialObstacleProvider ──▶ 머리·양손·저장애물 공간 위험 측정
-
-[Core 위험도 계산]  (TeamVR.AdaptivePassthrough.Core — 순수 C#, EditMode 유닛테스트 가능)
- ├─ StaticBoundaryRiskMath + LegacyStaticBoundaryPolicy
- │      거리·TTC·접근속도·사각지대 → 머리/양손/저장애물별 정적 위험 + on/off 히스테리시스 + 0.25m 비상 오버라이드
- ├─ DynamicRiskPipeline (SimpleObjectTracker → HistoryMotionEstimator/MetricMotionEstimator
- │      → RelativeLocationEstimator → DynamicRiskEstimator)
- │      사람별 추적·접근/이탈 판정·TTC → 동적 위험 + "초근접 시 트래커 확정 전에도 강제 노출" 안전장치
- └─ RiskSnapshotBuilder + OverallRiskFusion
-        정적/사용자상태/동적/의도 위험을 하나로 합친 RiskSnapshot — 실시간 표시 결정에는 쓰이지 않고
-        로깅·개인화 feature 계산용으로만 사용 (2026-07 "정적·동적 재분리" 이후 구조)
-
-[정책/표시 계층]  (Assets/Scripts 최상위, MonoBehaviour)
- ├─ StaticPassthroughPolicyController   정적 위험 → on/off (독립적으로 판단)
- ├─ DynamicPassthroughPolicyController  동적 위험 → on/off (독립적으로 판단)
- ├─ SelectivePassthroughController      두 결정을 받아 실제 셰이더 기반 "Passthrough 창"을 렌더링
- │                                       (사람 캡슐, 벽/저장애물 평면, 최대 2~3개 슬롯 교체 히스테리시스, 후방 경고)
- ├─ BoundaryVisibilityController        Guardian(OVRManager) 경계 표시 여부 조정
- └─ SafetyAlertFeedbackController       대체 피드백 모드(빨간 테두리 + 컨트롤러 햅틱)
-
-[ML 개인화]
- └─ PersonalizationRuntimeController
-        Passthrough 활성화 이벤트 수집(빈도/평균 지속시간/평균·최대 머리 속도/공간 크기/세션 경과)
-        → 7차원 feature → onnx(Unity Sentis) 추론 → "이 활성화가 불필요했을 확률"
-        → stable/rapid/hand/dynamic on·off threshold 조정 → 위 두 정책 컨트롤러에 적용
-        (기본은 shadow mode로 로그만 남기고, cold-start 세션 수(5회) 미달 시 기본값 유지)
-
-[실험 게임 하네스]  (Assets/Scripts/Experiment)
- └─ ExperimentGameRoot + PassthroughConditionSwitcher
-        위 파이프라인은 그대로 두고 presentation/boundary override만 바꿔
-        3-조건(Guardian 기본값 / 정적만 / 정적+동적) 사용자 연구를 진행
+Rtotal =
+wstatic · Rstatic
++ wstate · Rstate
++ wdynamic · Rdynamic
++ wintent · Rintent
 ```
 
-## 구성 요소별 설명
+그러나 전문가 자문 과정에서 단순 가중평균 방식은 특정 위험 요소가 매우 높더라도 다른 위험 요소의 낮은 값에 의해 최종 위험도가 희석될 수 있다는 문제가 제기되었다. 또한 정적 환경과 동적 객체는 입력 데이터의 특성과 반응해야 하는 시간 스케일이 서로 다르기 때문에 하나의 위험도로 통합하는 것보다 독립적으로 판단하는 것이 적절하다고 판단했다.
 
-### 1. 정적 경계 위험 (Static Boundary Risk)
-`QuestSpatialObstacleProvider`가 머리·양손·이동 경로에서 최대 24개의 레이캐스트를 `EnvironmentRaycastManager`/Room Scene에 쏘고, 강건한 평면 추정으로 벽·저장애물 방향과 형태를 복원합니다. `StaticBoundaryRiskMath`가 거리(가중치 0.45)·접근속도(0.30)·TTC(0.20)를 정규화해 가중합한 위험도를 내며, 사용자 상태(정지/이동)에 따라 머리·저장애물 채널의 on 임계값이 0.50(정지) ↔ 0.45(이동) 사이에서 보간되고, 손 채널은 팔 도달 범위를 반영한 별도 임계값(0.40)을 씁니다. 모든 채널의 off 임계값은 on 임계값에서 히스테리시스 폭 0.08을 뺀 값입니다. 사용 가능 거리가 0.25m 이내이면 임계값과 무관하게 즉시 비상 노출됩니다.
+이에 따라 최종 시스템에서는 다음과 같이 변경했다.
 
-### 2. 동적 객체 위험 (Dynamic Object Risk)
-`QuestPersonDetectionRunner`가 Passthrough 카메라 프레임을 Unity Inference Engine(Sentis)으로 돌려 YOLOv9 모델로 사람을 검출합니다(NCHW 입력, boxes/classIds/scores 3-출력 계약). `DynamicRiskPipeline`이 이를 추적(`SimpleObjectTracker`)하고, 거리 이력의 최소제곱 기울기(또는 깊이가 부족하면 bbox 크기의 로그 증가율)로 접근/이탈 상태와 TTC를 추정한 뒤, 근접·접근·TTC·경로 4개 성분을 가중합(0.55/0.30/0.10/0.05)해 위험도를 냅니다. on/off 임계값은 각각 0.60/0.45입니다. 안전거리 1m 이내가 확인되거나(신뢰도 0.55 이상, 표본 2개 이상) bbox가 화면을 강하게 채우면, 트래커가 아직 신뢰 확정을 못했어도 즉시 위험을 강제 노출하는 안전장치(`ForcePassthrough`)가 있습니다.
+```text
+Before
 
-### 3. 융합과 표시 결정
-중간보고서 시점(2026년 7월)까지는 `Rtotal = w_static·R_static + w_state·R_state + w_dynamic·R_dynamic + w_intent·R_intent` 하나의 가중합으로 Passthrough를 켰지만, 정적/동적 두 분석 경로는 입력 데이터의 가용성과 반응해야 할 시간 스케일이 서로 다르고 단일 합산 방식은 한 요소의 결측이나 극단값이 다른 요소에 의해 희석될 수 있다는 문제가 있어(전문가 자문 반영), 이후 정적과 동적 판단이 `StaticPassthroughPolicyController`/`DynamicPassthroughPolicyController`로 완전히 분리되어 각자 자신의 히스테리시스로 독립적으로 on/off를 결정하도록 재설계했습니다. `RiskSnapshotBuilder`가 만드는 통합 `RiskSnapshot`은 지금은 로깅과 개인화 feature 계산에만 쓰입니다. 두 정책의 결과는 `SelectivePassthroughController`가 받아, 위험이 있는 실제 방향/사람 영역에만 셰이더 기반 창을 열어 그 부분만 카메라 패스스루로 보여줍니다.
+Static Risk ─┐
+             ├─▶ Rtotal ─▶ Passthrough
+Dynamic Risk ┘
 
-### 4. Quest 런타임 성능 관리
-사람 검출 추론은 프레임을 멈추지 않도록 레이어 단위로 여러 프레임에 걸쳐 슬라이스 실행되며(`InferenceSchedulerPolicy`), 0.75초를 넘기면 워치독이 강제로 재시작합니다. 기기에서 CPU/GPU 백엔드를 실측 벤치마크해 더 빠른 쪽을 자동 선택하고(`InferenceBackendSelector`), `TrackingQualityController`가 성능 프로파일에 따라 추론 주기·레이캐스트 개수를 조절합니다.
 
-### 5. ML 개인화
-`PersonalizationRuntimeController`는 Passthrough가 실제로 켜져 있던 구간(활성화 이벤트)을 모아 활성화 빈도·평균 지속시간·평균/최대 머리 속도·공간 크기·세션 경과시간의 7차원 feature를 만들고, `ml-personalization/`에서 학습한 RandomForest(100 트리, 최대 깊이 5)를 ONNX로 변환한 뒤 Unity가 지원하는 기본 텐서 연산으로 재구성해 Sentis로 온디바이스 추론합니다. 모델이 내는 "이 활성화가 불필요했을 확률"($p_{neg}$)이 0.5를 넘는 만큼 보정치 $\delta = \mathrm{clip}((p_{neg}-0.5)\times0.20,\,0,\,0.10)$를 다섯 임계값(정적 3종 + 동적 2종) 모두에 동일하게 더해 항상 상향 방향으로만 조정합니다. 안전을 위해 기본은 shadow mode(추론·로깅만, 실제 임계값 미반영)이며, 누적 세션 수가 5회 미만이면(cold start) 개인화를 적용하지 않고 기본값을 유지합니다. **이 모듈은 사용자 실험에서는 통제 변인으로 제외되어 실제 사용자 데이터로 검증되지 않았습니다.**
+After
 
-### 6. 실험 게임 하네스 (사용자 연구용)
-`docs/EXPERIMENT_GAME_INTEGRATION.md`에 따라, 위 파이프라인이 켜져 있는 동일한 `SampleScene`에 사격·회피 게임(`ExperimentGameRoot`)을 얹어 참가자가 좁은 플레이 공간에서 3개 라운드를 진행했습니다(라운드 순서 counterbalancing, 학습효과 통제를 위한 사전 튜토리얼 포함).
-
-| 라운드 | 조건(`ExperimentCondition`) | 커스텀 안전 출력 | Guardian |
-|---|---|---|---|
-| 1 | `GuardianDefault` | 억제 | 표시 (경계 그리드) |
-| 2 | `StaticOnly` | 정적(머리/양손/저장애물)만 표시 | 숨김 |
-| 3 | `StaticAndDynamic` | 정적+동적(사람) 모두 표시 | 숨김 |
-
-`PassthroughConditionSwitcher`는 실제 컴포넌트의 `enabled`나 PlayerPrefs를 바꾸지 않고, presentation/boundary override만 전환합니다. 라운드 종료·메뉴 복귀 시 사용자의 기본 설정으로 자동 복원됩니다. 로그는 기존 `schemaVersion=2` JSONL 형식에 condition/round 정보를 얹어서 그대로 남습니다.
-
-## 사용자 실험 결과
-
-VR 초심자 위주(83.3%) 12명(N=12, 평균 24.33세)을 대상으로, 좁은 플레이 공간에서 안전감(Safety, Tseng et al. 2024 척도 6문항)과 몰입감(Immersion, IPQ 9문항)을 7점 리커트로 측정하고 Friedman 검정 + 사후 Wilcoxon(Bonferroni 보정)으로 분석했습니다. 개인화 모듈은 라운드 간 비교의 통제 변인 유지를 위해 이번 실험에서 제외했습니다.
-
-| 지표 | Round 1 (Guardian) | Round 2 (정적) | Round 3 (정적+동적) | Friedman |
-|---|---|---|---|---|
-| 안전감 | 4.50 | 5.45 | 5.73 | χ²=10.59, **p=.005**, W=.44 |
-| 몰입감 | 4.51 | 4.32 | 4.03 | χ²=2.13, p=.345, W=.089 |
-
-- 안전감은 Round 1 대비 Round 2·3 모두 유의하게 높았지만(각 p=.005, p=.004), Round 2 vs 3 차이는 유의하지 않았습니다(p=.141) — 정적 인식 도입만으로도 안전감이 척도 상단에 가까워지는 천장효과 가능성이 있습니다.
-- 몰입감은 라운드 간 유의한 차이가 없어, 안전 인식 고도화가 몰입감 저하로 이어진다는 근거는 확인되지 않았습니다.
-- 보조지표: 성가심은 Round 3에서 평균이 가장 높았으나 비유의(p=.086). 재선호도는 안전감이 가장 낮은 Round 2가 50%(6명)로 가장 많이 선택되어(Round 3는 25%), 참여자들이 안전감 자체보다 안전감-몰입감의 균형을 더 중요하게 고려했을 가능성을 시사합니다.
-
-**한계**: 표본이 작아(N=12) 통계적 검정력이 제한적이며(특히 몰입감), 안전감 척도의 신뢰도가 이례적으로 높게 나타나(α=.955) 문항 간 개념적 중복 가능성이 있습니다. 개인화 모듈은 이번 실험에서 검증되지 않았습니다.
-
-## 시작하기
-
-### Unity 클라이언트 (Quest 3)
-
-1. Unity Hub에서 **6000.4.2f1**(Unity 6)로 `unity-client/` 폴더를 엽니다.
-2. Android Build Support 모듈 설치, Android 플랫폼으로 전환.
-3. Quest 헤드셋에서 개발자 모드 활성화 + Space Setup(Room Setup) 완료.
-4. 실행할 씬 선택:
-   - `Assets/Scenes/SampleScene.unity` — 실제 앱(정적/동적 위험도 + 개인화 + 실험 게임 포함), 빌드에 포함되는 유일한 씬.
-   - `Assets/Scenes/DynamicRiskMock.unity` — 동적 위험도만 Mock 데이터로 검증하는 씬.
-   - `Assets/Scenes/ExperimentGameTest.unity` — 실험 게임 원본 배치 참고용, 빌드 미포함.
-5. Build & Run, 또는 이미 빌드된 `Builds/Android/AdaptivePassthrough.apk`가 있다면 Quest를 USB로 연결한 뒤 `unity-client/Tools/Install-Quest3.cmd`로 덮어쓰기 설치.
-6. 실험 게임 Prefab을 다시 생성해야 하면 Unity 메뉴 `Tools > Experiment > Rebuild Integrated Game Prefab` 사용 (`Assets/Editor/ExperimentGameIntegrationBuilder.cs`).
-
-### 동적 객체 위험도 Python MVP (`ml-dynamic-object/`)
-
-```powershell
-cd ml-dynamic-object
-python -m pip install -e ".[dev,camera]"
-python examples/run_mock_demo.py           # 하드웨어 없이 mock 시나리오
-python examples/run_usb_camera.py --camera 0 --preview   # 실제 USB 카메라
-python -m pytest
+Static Risk  ─▶ Static Policy  ─┐
+                                ├─▶ Selective Passthrough
+Dynamic Risk ─▶ Dynamic Policy ─┘
 ```
 
-### ML 개인화 파이프라인 (`ml-personalization/`)
+이를 통해 정적 위험과 동적 위험이 서로의 위험도를 희석하지 않고 독립적으로 판단하도록 변경했다.
 
-```bash
-pip install -r requirements.txt
-cd src
-python generate_mock_logs.py      # mock 세션/이벤트 로그 생성
-python build_features.py          # 라벨링 + 7차원 feature 추출
-python train_model.py             # RandomForest 학습
-python convert_to_onnx.py         # ONNX 변환 + sklearn 대비 검증
-python cold_start.py              # cold-start 게이트 확인
-python personalize.py             # 임계값 매핑 수식 확인
-python test_personalization.py    # 전체 파이프라인 통합 테스트
+---
+
+# 5. 설치 및 실행 방법
+
+## 5.1. 설치절차 및 실행 방법
+
+---
+
+## 5.2. 오류 발생 시 해결 방법
+
+---
+
+# 6. 소개 자료 및 시연 영상
+
+## 6.1. 프로젝트 소개 자료
+
+```markdown
+![Project Poster](docs/02.포스터/TeamVR_포스터.pdf)
 ```
 
-실제 Quest 로그(`RiskLogs/*.jsonl`)로 개인화 모델을 만드는 절차는 `ml-personalization/README.md`의 "실제 로그 연동 절차"를 참고하세요. 현재까지 확보된 실제 로그에는 Negative(불필요) 표본이 없어, 배포된 모델은 사실상 Positive 여부만 구분하는 이진 분류기에 가깝습니다.
+발표자료가 저장소에 포함되어 있는 경우 다음과 같이 연결한다.
 
-## 문서
+```markdown
+[프로젝트 발표자료](docs/Project_Presentation.pdf)
+```
 
-더 자세한 설계·구현 배경은 `docs/`에 있습니다.
+> 실제 저장소에 발표자료 또는 포스터 파일을 추가한 후 링크 경로를 수정한다.
 
-- [Quest 3 카메라 기반 사람 Bounding Box Unity 앱 제작 가이드](docs/QUEST3_PERSON_BBOX_UNITY_GUIDE.md)
-- [동적 객체 인식·위험도 Unity 구현 및 검증 문서](docs/DYNAMIC_RISK_UNITY_IMPLEMENTATION.md)
-- [Quest 3 사람 검출·사용자 상태·UI 안정화 제작문서](docs/QUEST3_DETECTION_STABILITY_UI_FIX_SPEC.md) / [구현 결과](docs/QUEST3_DETECTION_STABILITY_UI_FIX_IMPLEMENTATION.md)
-- [단일 RiskSnapshot 기반 위험도 통합 제작문서](docs/RISK_SNAPSHOT_INTEGRATION_SPEC.md)
-- [정적·동적 위험도 재분리 제작문서](docs/STATIC_DYNAMIC_RISK_SEPARATION_SPEC.md)
-- [Quest 3 Depth 기반 동적 위험·인물 Passthrough 개선 제작문서](docs/QUEST3_DEPTH_AWARE_DYNAMIC_RISK_PASSTHROUGH_SPEC.md)
-- [공간 측정·사람 추적 품질 개선 구현 및 검증](docs/SPATIAL_TRACKING_QUALITY_IMPLEMENTATION.md)
-- [온디바이스(Sentis) ML 개인화 통합 스펙](docs/ONDEVICE_SENTIS_INTEGRATION.md)
-- [실험 게임 통합](docs/EXPERIMENT_GAME_INTEGRATION.md)
+---
 
-전체 목록은 [`docs/README.md`](docs/README.md)에서도 볼 수 있습니다(일부 최신 문서는 아직 그 인덱스에 반영되지 않았습니다).
+## 6.2. 시연 영상
+[![2026 전기 졸업과제 08 TeamVR](https://img.youtube.com/vi/Xw21HWSOwO8/0.jpg)](https://youtu.be/Xw21HWSOwO8)   
 
-## 구현 현황
+---
 
-| 항목 | 상태 |
-|---|---|
-| Quest 정적 경계 위험도 + Passthrough 표시 | 구현 완료, Quest 실기 검증 완료 |
-| Quest 동적(사람) 위험도 + Passthrough 표시 | 구현 완료 (YOLOv9 + Sentis 온디바이스 추론) |
-| 정적/동적 독립 정책 + 통합 표시 레이어 | 구현 완료 |
-| ML 개인화 (RandomForest → ONNX → Sentis) | Mock 데이터로 end-to-end 검증 완료, 실제 Quest 로그 재검증은 TODO (현재까지 Negative 표본 없음) |
-| 실험 게임(3-조건 사용자 연구 하네스) | 구현 완료 |
-| 사용자 실험 (N=12, 3-조건 비교) | 완료 — 안전감 유의미한 향상 확인(p=.005), 몰입감 유의미한 저하 없음(p=.345) |
+# 7. 팀 구성
 
-## 향후 연구 방향
+## 7.1. 팀원별 소개 및 역할 분담
 
-- **멀티모달 피드백으로의 확장**: 현재는 시각적 표시(부분적 현실 화면 노출)와 후방 방향 진동만 제공합니다. 3D Spatial Audio와 추가적인 Haptic Feedback 패턴을 경고 표현 계층에 도입해 시각·청각·촉각 신호를 조합할 필요가 있습니다.
-- **배포 가능한 형태로의 발전**: 현재는 연구용 프로토타입으로, 특정 개발 환경에서 빌드해 실행하는 수준입니다. 앱 패키징, 설정·권한 안내 UI, 호환성 검증 등을 갖추어야 합니다.
-- **개인화 모듈의 실데이터 검증**: 학습·배포 파이프라인 자체는 온디바이스 추론까지 구현되어 있으나, 실제 사용자 로그가 아닌 제한된 데이터로 운용되고 있어 재검증이 필요합니다.
+### Team VR
+
+| 팀원      | 역할                | 주요 담당                                                                                |
+| ------- | ----------------- | ------------------------------------------------------------------------------------ |
+| **따다소** | 개인화 모델 및 사용자 실험   | Random Forest 기반 On-device 추론, PC 기반 개인화 모델 재학습, 사용자 실험 설계/진행, 비모수 통계 분석, 보고서 및 발표자료 제작 |
+| **최아영** | 정적 위험도 및 실험 게임    | 정적 경계 기반 위험도 알고리즘, 정적 Passthrough 제어, 실험용 VR 게임 개발                                   |
+| **이승주** | 동적 위험 인식 및 시스템 통합 | 사람 검출·추적, 동적 위험도 계산, 선택적 Passthrough 시각화, 시각·진동 피드백, 전체 시스템 통합                       |
+
+---
+
+## 7.2. 팀원 별 참여 후기
+
+### 따다소
+
+아이디어를 실제로 동작하는 시스템으로 만드는 과정이 생각보다 훨씬 복잡하다는 것을 느꼈다. 시행착오는 많았지만 그만큼 배운 것도 많았던, 뜻깊은 프로젝트였다.
+
+### 최아영
+
+TBA
+
+### 이승주
+
+TBA
+
+---
+
+# 8. 참고 문헌 및 출처
+
+## 연구 및 산업 자료
+
+1. 김성진. *확장현실(XR) 산업의 현황과 과제*. KIET 산업경제, 산업연구원, 2023.
+
+2. *Development and Validation of the Collision Anxiety Questionnaire for VR Applications*. Proceedings of the 2024 CHI Conference on Human Factors in Computing Systems.
+
+3. Cucher, D. J., Kovacs, M. S., Clark, C. E., & Hu, C. K. P. (2023). *Virtual reality consumer product injuries: An analysis of national emergency department data*. Injury, 54(5), 1396–1399.
+
+   - Data Source: National Electronic Injury Surveillance System (NEISS)
+   - 2017년 125건 → 2021년 1,336건
+   - 해당 기간 352% 증가
+
+## 기술 문서
+
+4. Meta. *Meta Quest에서 패스스루를 사용하는 방법*.
+
+5. Meta for Developers. *Passthrough Camera API Overview*. Meta Horizon Documentation.
+
+6. Meta Platforms, Inc. *Create engaging experiences with anchoring improvements and multi-room support*. Meta Horizon Developer Blog, 2024.
+
+7. Apple Inc. *Important Safety Information for Apple Vision Pro*. 2024.
+
+## 관련 연구
+
+8. Breiman, L. (2001). *Random Forests*. Machine Learning, 45(1), 5–32.
+
+9. Probst, P., Wright, M. N., & Boulesteix, A.-L. (2019). *Hyperparameters and tuning strategies for random forest*. WIREs Data Mining and Knowledge Discovery, 9(3), e1301.
+
+10. Tseng, W.-J., Kontrazis, P. D., Lecolinet, E., Huron, S., & Gugenheimer, J. (2024). *Understanding Interaction and Breakouts of Safety Boundaries in Virtual Reality through Mixed-Method Studies*. IEEE VR, 2024.
+
+11. Schmelter, T., Küchenmeister, P., Geuter, J., & Hildebrand, K. (2025). *Depth-aware immersive visualization of boundaries using particles in VR*. ACM SUI, 2025.
