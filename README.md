@@ -457,16 +457,11 @@ Dynamic Risk ─▶ Dynamic Policy ─┘
 ## 6.1. 프로젝트 소개 자료
 
 ```markdown
-![Project Poster](docs/02.포스터/TeamVR_포스터.pdf)
-```
-
-발표자료가 저장소에 포함되어 있는 경우 다음과 같이 연결한다.
-
+![포스터](docs/02.포스터/TeamVR_포스터.pdf)
+``
 ```markdown
-[프로젝트 발표자료](docs/Project_Presentation.pdf)
-```
-
-> 실제 저장소에 발표자료 또는 포스터 파일을 추가한 후 링크 경로를 수정한다.
+![발표 자료](docs/03.발표자료/TeamVR_발표자료.pdf)
+``
 
 ---
 
