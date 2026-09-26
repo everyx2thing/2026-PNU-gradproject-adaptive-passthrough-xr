@@ -1,7 +1,5 @@
-# Context-aware Adaptive Passthrough Framework for Immersive XR
+# 몰입형 XR을 위한 상황 인식 기반 Adaptive Passthrough Framework (Context-aware Adaptive Passthrough Framework for Immersive XR)
 
-> **몰입형 XR을 위한 상황 인식 기반 Adaptive Passthrough Framework**
->
 > 정적·동적 위험 분석과 ML 개인화를 결합한 Meta Quest 3 기반 XR 안전 시스템
 
 ---
