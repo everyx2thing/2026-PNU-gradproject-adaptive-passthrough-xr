@@ -530,6 +530,31 @@ Dynamic Risk ─▶ Dynamic Policy ─┘
 
 ## 5.2. 오류 발생 시 해결 방법
 
+설치 및 실행 중 문제가 발생하면 다음 항목을 확인한다.
+
+| 증상 | 해결 방법 |
+|---|---|
+| Unity 컴파일 또는 Android 빌드 오류 | Unity `6000.4.2f1`과 Android Build Support, SDK·NDK, OpenJDK 설치 여부를 확인하고 Console 오류를 점검한다. |
+| Quest 3 연결 실패 | 개발자 모드와 USB 디버깅 허용 여부를 확인한다. `offline` 상태이면 USB를 다시 연결한다. |
+| `adb.exe was not found` 표시 | Android SDK의 `platform-tools` 경로를 `PATH`에 추가하거나 설치 스크립트의 `-AdbPath` 옵션으로 경로를 지정한다. |
+| 공간 또는 벽 정보가 수집되지 않음 | Space Setup(Room Setup)과 공간 데이터 접근 권한을 확인한 뒤 앱을 재실행한다. |
+| 사람 검출이 동작하지 않음 | 카메라 접근 권한과 검출 모델 연결 상태를 확인하고, Quest 3 실기기에서 실행한다. |
+| 선택적 Passthrough가 표시되지 않음 | 메뉴·튜토리얼·Round 1에서는 커스텀 출력이 억제된다. Round 2·3에서 해당 위험 조건에 따라 표시되는지 확인한다. |
+| `Guardian is still suppressed` 표시 | 완전한 Boundaryless 모드를 해제하거나 Roomscale 경계 설정을 완료한 뒤 Round 1을 다시 실행한다. |
+| ML 개인화 모델 오류 | Unity Inference Engine과 `personalization_runtime.onnx`의 임포트 및 컴포넌트 연결 상태를 확인한다. |
+
+상세 오류는 Unity Console에서 확인한다. Quest 실행 로그는 Android SDK의 `platform-tools` 폴더에서 PowerShell을 열어 확인한다.
+
+```powershell
+# 기기 연결 상태 확인
+.\adb.exe devices
+
+# Unity 실행 로그 확인
+.\adb.exe logcat -s Unity
+```
+
+연결 상태가 `unauthorized`이면 헤드셋에서 USB 디버깅을 허용한다. 로그 확인은 `Ctrl + C`로 종료한다.
+
 ---
 
 # 6. 소개 자료 및 시연 영상
