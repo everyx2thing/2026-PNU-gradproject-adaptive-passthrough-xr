@@ -462,6 +462,72 @@ Dynamic Risk ─▶ Dynamic Policy ─┘
 
 ## 5.1. 설치절차 및 실행 방법
 
+본 프로젝트는 Unity 기반 클라이언트를 Meta Quest 3에 설치하여 실행한다.
+
+### 5.1.1. 개발 환경
+
+| 구분 | 요구사항 |
+|---|---|
+| 디바이스 | Meta Quest 3 및 컨트롤러 |
+| Unity Editor | 6000.4.2f1 |
+| 빌드 환경 | Android Build Support, Android SDK·NDK, OpenJDK |
+| Meta XR SDK | Core SDK, Interaction SDK, MR Utility Kit 203.0.0 |
+| 온디바이스 추론 | Unity Inference Engine 2.6.1 |
+
+### 5.1.2. 설치 절차
+
+1. **저장소 복제**
+
+   Git을 이용하여 저장소를 복제한다.
+
+   ```bash
+   git clone https://github.com/everyx2thing/2026-PNU-gradproject-adaptive-passthrough-xr.git
+   ```
+
+2. **Unity 프로젝트 열기**
+
+   Unity Hub에서 `unity-client` 폴더를 프로젝트로 추가하고 Unity `6000.4.2f1`로 연다. 필요한 Unity 패키지는 프로젝트의 `Packages/manifest.json`을 기준으로 설치된다.
+
+3. **Quest 3 연결**
+
+   Quest 3의 개발자 모드를 활성화한 뒤 USB로 PC에 연결하고, 헤드셋에서 USB 디버깅을 허용한다.
+
+4. **Android 빌드 및 설치**
+
+   `Assets/Scenes/SampleScene.unity`를 열고, `File > Build Profiles`에서 Android 플랫폼을 활성화한다. 빌드 Scene에 `SampleScene`이 포함되어 있는지 확인한 뒤, 연결된 Quest 3를 대상으로 `Build And Run`을 실행한다.
+
+### 5.1.3. 실행 및 사용 방법
+
+1. **실행 환경 설정**
+
+   앱 실행 전 Quest 3에서 Space Setup(Room Setup)을 완료한다. 앱 실행 시 공간 데이터 및 카메라 접근 권한을 허용한다.
+
+2. **앱 실행**
+
+   설치된 앱은 Quest 앱 라이브러리의 `알 수 없는 출처(Unknown Sources)`에서 `Adaptive Passthrough`를 선택하여 실행한다.
+
+3. **실험 튜토리얼 진행**
+
+   실험 메뉴에서 튜토리얼을 실행하여 조준, 발사, 회피 방법을 익힌다. 튜토리얼이 끝나면 라운드 선택 메뉴로 돌아간다.
+
+4. **비교 실험 진행**
+
+   실험 메뉴에서 라운드를 선택하여 조건별 동작을 확인한다.
+
+   | 라운드 | 실험 조건 |
+   |---|---|
+   | Round 1 | 기본 Guardian |
+   | Round 2 | 정적 경계 기반 Passthrough |
+   | Round 3 | 정적 경계 및 동적 객체 기반 Passthrough |
+
+5. **위험도 및 Passthrough 확인**
+
+   앱 내 UI에서 센서 Feature, 정적·동적 위험도, Passthrough 활성화 상태를 확인한다. 선택한 실험 조건에 따라 사용자 움직임과 주변 사람의 접근 상태를 분석하고, 위험이 발생한 영역에 선택적으로 Passthrough를 노출한다.
+
+6. **세션 로그 확인**
+
+   실행 중 수집된 로그는 Quest 내부의 `Application.persistentDataPath/RiskLogs/`에 JSONL 형식으로 저장된다. 수집된 로그는 위험도 분석 및 ML 개인화 모델 학습에 활용한다.
+
 ## 5.2. 오류 발생 시 해결 방법
 
 ---
