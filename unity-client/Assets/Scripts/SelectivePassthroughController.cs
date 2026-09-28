@@ -1780,6 +1780,19 @@ public sealed class SelectivePassthroughController :
             return;
         }
 
+        bool bothFeaturesDisabled = !EffectiveStaticFeatureEnabled
+            && !EffectiveDynamicFeatureEnabled;
+        if (bothFeaturesDisabled
+            && EffectiveFeedbackMode == SafetyFeedbackMode.Passthrough)
+        {
+            // Neither hazard system is active: fall back to the regular,
+            // uninterrupted passthrough view instead of hiding the layer.
+            SuppressPassthroughWindowRenderers();
+            SetLayerVisible(true);
+            alertFeedback?.SetAlertActive(false, 0f);
+            return;
+        }
+
         bool staticFeedbackRequested = HasGeneralStaticFeedbackCandidate();
         bool dynamicFeedbackRequested = ActivePersonWindowCount > 0
             || stereoFallbackDynamicRequested;
