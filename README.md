@@ -563,9 +563,7 @@ Experiment Scene은 조준·발사·회피 게임을 통해 안전 시스템의 
    | Round 2 | 정적 경계 기반 Passthrough |
    | Round 3 | 정적 경계 및 동적 객체 기반 Passthrough |
 
-3. **위험도 및 Passthrough 확인**
 
-   앱 내 UI에서 센서 Feature, 정적·동적 위험도, Passthrough 활성화 상태를 확인한다. 선택한 실험 조건에 따라 사용자 움직임과 주변 사람의 접근 상태를 분석하고, 위험이 발생한 영역에 선택적으로 Passthrough를 노출한다.
 
 #### 5.1.6. 세션 로그 확인
 
