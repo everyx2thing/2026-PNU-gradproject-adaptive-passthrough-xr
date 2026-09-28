@@ -195,7 +195,7 @@ Threshold Adjustment
 ┌────────────────────────────────────────────┐
 │                  Meta Quest 3              │
 │                                            │
-│   HMD / Controller / Room Scene / Camera  │
+│   HMD / Controller / Room Scene / Camera   │
 │                  / Depth                   │
 └──────────────────────┬─────────────────────┘
                        │
@@ -211,7 +211,7 @@ Threshold Adjustment
 ┌────────────────────────┐ ┌────────────────────────┐
 │ Static Risk Pipeline   │ │ Dynamic Risk Pipeline  │
 │                        │ │                        │
-│ Wall / Furniture       │ │ YOLOv9 Person         │
+│ Wall / Furniture       │ │ YOLOv9 Person          │
 │ Low Obstacle           │ │ Detection              │
 │ Distance               │ │ Object Tracking        │
 │ Approach Velocity      │ │ Distance / TTC         │
@@ -221,14 +221,14 @@ Threshold Adjustment
              ▼                         ▼
 ┌──────────────────────┐   ┌──────────────────────┐
 │ Static Policy        │   │ Dynamic Policy       │
-│ Controller           │   │ Controller            │
+│ Controller           │   │ Controller           │
 └────────────┬─────────┘   └────────────┬─────────┘
              │                          │
              └────────────┬─────────────┘
                           ▼
               ┌────────────────────────┐
               │ Selective Passthrough  │
-              │ Controller              │
+              │ Controller             │
               │                        │
               │ Surface Window         │
               │ Capsule Window         │
