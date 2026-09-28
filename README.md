@@ -521,8 +521,7 @@ Dynamic Risk ─▶ Dynamic Policy ─┘
    
 5. **Android 빌드 및 설치**
 
-   `File > Build Profiles`에서 Android 플랫폼을 활성화한다. 빌드 Scene에 `SampleScene`이 포함되어 있는지 확인한 뒤, 연결된 Quest 3를 대상으로 `Build And Run`을 실행한다.
-
+   `File > Build Profiles`에서 Android 플랫폼을 활성화한다. 실행할 씬을 빌드 씬 목록에 포함하고 첫 번째 활성 씬으로 배치한 뒤, 연결된 Quest 3를 대상으로 `Build And Run`을 실행한다.
 #### 5.1.3. 실행 및 사용 방법
 
 1. **실행 환경 설정**
