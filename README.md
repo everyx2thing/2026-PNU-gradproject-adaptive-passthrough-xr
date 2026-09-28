@@ -141,7 +141,7 @@ Dynamic Risk
 
 이를 통해 안전을 확보하면서도 불필요한 현실 환경 노출을 줄인다.
 
-## 2.1.5. ML 기반 개인화
+#### 2.1.5. ML 기반 개인화
 
 사용자의 Passthrough 활성화 로그를 이용하여 개인별 위험 판단 민감도를 조정한다.
 
@@ -409,7 +409,7 @@ Capsule Window
 │  │  │  ├─ SafetyAlertFeedbackController.cs       # 시각,진동 경고 피드백
 │  │  │  └─ QuestRisk*Logger.cs                    # 위험도,세션 로그 기록
 │  │  ├─ Scenes/
-│  │  │  ├─ SampleScene.unity            # 실제 앱 실행 Scene (정적·동적 위험도 + 개인화 + 실험 통합)
+│  │  │  ├─ SampleScene.unity            # 실제 앱 실행 Scene (정적·동적 Passthrough 선택 및 기능 확인)
 │  │  │  ├─ DynamicRiskMock.unity        # 동적 위험도 Mock 데이터 검증용
 │  │  │  └─ ExperimentGameTest.unity     # 실험 게임 단독 테스트용
 │  │  └─ (Models, Prefabs, Materials, XR, Oculus 등 리소스 폴더)
@@ -479,7 +479,7 @@ Dynamic Risk ─▶ Dynamic Policy ─┘
 ## 5. 설치 및 실행 방법
 ### 5.1. 설치절차 및 실행 방법
 
-본 프로젝트는 Unity 기반 클라이언트를 Meta Quest 3에 설치하여 실행한다.
+본 프로젝트는 Unity 기반 클라이언트를 Meta Quest 3에 설치하여 실행한다. Passthrough 기능 확인에는 `SampleScene`, 사용자 실험에는 `ExperimentGameTest`를 사용한다.
 
 #### 5.1.1. 개발 환경
 
@@ -509,9 +509,19 @@ Dynamic Risk ─▶ Dynamic Policy ─┘
 
    Quest 3의 개발자 모드를 활성화한 뒤 USB로 PC에 연결하고, 헤드셋에서 USB 디버깅을 허용한다.
 
-4. **Android 빌드 및 설치**
+4. **실행할 씬 선택**
 
-   `Assets/Scenes/SampleScene.unity`를 열고, `File > Build Profiles`에서 Android 플랫폼을 활성화한다. 빌드 Scene에 `SampleScene`이 포함되어 있는지 확인한 뒤, 연결된 Quest 3를 대상으로 `Build And Run`을 실행한다.
+   사용 목적에 따라 다음 씬을 연다.
+
+   | 씬 경로 | 용도 |
+   |---|---|
+   | `Assets/Scenes/SampleScene.unity` | 정적·동적 Passthrough 기능 확인 |
+   | `Assets/Scenes/ExperimentGameTest.unity` | 사용자 실험용 게임 |
+   | `Assets/Scenes/DynamicRiskMock.unity` | Mock 입력을 이용한 개발용 검증 |
+   
+5. **Android 빌드 및 설치**
+
+   `File > Build Profiles`에서 Android 플랫폼을 활성화한다. 빌드 Scene에 `SampleScene`이 포함되어 있는지 확인한 뒤, 연결된 Quest 3를 대상으로 `Build And Run`을 실행한다.
 
 #### 5.1.3. 실행 및 사용 방법
 
@@ -523,11 +533,28 @@ Dynamic Risk ─▶ Dynamic Policy ─┘
 
    설치된 앱은 Quest 앱 라이브러리의 `알 수 없는 출처(Unknown Sources)`에서 `Adaptive Passthrough`를 선택하여 실행한다.
 
-3. **실험 튜토리얼 진행**
+#### 5.1.4. Sample Scene 사용 방법
 
-   실험 메뉴에서 튜토리얼을 실행하여 조준, 발사, 회피 방법을 익힌다. 튜토리얼이 끝나면 라운드 선택 메뉴로 돌아간다.
+Sample Scene은 평면 위에 사용자가 위치하며, 정적·동적 Passthrough 기능을 선택하여 확인하는 씬이다.
 
-4. **비교 실험 진행**
+사용자 화면 중앙에는 정적 Passthrough와 동적 Passthrough를 각각 활성화하는 버튼 두 개가 있다.
+
+| 정적 Passthrough 버튼 | 동적 Passthrough 버튼 | 적용 방식 |
+|---|---|---|
+| 선택 | 선택 | 정적·동적 Passthrough 모두 활성화 |
+| 선택 | 미선택 | 정적 Passthrough만 활성화 |
+| 미선택 | 선택 | 동적 Passthrough만 활성화 |
+| 미선택 | 미선택 | 기본 Passthrough 적용 |
+
+정적 기능을 선택하면 벽·가구 등 정적 장애물에 대한 반응을 확인할 수 있으며, 동적 기능을 선택하면 주변 사람의 접근에 대한 반응을 확인할 수 있다. 두 기능을 함께 선택하면 정적·동적 위험 영역의 Passthrough를 동시에 확인할 수 있다.
+
+#### 5.1.5. Experiment Scene 사용 방법
+Experiment Scene은 조준·발사·회피 게임을 통해 안전 시스템의 조건별 차이를 비교하는 사용자 실험용 씬이다.
+1. **실험 튜토리얼 진행**
+
+   실험 메뉴에서 튜토리얼을 실행하여 과녁 조준, 발사, 회피 방법을 익힌다. 튜토리얼이 끝나면 라운드 선택 메뉴로 돌아간다.
+
+2. **비교 실험 진행**
 
    실험 메뉴에서 라운드를 선택하여 조건별 동작을 확인한다.
 
@@ -537,13 +564,24 @@ Dynamic Risk ─▶ Dynamic Policy ─┘
    | Round 2 | 정적 경계 기반 Passthrough |
    | Round 3 | 정적 경계 및 동적 객체 기반 Passthrough |
 
-5. **위험도 및 Passthrough 확인**
+3. **위험도 및 Passthrough 확인**
 
    앱 내 UI에서 센서 Feature, 정적·동적 위험도, Passthrough 활성화 상태를 확인한다. 선택한 실험 조건에 따라 사용자 움직임과 주변 사람의 접근 상태를 분석하고, 위험이 발생한 영역에 선택적으로 Passthrough를 노출한다.
 
-6. **세션 로그 확인**
+#### 5.1.6. 세션 로그 확인
 
-   실행 중 수집된 로그는 Quest 내부의 `Application.persistentDataPath/RiskLogs/`에 JSONL 형식으로 저장된다. 수집된 로그는 위험도 분석 및 ML 개인화 모델 학습에 활용한다.
+실행 중 수집된 로그는 Quest 내부의 다음 경로에 JSONL 형식으로 저장된다.
+
+```text
+Application.persistentDataPath/RiskLogs/
+```
+
+| 파일 패턴 | 주요 내용 |
+|---|---|
+| `dynamic-risk-*.jsonl` | 사람 검출·추적, 거리·접근 상태 및 동적 위험도 |
+| `personalization-*.jsonl` | 개인화 Feature, 모델 추론 결과, 임계값 및 적용 상태 |
+
+로그는 위험도와 시스템 동작 분석에 활용한다. ML 모델 재학습에 사용하려면 현재 로그 형식을 학습 파이프라인의 입력 형식에 맞게 변환해야 한다.
 
 ### 5.2. 오류 발생 시 해결 방법
 
@@ -556,7 +594,7 @@ Dynamic Risk ─▶ Dynamic Policy ─┘
 | `adb.exe was not found` 표시 | Android SDK의 `platform-tools` 경로를 `PATH`에 추가하거나 설치 스크립트의 `-AdbPath` 옵션으로 경로를 지정한다. |
 | 공간 또는 벽 정보가 수집되지 않음 | Space Setup(Room Setup)과 공간 데이터 접근 권한을 확인한 뒤 앱을 재실행한다. |
 | 사람 검출이 동작하지 않음 | 카메라 접근 권한과 검출 모델 연결 상태를 확인하고, Quest 3 실기기에서 실행한다. |
-| 선택적 Passthrough가 표시되지 않음 | 메뉴·튜토리얼·Round 1에서는 커스텀 출력이 억제된다. Round 2·3에서 해당 위험 조건에 따라 표시되는지 확인한다. |
+| 선택적 Passthrough가 표시되지 않음 | Sample Scene에서는 정적·동적 Passthrough 버튼의 선택 상태를 확인한다. Experiment Scene에서는 메뉴·튜토리얼·Round 1에서 커스텀 출력이 억제되므로, Round 2·3에서 해당 위험 조건에 따라 표시되는지 확인한다. |
 | `Guardian is still suppressed` 표시 | 완전한 Boundaryless 모드를 해제하거나 Roomscale 경계 설정을 완료한 뒤 Round 1을 다시 실행한다. |
 | ML 개인화 모델 오류 | Unity Inference Engine과 `personalization_runtime.onnx`의 임포트 및 컴포넌트 연결 상태를 확인한다. |
 
