@@ -1,325 +1,238 @@
-# Sensor Feature & Risk Calculation Prototype for Adaptive Passthrough XR
+# 정적 위험도 알고리즘 및 실험 게임 구현 상세
 
-Meta Quest 기반 **센서 Feature 계산 및 정적 경계 위험도 산출 로직**을 검증하기 위한 Unity 프로토타입 상세 문서입니다.
+이 문서는 Adaptive Passthrough 프로젝트의 **정적 위험도 계산·정책과 사용자 실험용 게임 개발**을 설명합니다. 전체 Unity 클라이언트의 기능과 설치 방법은 [README](README.md)를 참고합니다.
 
-본 문서는 졸업과제 전체 시스템인 **Context-aware Adaptive Passthrough Framework** 중, 사용자가 담당하는 Unity Client 측 구현 범위를 정리합니다. 현재 구현은 전체 시스템을 완성한 것이 아니라, Quest에서 직접 수집 가능한 HMD/컨트롤러 움직임과 Scene API 기반 벽 정보를 이용해 `Rcollision`, `Rstate`, `Rtotal`을 계산하고 Passthrough 활성화 판단값을 UI에 표시하는 단계입니다.
+> 기준: 2026-09-28 작업 폴더의 코드, SampleScene과 실험 게임 Prefab. 초기 벽 기반 프로토타입과 현재 통합 경로를 구분합니다. 
 
----
+## 1. 목적과 책임 분리
 
-## 1. 담당 구현 범위
+정적 위험 분석은 벽·가구·낮은 장애물에 가까워지거나 그쪽으로 움직일 때 필요한 영역을 보여 주는 것을 목적으로 합니다. 거리, 접근 속도와 TTC를 함께 사용하며 머리·양손·낮은 장애물을 독립적으로 판단합니다.
 
-본 프로토타입에서 담당하는 핵심 범위는 다음과 같습니다.
-
-1. **Meta Quest 기반 센서 및 공간 정보 수집**
-   - HMD 위치/회전, 컨트롤러 위치 데이터를 실시간으로 수집합니다.
-   - Quest의 Space Setup으로 생성된 Room Scene 정보를 Scene API로 불러옵니다.
-   - `WallFace`, `InvisibleWallFace` 앵커를 필터링하여 실제 공간의 벽 위치와 법선 벡터를 사용합니다.
-
-2. **위험도 산출용 Feature 계산**
-   - HMD 속도, 가속도, 각속도를 계산합니다.
-   - 좌우 컨트롤러 속도, 손 평균 속도, Hand/Head Ratio를 계산합니다.
-   - 가장 가까운 벽까지의 거리, 벽 방향 접근 속도, 접근 가속도, TTC를 계산합니다.
-   - HMD 시선 방향과 벽 방향 사이의 각도를 이용해 사각지대 위험도 `Rblind`를 계산합니다.
-
-3. **정적 경계 기반 위험도 계산**
-   - 거리 기반 위험도 `Rd`, TTC 기반 위험도 `RTTC`, 접근 가속도 기반 위험도 `Ra`, 사각지대 위험도 `Rblind`를 결합하여 `Rcollision`을 계산합니다.
-   - 사용자 움직임 상태를 `Static`, `Dynamic`, `Agitated`로 분류하고 이를 `Rstate`로 수치화합니다.
-   - 현재는 `Rdynamic`, `Rintent`를 0으로 고정하고, `Rcollision`과 `Rstate` 중심으로 `Rtotal`을 계산합니다.
-
-4. **Passthrough 판단 결과 표시**
-   - `Rtotal`이 설정된 threshold 이상이면 Passthrough가 필요하다고 판단합니다.
-   - 현재 단계에서는 실제 Passthrough Layer를 직접 제어하지 않고, `Passthrough Decision: ON/OFF`를 UI에 표시합니다.
-
-5. **실험용 계수 조정 구조 구성**
-   - `safeDistance`, `safeTime`, `maxApproachAccel`, 위험도 가중치, `passthroughOnThreshold` 등을 Unity Inspector에서 수정할 수 있도록 구성합니다.
-   - 실제 Quest 실험을 통해 위험도 계산식이 너무 민감하거나 둔감하지 않도록 계수 튜닝을 진행할 예정입니다.
-
-6. **팀원 파트와의 연결 준비**
-   - AI/ML 파트에서 추후 계산할 `Rdynamic`, `Rintent`가 `Rtotal`에 들어올 수 있도록 구조를 유지합니다.
-   - Backend/Data/Dashboard 파트에서 사용할 수 있도록 주요 Feature, 위험도 값, Passthrough 판단 결과를 로그로 남길 수 있는 형태로 확장할 예정입니다.
-   - Visualization 파트에서는 현재의 `Passthrough Decision` 값을 실제 Passthrough ON/OFF 또는 시각화 방식 선택 로직과 연결할 예정입니다.
-
----
-
-## 2. Requirements
-
-- Unity **6000.4.2f1** (Unity 6)
-- Android Build Support 모듈
-- Meta Quest 계열 헤드셋
-  - 현재 개발 및 테스트 기준: Meta Quest 환경
-  - 기기별 Scene API / Passthrough 동작은 SDK 및 기기 버전에 따라 추가 검증 필요
-- 헤드셋 개발자 모드 활성화
-- 헤드셋에서 **Space Setup(Room Setup)** 완료 필요
-  - Scene API가 Room Scene의 벽 정보를 가져오기 위해 필요합니다.
-
----
-
-## 3. Packages / Dependencies
-
-`Packages/manifest.json` 기준 주요 패키지는 다음과 같습니다.
-
-- `com.meta.xr.sdk.core` — OVRManager, OVRCameraRig, Scene API 관련 기능
-- `com.meta.xr.sdk.interaction.ovr` — Meta XR Interaction SDK
-- `com.unity.xr.management`, `com.unity.xr.openxr` — XR Plug-in Management 및 OpenXR
-- `com.unity.render-pipelines.universal` — URP
-- `com.unity.inputsystem` — Unity Input System
-- `com.coplaydev.unity-mcp`, `com.meta.xr.unity-mcp.extension` — 개발 편의용 AI/MCP 툴링
-
-전체 버전 정보는 `Packages/manifest.json`, `Packages/packages-lock.json`을 참고합니다.
-
----
-
-## 4. Project Structure
-
-Unity 프로젝트는 저장소 내 `unity-client/` 폴더에 위치하는 것을 기준으로 합니다.
+실험 게임은 조준·발사·회피 과제를 수행하는 동안 세 가지 안전 출력 조건을 비교하는 환경입니다. 게임 점수는 과제 피드백이며 위험도 계산의 입력으로 사용하지 않습니다.
 
 ```text
-unity-client/
-├─ Assets/
-│  ├─ Scenes/
-│  │  └─ SampleScene.unity
-│  ├─ Scripts/
-│  │  ├─ QuestBoundaryLogger.cs
-│  │  ├─ QuestSceneDistanceLogger.cs
-│  │  └─ QuestRiskExperimentLogger.cs
-│  ├─ Settings/
-│  ├─ Resources/
-│  └─ Plugins/Android/
-├─ Packages/
-├─ ProjectSettings/
-├─ README.md
-└─ PROTOTYPE_DETAILS.md
+공간·움직임 측정 → StaticBoundaryRiskFrame
+    → StaticPassthroughPolicyController
+    → 머리 / 왼손 / 오른손 / 낮은 장애물별 판정
+    → SelectivePassthroughController 및 안전 피드백
+
+실험 메뉴·튜토리얼·라운드 → 게임 과제
+    → 조건별 표시·Guardian override
 ```
 
-저장소에는 Unity 프로젝트 실행에 필요한 `Assets/`, `Packages/`, `ProjectSettings/`를 포함합니다.  
-`Library/`, `Temp/`, `Obj/`, `Logs/`, `UserSettings/`, `Builds/`, `*.apk`, `*.csproj`, `*.sln` 등은 로컬 생성 파일이므로 커밋하지 않습니다.
+## 2. 정적 공간·움직임 측정
 
----
+### 2.1 현재 입력 경로
 
-## 5. Key Scripts
+현재 통합 경로의 공급자는 `QuestSpatialObstacleProvider`입니다. Environment Depth와 Room Scene 측정에 유효성·신뢰도·사용자 몸에 대한 자기 검출 검사를 적용하고 공간 표면과 위험 방향을 구성합니다.
 
-### `QuestBoundaryLogger.cs`
+- 머리·양손과 이동 방향의 낮은 장애물 측정값을 분리합니다.
+- 거리·접근 속도·TTC와 표시용 표면 정보를 함께 전달합니다.
+- 확인된 머리 근접 overlap을 긴급 조건으로 처리합니다.
+- 손 overlap을 임의의 0m 거리로 합성하는 경로는 사용하지 않습니다.
 
-Guardian Boundary API를 검토하기 위해 작성한 초기 실험 스크립트입니다.
+`QuestRiskExperimentLogger`는 이 공급자가 연결되어 있으면 공급자의 프레임을 사용합니다. 초기 Room Scene 전용 계산도 코드에 남아 있으므로 Inspector의 옛 필드만으로 현재 위험식을 판단하면 안 됩니다.
 
-- Guardian 설정 여부 확인
-- Play Area 크기 확인
-- Boundary geometry 로깅
-- 최신 SDK 환경에서 Boundary API 사용의 제약을 확인하기 위한 기준 코드
+### 2.2 접근 속도와 사용자 상태
 
-현재 핵심 구현에서는 Scene API 기반 구조를 사용하므로 이 스크립트는 보존용 또는 비교용에 가깝습니다.
-
-### `QuestSceneDistanceLogger.cs`
-
-Scene API 기반 벽 거리 및 모션 Feature 계산을 검증하기 위한 기준선 스크립트입니다.
-
-- `com.oculus.permission.USE_SCENE` 권한 요청
-- Room Anchor 및 Wall Anchor 조회
-- `WallFace`, `InvisibleWallFace` 필터링
-- HMD와 가장 가까운 벽 사이의 거리 계산
-- HMD 속도, 가속도, 각속도 계산
-- 손 속도, Hand/Head Ratio 계산
-- 벽 방향 접근 속도와 TTC 계산
-
-이 파일은 위험도 계산을 붙이기 전 단계의 기준선 역할을 합니다.
-
-### `QuestRiskExperimentLogger.cs`
-
-현재 핵심 스크립트입니다.  
-`QuestSceneDistanceLogger.cs`의 벽 거리 및 모션 Feature 계산 구조를 기반으로, 위험도 계산과 Passthrough 판단 로직을 추가했습니다.
-
-주요 기능은 다음과 같습니다.
-
-- Scene API 기반 벽 정보 수집
-- HMD/컨트롤러 움직임 Feature 계산
-- `Rd`, `RTTC`, `Ra`, `Rblind` 계산
-- `Rcollision`, `Rstate`, `Rtotal` 계산
-- `Rtotal` 기반 Passthrough 판단
-- World-space UI에 Feature, 위험도, 판단 결과 표시
-- Inspector 기반 실험용 계수 수정
-
----
-
-## 6. Risk Calculation
-
-현재 코드는 보고서의 최종 위험도 구조를 유지하되, 구현 범위를 `Rcollision`과 `Rstate`로 제한합니다.  
-`Rdynamic`, `Rintent`는 AI/ML 파트 구현 전 단계이므로 0으로 고정합니다.
-
-### 6.1 Collision Risk
-
-코드는 가중합을 그대로 사용하지 않고, 가중치 합으로 나누어 정규화합니다.
+위험 방향 단위벡터를 n, 머리 속도를 v라 할 때:
 
 ```text
-collisionWeightSum = weightDistance + weightTTC + weightApproachAccel + weightBlind
-
-Rcollision = (weightDistance      * Rd
-            + weightTTC           * RTTC
-            + weightApproachAccel * Ra
-            + weightBlind         * Rblind) / collisionWeightSum
+v_toward = max(0, dot(v, n))
+UserState = clamp01((v_toward - 0.10) / 0.90)
 ```
 
-각 항목의 의미는 다음과 같습니다.
+머리·낮은 장애물 중 위험도가 높은 유효 대상의 방향을 사용합니다. 장애물과 무관한 옆 방향 움직임까지 같은 접근 상태로 취급하지 않도록 합니다.
 
-- `Rd`: 벽까지의 최소 거리 기반 위험도
-- `RTTC`: Time-To-Collision 기반 위험도
-- `Ra`: 벽 방향 접근 가속도 기반 위험도
-- `Rblind`: 시선 방향과 벽 방향 사이 각도 기반 사각지대 위험도
+거리 변화율을 사용할 때는 운동학적 접근 속도로 증가량을 제한합니다. 대상 방향이 크게 바뀌거나 거리 이력이 초기화되면 운동학적 값을 사용하여 거리 점프로 인한 과도한 접근 속도를 억제합니다.
 
-### 6.2 User State Risk
+## 3. 정적 위험도 계산
 
-코드의 `Rstate`는 보고서의 `Rstatic`에 해당하는 구현 변수명입니다.
+`clamp01(x)`는 값을 0~1로 제한하는 함수입니다. 접근 속도는 장애물 방향의 양수 성분입니다.
+
+### 3.1 공통 성분
 
 ```text
-Static   → Rstate = 0.0
-Dynamic  → Rstate = 0.5
-Agitated → Rstate = 1.0
+R_distance = clamp01(1 - distance / safeDistance)
+TTC = distance / closingSpeed
+R_ttc = clamp01(1 - TTC / safeTime)
+
+x = clamp01((closingSpeed - startSpeed) / (fullSpeed - startSpeed))
+R_speed = x² × (3 - 2x)
 ```
 
-현재 상태 분류는 HMD 속도, 가속도, 각속도의 순간값을 기준으로 동작합니다.  
-보고서에서 제안한 이동 지속 시간 조건과 최근 n프레임 평균/최대값 기반 안정화 로직은 아직 구현 전입니다.
+접근 속도가 최소 조건 이하이면 TTC 위험은 0입니다. 속도 위험에는 부드러운 보간을 적용합니다.
 
-### 6.3 Total Risk
+### 3.2 머리와 낮은 장애물
+
+현재 공간 공급자의 `ToHeadRisk`는 머리와 낮은 장애물에 다음 계산을 적용합니다.
+
+| 항목 | 값 |
+|---|---:|
+| 거리 기준 | 1.50m |
+| TTC 기준 | 2.00초 |
+| TTC 최소 접근 속도 | 0.01m/s |
+| 속도 위험 시작 / 최대 | 0.05 / 0.80m/s |
+| 사각 성분 입력 | 0.20 고정 |
 
 ```text
-totalWeightSum = weightCollisionTotal + weightStateTotal + weightDynamicTotal + weightIntentTotal
-
-Rtotal = (weightCollisionTotal * Rcollision
-        + weightStateTotal     * Rstate
-        + weightDynamicTotal   * Rdynamic
-        + weightIntentTotal    * Rintent) / totalWeightSum
+R_head = 0.45 × R_distance
+       + 0.30 × R_speed
+       + 0.20 × R_ttc
+       + 0.05 × 0.20
 ```
 
-현재는 다음과 같이 동작합니다.
+긴급 측정 조건에서는 위험을 1로 올립니다. 현재 융합 경로의 사각 성분은 고정값이며, 초기 프로토타입처럼 시선 각도별 값을 계산하지 않습니다. 접근 가속도도 이 경로의 최종 가중식에는 들어가지 않습니다.
+
+### 3.3 양손
+
+왼손·오른손을 각각 계산합니다. 손이 더 뻗을 수 있는 거리를 반영하는 Reach Gate와 직접 근접 위험을 함께 사용합니다.
 
 ```text
-Rdynamic = 0
-Rintent  = 0
+extension = distance(HMD, hand)
+remainingReach = max(0, 0.75 - extension)
+gate = clamp01((remainingReach - obstacleDistance + 0.15) / 0.15)
+
+R_reach = gate × (0.35 × R_distance + 0.40 × R_speed + 0.25 × R_ttc)
+R_direct = 0.60 × R_distance + 0.25 × R_speed + 0.15 × R_ttc
+R_hand = max(R_reach, R_direct)
 ```
 
-즉 현재 프로토타입의 `Rtotal`은 정적 경계 위험도와 사용자 상태 위험도를 중심으로 계산됩니다.
+| 항목 | 값 |
+|---|---:|
+| 손 거리 기준 | 0.75m |
+| 손 TTC 기준 | 1.25초 |
+| TTC 최소 접근 속도 | 0.01m/s |
+| 속도 위험 시작 / 최대 | 0.10 / 1.50m/s |
+| Reach 기준 / 전이 폭 | 0.75 / 0.15m |
 
-### 6.4 Passthrough Decision
+직접 근접 경로는 이미 뻗은 손이 장애물에 가까워졌을 때 Reach Gate만으로 위험이 과도하게 낮아지는 것을 보완합니다. 긴급 측정 조건은 별도로 처리합니다.
+
+### 3.4 초기 벽 기반 프로토타입과의 차이
+
+초기 구현은 Scene API의 벽과 HMD·컨트롤러를 중심으로 거리, 접근 가속도, 시선 각도와 `Rcollision`, `Rstate`, `Rtotal`을 분석했습니다.
+
+현재는 공간 측정과 정책을 분리하고, 정적·동적 정책이 각각 표시를 요청합니다. 남아 있는 Room Scene 전용 경로에는 목 피벗 보정, 0.5초 순이동 창, 시선 각도별 사각 위험과 별도 거리·시간 설정이 있습니다. 이는 기본 씬의 공간 융합 경로와 구분해야 합니다.
+
+## 4. 정적 Passthrough 정책
+
+`StaticBoundaryHazardPolicy`는 머리·왼손·오른손·낮은 장애물의 활성 상태와 유지시간을 개별 관리합니다.
+
+### 4.1 진입·유지·해제
+
+현재 기본 씬과 개인화 기본 상수:
+
+| 설정 | 값 |
+|---|---:|
+| 안정 상태 ON 임계값 | 0.50 |
+| 빠른 접근 상태 ON 임계값 | 0.45 |
+| 손 ON 임계값 | 0.40 |
+| 히스테리시스 폭 | 0.08 |
+| 최소 유지시간 | 1.50초 |
+| 해제 지연 | 0.35초 |
+| 긴급 근접 거리 | 0.25m |
 
 ```text
-shouldEnablePassthrough = Rtotal >= passthroughOnThreshold
+headOn = lerp(0.50, 0.45, UserState)
+headOff = headOn - 0.08
+handOn = 0.40
+handOff = 0.32
 ```
 
-현재는 실제 Passthrough Layer를 제어하지 않고, 판단 결과만 UI에 표시합니다.
+머리·낮은 장애물은 가변 임계값을, 손은 손 임계값을 사용합니다. 해제 조건을 충족해도 최소 유지시간과 해제 지연을 적용합니다. 입력 유실에도 유지·해제 로직을 거칩니다.
 
-```text
-Passthrough Decision: ON
-Passthrough Decision: OFF
-```
+근접 거리와 확인된 머리 overlap은 일반 임계값과 별도로 긴급 진입을 유발합니다. 채널 비활성화나 실험 조건에 의한 표시 억제와는 구분됩니다.
 
----
+### 4.2 표시와 개인화
 
-## 7. Inspector Parameters
+정적 정책은 원인과 표면 정보를 발행하고, 렌더러가 벽·가구 창이나 낮은 장애물 안내를 구성합니다. 내부 경고 단계 이름인 `Full`은 전체 화면 Passthrough 전환을 의미하지 않습니다.
 
-위험도 계산에 필요한 주요 계수는 Unity Inspector에서 수정할 수 있습니다.  
-이를 통해 실제 헤드셋 실험 중 계수를 바꿔가며 위험도 반응을 확인할 수 있습니다.
+개인화는 `ApplyPersonalizedThresholds`로 진입 임계값을 바꿉니다. 갱신 시 정책을 초기화하지 않아 진행 중인 긴급·최소 유지 상태를 보존합니다. 개인화 기능과 사용법은 [Unity README](README.md)를 참고합니다.
 
-| Header | Field |
+## 5. 실험 게임 구성
+
+실제 앱은 `SampleScene`에서 실행하며 `ExperimentGameRoot.prefab`이 게임을 구성합니다. `ExperimentGameTest`는 원본 배치·참고용으로 기본 빌드에 포함하지 않습니다.
+
+| 컴포넌트 | 역할 |
 |---|---|
-| User State Thresholds | `staticHeadSpeedThreshold`, `staticHeadAccelThreshold`, `staticHeadAngularThreshold`, `agitatedHeadSpeedThreshold`, `agitatedHeadAccelThreshold`, `agitatedHeadAngularThreshold` |
-| Risk Parameters | `safeDistance`, `safeTime`, `maxApproachAccel` |
-| Collision Risk Weights | `weightDistance`, `weightTTC`, `weightApproachAccel`, `weightBlind` |
-| Total Risk Weights | `weightCollisionTotal`, `weightStateTotal`, `weightDynamicTotal`, `weightIntentTotal` |
-| Passthrough Decision | `passthroughOnThreshold` |
+| ExperimentMenuController | 튜토리얼·라운드 선택과 메뉴 표시 |
+| ExperimentTutorialController | 단계별 조준·발사·회피 교육 |
+| ExperimentRoundController | 라운드 시작·시간·종료와 식별자 |
+| PassthroughConditionSwitcher | 조건별 표시·Guardian override |
+| ProjectileScheduleSet | 발사 시간·방향·종류·속도 일정 |
+| ExperimentBallSpawner | 참가자 기준 배치와 발사체 생성 |
+| ExperimentGun | 오른손 조준·트리거 입력, raycast 명중 |
+| ExperimentBall | 직선 비행, 명중·몸 충돌·소멸 |
+| ExperimentScoreSystem | 점수와 보상·벌점 효과음 |
 
-Inspector에서 조정 가능한 값들은 두 종류로 나뉩니다.
+### 5.1 비교 조건
 
-- 가중치와 Passthrough 판단 기준값은 0~1 사이에서 조정하는 값이므로 Unity Inspector에서 슬라이더로 표시됩니다.
-- 거리, 시간, 속도, 가속도 기준값은 실험 상황에 따라 1보다 큰 값도 필요하므로 일반 숫자 입력칸으로 표시됩니다.
+| 조건 | 커스텀 안전 출력 | Guardian 요청 |
+|---|---|---|
+| Round 1 / GuardianDefault | 억제 | 표시 |
+| Round 2 / StaticOnly | 정적 출력 | 숨김 |
+| Round 3 / StaticAndDynamic | 정적·동적 출력 | 숨김 |
 
----
 
-## 8. UI Output
+### 5.2 발사 일정과 좌표
 
-실행 중 World-space UI에는 다음 정보가 표시됩니다.
+- 라운드 시간은 현재 코드·Prefab 기준 **305초**입니다.
+- 기본 설계는 300초 동안의 72개 발사 항목과 마지막 발사체 처리 여유시간입니다. 실제 항목은 조건별 `ProjectileScheduleSet_ConditionA/B/C.asset`을 기준으로 합니다.
+- 9개 생성 위치는 라운드 시작 시 HMD 위치와 수평 방향에 맞춥니다.
+- 생성 시점의 HMD 위치·높이 오프셋을 목표로 직선 비행하며, 이후 사용자를 따라 방향을 바꾸지 않습니다.
+- 마지막 발사체가 일찍 사라져도 설정된 라운드 시간을 단축하지 않습니다.
 
-왼쪽 패널:
+### 5.3 입력과 충돌
 
-- Scene Distance
-- HMD 위치
-- 가장 가까운 벽 번호
-- 벽까지의 거리
-- Head Speed / Accel / Angular Speed
-- Left / Right Hand Speed
-- Hand Avg Speed
-- Hand/Head Ratio
-- Toward Wall Speed
-- Toward Wall Accel
-- TTC
-- Approaching Wall 여부
+총은 라운드 진행 중 또는 튜토리얼 활성 상태에서 발사할 수 있습니다. 오른손 검지 트리거 입력과 raycast로 명중을 판정합니다.
 
-오른쪽 패널:
+몸 충돌은 HMD 기준 수평 반경과 수직 범위의 원기둥 형태 근사 판정입니다. 코드 기본값은 반경 0.40m, 머리 위 0.15m부터 아래 1.50m까지이며 실제 Prefab 값으로 조정할 수 있습니다. 전신 추적 기반 충돌은 아닙니다.
 
-- User State
-- `Rstate`
-- `Rd`, `RTTC`, `Ra`, `Rblind`
-- `Theta To Wall`
-- `Rcollision`
-- `Rdynamic`, `Rintent`
-- `Rtotal`
-- Risk Level
-- Passthrough Threshold
-- Passthrough Decision
+### 5.4 점수 규칙
 
----
-
-## 9. Setup
-```text
-1. Unity Hub에서 `unity-client/` 폴더를 엽니다.
-2. `Assets/Scenes/SampleScene.unity`를 엽니다.
-3. Build Settings에서 Android 플랫폼으로 전환합니다.
-4. Quest 기기를 연결하고 Build & Run을 실행합니다.
-5. 헤드셋에서 Space Setup이 되어 있지 않다면 먼저 진행합니다.
-6. 최초 실행 시 Scene 권한 요청을 승인합니다.
-7. 실행 후 UI에서 거리, 움직임 Feature, 위험도, Passthrough 판단 결과를 확인합니다.
-```
----
-
-## 10. Known Limitations / TODO
-
-현재 구현의 한계와 앞으로 해야 할 일은 다음과 같습니다.
-
-1. **실험용 계수 튜닝 필요**
-   - 실제 Quest 헤드셋 실험을 통해 `safeDistance`, `safeTime`, `maxApproachAccel`, 위험도 가중치, `passthroughOnThreshold`를 조정해야 합니다.
-   - 정면/측면/후방 접근, 빠른 이동/느린 이동, 정지 상태에서 벽과 가까운 상황 등을 나누어 검증합니다.
-
-2. **실제 Passthrough 제어 연결 필요**
-   - 현재는 `Passthrough Decision`을 UI에만 표시합니다.
-   - 이후 실제 Passthrough Layer ON/OFF 또는 시각화 방식 선택 로직과 연결해야 합니다.
-
-3. **사용자 상태 분류 안정화 필요**
-   - 현재는 순간값 기반으로 상태를 분류합니다.
-   - 이동 지속 시간 조건, 최근 n프레임 평균/최대값 기반 smoothing을 추가해야 합니다.
-
-4. **AI/ML 동적 위험도 연동 필요**
-   - `Rdynamic`, `Rintent`는 현재 0으로 고정되어 있습니다.
-   - 추후 AI/ML 파트에서 계산된 값을 받아 `Rtotal`에 반영해야 합니다.
-
-5. **로그 및 대시보드 연동 필요**
-   - Feature 값, 위험도 값, Passthrough 판단 결과를 세션 로그로 저장할 필요가 있습니다.
-   - Backend/Data/Dashboard 파트에서 분석할 수 있도록 출력 형식을 정리해야 합니다.
-
-6. **개인화 모델 연동 필요**
-   - 사용자의 Passthrough 작동 이력과 수동 개입 여부를 기반으로 가중치와 threshold를 조정하는 구조가 필요합니다.
-
-7. **다양한 시각화 방식 실험 필요**
-   - Directional Passthrough, Augmented Virtuality, Volumetric Cue 등 다양한 시각화 방식과 연결하여 비교 실험을 진행해야 합니다.
-
----
-
-## 11. Team Integration Points
-
-현재 구현은 독립적인 실험용 스크립트이지만, 최종 시스템에서는 다른 팀원 파트와 다음과 같이 연결됩니다.
-
-| 연결 대상 | 필요한 연결 내용 |
+| 사건 | 점수 변화 |
 |---|---|
-| AI/ML Layer | `Rdynamic`, `Rintent` 값을 받아 `Rtotal`에 반영 |
-| Passthrough Visualization | `shouldEnablePassthrough` 값을 실제 Passthrough 제어 또는 시각화 방식 선택에 사용 |
-| Backend / Data Layer | Feature, 위험도, Passthrough 판단 결과를 세션 로그로 저장 |
-| Dashboard | 시간에 따른 위험도 변화, Passthrough 판단 시점, 실험 결과를 시각화 |
-| Personalization Model | 사용자별 로그를 기반으로 가중치와 threshold를 조정 |
+| 과녁 명중 | +100 |
+| 과녁이 몸에 닿음 | -100, 최소 0 |
+| 폭탄을 쏨 | 현재 점수를 정수 나눗셈으로 절반 처리 |
+| 폭탄이 몸에 닿음 | 0으로 초기화 |
 
+점수는 라운드마다 초기화됩니다. `ExperimentScoreSystem` 자체는 영구 저장이나 점수 로깅을 하지 않으므로 연구 지표로 활용하려면 별도 수집 경로가 필요합니다.
+
+### 5.5 튜토리얼
+
+1. **조준·발사:** 정면 과녁으로 트리거와 보상 규칙을 익힙니다.
+2. **이동 과녁:** 날아오는 과녁 명중과 몸 충돌 벌점을 익힙니다.
+3. **폭탄 회피:** 과녁과 폭탄을 구별하고 쏘거나 몸에 닿지 않도록 회피합니다. 실패 시 다시 시도합니다.
+4. **종합 연습:** 앞서 익힌 과제를 함께 수행합니다.
+
+완료 화면과 메뉴 복귀를 제공하며 발사체 명중·몸 충돌 이벤트로 진행을 판정합니다.
+
+## 6. 검증과 실험 운영
+
+자동 테스트는 위험 계산·정책 상태 전이, 조건 매핑, 점수 규칙과 게임 통합을 검사합니다. 이 문서 작성에서는 코드를 대조했으며 테스트와 기기 빌드를 새로 실행하지 않았습니다.
+
+실기 확인 항목:
+
+- 머리·양손·낮은 장애물 접근에 해당 위험 채널이 반응하는지
+- 임계값 주변에서 표시가 반복 점멸하지 않는지
+- 긴급 근접·입력 유실 시 유지·해제가 의도대로 동작하는지
+- 튜토리얼 단계·점수·종료·재시작이 정상인지
+- 세 조건의 출력과 Guardian 상태가 일치하는지
+- 참가자별 시작 위치·높이와 라운드 시간·발사 일정이 일관되는지
+- 조건 사이에서 ML·기기 설정이 통제되는지
+
+구현 설명과 사용자 실험 결과는 구분합니다. 참가자 수, 설문 결과와 통계 분석은 프로젝트 보고서 및 별도 실험 자료를 기준으로 관리합니다.
+
+## 7. 구현 근거
+
+- [공간 측정·융합과 현재 위험 계산](Assets/Scripts/AdaptivePassthrough/Quest/QuestSpatialObstacleProvider.cs)
+- [공통 위험 계산식](Assets/Scripts/AdaptivePassthrough/Core/StaticBoundaryRiskMath.cs)
+- [채널별 정적 정책](Assets/Scripts/AdaptivePassthrough/Core/StaticBoundaryHazardPolicy.cs)
+- [정적 정책 컨트롤러](Assets/Scripts/StaticPassthroughPolicyController.cs)
+- [초기 벽 계산 및 측정 어댑터](Assets/Scripts/QuestRiskExperimentLogger.cs)
+- [현재 개인화 기본값](Assets/Scripts/AdaptivePassthrough/Core/PersonalizationModels.cs)
+- [라운드 제어](Assets/Scripts/Experiment/ExperimentRoundController.cs)
+- [튜토리얼](Assets/Scripts/Experiment/ExperimentTutorialController.cs)
+- [조건 매핑과 점수 규칙](Assets/Scripts/AdaptivePassthrough/ExperimentRuntimeOverrides.cs)
+- [실험 게임 Prefab](Assets/Prefabs/Experiment/ExperimentGameRoot.prefab)
