@@ -10,7 +10,7 @@ Meta Quest 3에서 정적 장애물과 사람의 위험을 분석하고, 위험 
 
 ```text
 Environment Depth / Room Scene / HMD·Controller
-    → 공간·움직임 측정 → 정적 위험 정책 ─┐
+    → 공간·움직임 측정 → 정적 위험 정책  ─┐
                                         ├→ Selective Passthrough
 Quest Camera → YOLOv9 → 사람 추적        │   + 시각·진동 경고
     → 거리·접근 속도·TTC → 동적 위험 정책 ┘
