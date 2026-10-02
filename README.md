@@ -1,7 +1,7 @@
 # 몰입형 XR을 위한 상황 인식 기반 Adaptive Passthrough Framework 
 > 2026년 전기 부산대학교 정보컴퓨터공학부 졸업과제 TeamVR
 
-Meta Quest 3 기반으로 정적 경계와 동적 객체(사람)의 충돌 위험을 독립적으로 분석하고, 위험이 감지된 영역에만 선택적으로 Passthrough를 노출하여 안전성과 몰입감을 동시에 확보하기 위한 XR 안전 프레임워크이다.
+Meta Quest 3 기반으로 정적 경계와 동적 객체(사람)의 충돌 위험을 독립적으로 분석하고, 위험이 감지된 영역에만 선택적으로 Passthrough를 노출하여 안전성과 몰입감을 동시에 확보하는 XR 안전 프레임워크이다.
 
 ## 목차
 - [1. 프로젝트 배경](#1-프로젝트-배경)
@@ -141,7 +141,7 @@ Dynamic Risk
 
 이를 통해 안전을 확보하면서도 불필요한 현실 환경 노출을 줄인다.
 
-#### 2.1.5. ML 기반 개인화
+## 2.1.5. ML 기반 개인화
 
 사용자의 Passthrough 활성화 로그를 이용하여 개인별 위험 판단 민감도를 조정한다.
 
@@ -468,7 +468,7 @@ Dynamic Risk ┘
 After
 
 Static Risk  ─▶ Static Policy  ─┐
-                                ├─▶ Selective Passthrough
+                                 ├─▶ Selective Passthrough
 Dynamic Risk ─▶ Dynamic Policy ─┘
 ```
 
@@ -477,8 +477,6 @@ Dynamic Risk ─▶ Dynamic Policy ─┘
 ---
 
 ## 5. 설치 및 실행 방법
-### 5.1. 설치절차 및 실행 방법
-
 본 프로젝트는 Unity 기반 클라이언트를 Meta Quest 3에 설치하여 실행한다. Passthrough 기능 확인에는 `SampleScene`, 사용자 실험에는 `ExperimentGameTest`를 사용한다.
 
 #### 5.1.1. 개발 환경
