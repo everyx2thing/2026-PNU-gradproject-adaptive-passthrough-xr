@@ -610,15 +610,13 @@ Application.persistentDataPath/RiskLogs/
 ## 6. 소개 자료 및 시연 영상
 ### 6.1. 프로젝트 소개 자료
 
-[착수보고서](docs/01.보고서/01.%20TeamVR_착수보고서.pdf)
+[착수보고서](docs/reports/01. TeamVR_착수보고서.pdf)
 
-[중간보고서](docs/01.보고서/02.%20TeamVR_중간보고서.pdf)
+[중간보고서](docs/reports/02. TeamVR_중간보고서.pdf)
 
-[최종보고서](docs/01.보고서/03.%20TeamVR_최종보고서.pdf)
+[최종보고서](docs/reports/03. TeamVR_최종보고서.pdf)
 
-[포스터](docs/02.포스터/TeamVR_포스터.pdf)
-
-[발표 자료](docs/03.발표자료/TeamVR_발표자료.pdf)
+[포스터](docs/reports/TeamVR_포스터.pdf)
 
 ### 6.2. 시연 영상
 
